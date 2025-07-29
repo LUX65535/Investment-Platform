@@ -90,42 +90,6 @@
 
 .nav-link:hover,
 .nav-link.active{ color:#ffffff !important; }
-/*.nav-link{*/
-/*  position:relative;*/
-/*  color:#c0c0c0;*/
-/*  text-decoration:none;*/
-/*  padding:8px 0;*/
-/*  transition:color .25s ease;*/
-/*  overflow:hidden;*/
-/*}*/
-
-/*.nav-link::after{*/
-/*  content:"";*/
-/*  position:absolute;*/
-/*  left:0; right:0; bottom:0;*/
-/*  height:2px;*/
-/*  background:#12c48b;*/
-/*  transform:scaleX(0);*/
-/*  transform-origin:center;*/
-/*  transition:transform .35s ease;*/
-/*}*/
-
-/*.nav-link:hover{*/
-/*  color:#ffffff;*/
-/*}*/
-
-/*.nav-link:hover::after{*/
-/*  transform:scaleX(1);*/
-/*}*/
-
-/*.nav-link.active{*/
-/*  color:#ffffff;*/
-/*}*/
-
-/*.nav-link.active::after{*/
-/*  transform:scaleX(1);*/
-/*}*/
-
 
 .footer {
   box-sizing: border-box;

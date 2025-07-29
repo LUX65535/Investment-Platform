@@ -32,5 +32,5 @@ npm ci        # installs both root & client deps via workspaces
 # API_POLY_KEY= Polygon key
 # MONGO_URI= Mongo connection string
 
-# 3 Run everything (concurrently)
+# 3 Run everything in dev mode to test (concurrently)
 npm run dev      # http://localhost:3000 (API & SPA)
