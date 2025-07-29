@@ -1,0 +1,30 @@
+<header>
+  <nav class="navbar navbar-expand-lg navbar-dark custom-header d-flex align-items-center" role="navigation" aria-label="Primary">
+      <a href="/search-details" class="navbar-brand"> <img src="assets/images/brandLogo.png" alt="Investment Platform logo" class="brand-logo">Investment&nbsp;Platform</a>
+      <button class="navbar-toggler" type="button" (click)="isCollapsed = !isCollapsed" [attr.aria-expanded]="!isCollapsed" aria-controls="navbarNav">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav" [ngbCollapse]="isCollapsed">
+        <ul class="navbar-nav ml-auto align-items-center gap-1">
+          <li class="nav-item">
+            <a class="nav-link" routerLink="/search-details" routerLinkActive="active">Search</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" routerLink="/watchlist" routerLinkActive="active">Watchlist</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" routerLink="/portfolio" routerLinkActive="active">Portfolio</a>
+          </li>
+        </ul>
+      </div>
+  </nav>
+</header>
+<div class="container content-container">
+  <router-outlet></router-outlet>
+</div>
+
+<footer class="footer bg-light">
+  <div class="FooterContainer">
+    <p class="footer-text">Powered by <a href="https://finnhub.io" target="_blank">Finnhub.io</a></p>
+  </div>
+</footer>

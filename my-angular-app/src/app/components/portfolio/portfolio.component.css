@@ -1,0 +1,203 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap");
+
+* {
+  box-sizing: border-box;
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  background: #f6f8fa;
+  color: #ffffffde;
+  line-height: 1.45;
+}
+
+:root{
+  --surface-blur   : rgba(255,255,255,0.08);
+  --surface-border : rgba(255,255,255,0.14);
+  --surface-shadow : 0 6px 18px rgba(0,0,0,.18);
+  --positive       : #16a34a;
+  --negative       : #dc2626;
+}
+
+
+.top-bar{
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  align-items:center;
+  gap:1.2rem;
+  margin-bottom:24px;
+}
+.wallet-balance{
+  font-size:1.25rem;
+  font-weight:600;
+}
+.btn-primary-lg{
+  background:#3b82f6;
+  color:#fff;
+  border:none;
+  padding:10px 22px;
+  border-radius:8px;
+  font-weight:600;
+  cursor:pointer;
+  transition:transform .2s ease, filter .2s;
+}
+.btn-primary-lg:hover{
+  transform:translateY(-2px);
+  filter:brightness(1.1);
+}
+
+
+.portfolio-grid{
+  display:grid;
+  grid-template-columns: repeat(auto-fill,minmax(280px,1fr));
+  gap:20px;
+}
+
+.stock-card{
+  background:#ffffff;
+  backdrop-filter: blur(10px) saturate(140%);
+  background: var(--surface-blur);
+  border:1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow:0 4px 12px rgba(0,0,0,.06);
+  display:flex;
+  flex-direction:column;
+  transition:transform .25s ease;
+}
+.stock-card:hover{
+  transform:translateY(-4px) scale(1.01);
+}
+
+/* Header */
+.stock-card__header{
+  padding:18px 20px 10px;
+  text-align:center;
+  display:block;
+  flex-direction:column;
+  gap:4px;
+}
+.stock-card__ticker{
+  font-size:1.25rem;
+  font-weight:700;
+}
+.stock-card__name{
+  font-size:.9rem;
+  opacity:.75;
+}
+
+/* Body */
+.stock-card__body{
+  padding:0 20px 16px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  font-size:.88rem;
+}
+.stock-card__row{
+  display:flex;
+  justify-content:space-between;
+}
+.stock-card__row strong{
+  font-weight:600;
+}
+
+/* Chip */
+.chip{
+  color:#fff;
+  display:inline-flex;
+  align-items:center;
+  gap:2px;
+  padding:1px 8px 1px 6px;
+  border-radius:9999px;
+  font-size:.8rem;
+  font-weight:600;
+  line-height:1;
+}
+
+.chip i{
+  font-size:1rem;
+  margin-right:2px;
+}
+
+.chip--up{
+  color:var(--positive);
+  background:rgba(22,163,74,.12);
+  border:1px solid var(--positive);
+}
+.chip--down{
+  color:var(--negative);
+  background:rgba(220,38,38,.12);
+  border:1px solid var(--negative);
+}
+
+.stock-card__actions{
+  margin-top:auto;
+  padding:14px 20px 18px;
+  display:flex;
+  gap:12px;
+  justify-content:space-between;
+}
+.btn-icon{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:7px 16px;
+  border:none;
+  border-radius:7px;
+  cursor:pointer;
+  color:#fff;
+  font-weight:600;
+  font-size:.9rem;
+  background:rgba(255,255,255,0.08);
+  transition:transform .2s ease, filter .2s;
+}
+.btn-icon i{ font-size:1rem; }
+.btn-icon:hover{
+  transform:scale(1.05);
+  filter:brightness(1.15);
+}
+
+.btn-icon.success{
+  background:#16a34a;
+}
+.btn-icon.danger{
+  background:#dc2626;
+}
+
+
+.modal{ display:flex; justify-content:center; align-items:center;
+        position:fixed; top:0; left:0; width:100%; height:100%;
+        background:rgba(0,0,0,0.4); }
+
+.modal-dialog{ position:relative; width:auto; }
+
+.modal-header{ display:flex; flex-direction:column; align-items:flex-start; }
+.modal-title { font-weight:bold; }
+
+.modal-footer{
+  display:flex; flex-direction:column; align-items:flex-start;
+  border-radius:3px; border:1px solid gray; margin:15px;
+}
+.modal-footer p{ margin-bottom:.5rem; }
+.modal-footer img{ cursor:pointer; width:40px; margin-right:.5rem; }
+
+.confirmation-alert{
+  padding:10px; margin:10px 0; border:1px solid transparent;
+  text-align:center; border-radius:4px; position:relative;
+  transition:opacity .3s ease;
+}
+.alert-success{ background:#dff0d8; color:#3c763d; }
+.alert-danger { background:#f2dede; color:#a94442; }
+
+.close-button{
+  position:absolute; right:10px; top:50%; transform:translateY(-50%);
+  border:none; background:transparent; cursor:pointer; font-size:20px;
+}
+.close-button:hover{ color:#f00; }
+
+.error-message{
+  background:#ffcccc; color:#333; border:1px solid #ffaaaa;
+  padding-top:15px; margin:20px 0; text-align:center; border-radius:4px;
+  box-shadow:0 2px 4px rgba(0,0,0,.1); font-size:.9rem; position:relative;
+}

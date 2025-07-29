@@ -1,0 +1,39 @@
+<div class="watchlist-title">My Watchlist</div>
+
+<div class="watchlist-container">
+
+  <!-- Show spinner-->
+  <div *ngIf="loading" class="spinner-container">
+    <mat-spinner></mat-spinner>
+  </div>
+  <ul *ngIf="!loading && watchlist.length > 0" class="watchlist">
+    <li *ngFor="let item of watchlist" class="watchlist-item" (click)="selectStock(item.ticker)">
+      <!-- Ticker and company name -->
+      <div class="watchlist-details">
+        <span class="watchlist-ticker">{{ item.ticker }}</span>
+        <span class="watchlist-company">{{ item.profile?.name }}</span>
+      </div>
+
+      <!-- Price and percentage -->
+      <div class="price-change-container">
+      <span [ngStyle]="{'color': getChangeColor(item)}" class="watchlist-price">
+          {{ item.quote?.c | number:'1.2-2' }}
+      </span>
+      <span [ngClass]="{
+        'triangle-up': item.quote?.dp! > 0,
+        'triangle-down': item.quote?.dp! < 0
+      }"></span>
+        <span [ngStyle]="{'color': getChangeColor(item)}">
+    {{ formatChangeValue(item) }} ({{ formatChangePercent(item) }}%)
+  </span>
+      </div>
+
+      <div (click)="removeStock(item.ticker); $event.stopPropagation()" class="close-btn">
+        &times;
+      </div>
+    </li>
+  </ul>
+  <div *ngIf="!loading && watchlist.length === 0" class="empty-watchlist">
+    Currently, you don't have any stocks in your watchlist.
+  </div>
+</div>

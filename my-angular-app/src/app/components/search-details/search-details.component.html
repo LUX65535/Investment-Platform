@@ -1,0 +1,307 @@
+<div class="search-container">
+  <h2 class="text-center">STOCK SEARCH</h2>
+</div>
+<div class="search-bar-auto-complete">
+  <div class="input-container">
+    <input matInput
+           [formControl]="tickerFormControl"
+           (keyup.enter)="autoTrigger.closePanel(); onSearch(tickerFormControl.value)"
+           [matAutocomplete]="auto"
+           #autoTrigger="matAutocompleteTrigger"
+           placeholder="Enter stock ticker symbol">
+    <img src="../../assets/images/icon1.svg" alt="Search" class="input-icon" (click)="onSearch(tickerFormControl.value)">
+    <img src="../../assets/images/icon2.svg" alt="Clear" class="input-icon" (click)="clearSearch()">
+  </div>
+  <mat-autocomplete #auto="matAutocomplete"  [displayWith]="displayFn">
+    <mat-option *ngIf="isLoading" class="is-loading">
+      <mat-spinner *ngIf="isLoading" diameter="50"></mat-spinner>
+    </mat-option>
+    <mat-option *ngFor="let option of filteredOptions | async" [value]="option" (onSelectionChange)="onSearch(option)">
+      {{ option.displaySymbol }} | {{ option.description }}
+    </mat-option>
+  </mat-autocomplete>
+</div>
+
+
+
+
+<div *ngIf="DetailIsLoading" class="spinner-container">
+  <mat-spinner></mat-spinner>
+</div>
+
+<div *ngIf="showConfirmation" class="confirmation-alert" [ngClass]="confirmationStyle">
+  <span>{{ confirmationMessage }}</span>
+  <button class="close-button" (click)="closeConfirmation()">&times;</button>
+</div>
+
+<div *ngIf="searchResults" class="stock-container">
+  <div class="stock-upper">
+    <div class="stock-info">
+      <h1>{{ searchResults.ticker }}     <span class="star" [class.yellow]="isFavorited" (click)="toggleFavorite()">&#9733;</span>
+      </h1>
+      <h2>{{ searchResults.name }}</h2>
+      <p>{{ searchResults.exchange }}</p>
+
+
+      <div class="modal" tabindex="-1" role="dialog" *ngIf="showBuyModal">
+        <div class="modal-dialog" role="document">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">{{ searchResults?.ticker }}</h5>
+              <button type="button" class="close" aria-label="Close" (click)="showBuyModal = false">
+                <span aria-hidden="true">&times;</span>
+              </button>
+            </div>
+            <div class="modal-body">
+              <p>Current Price: {{ currentStock?.c }}</p>
+              <p>Money in Wallet: {{ userWalletBalance | number:'1.2-2'}}</p>
+              <div class="form-group">
+                <input type="number" [(ngModel)]="quantity" class="form-control" placeholder="Quantity" min="0">
+                <div *ngIf="quantity < 0" class="alert alert-danger mt-2">
+                  Quantity can't be less than zero!
+                </div>
+              </div>
+              <p>Total: {{ quantity * (currentStock?.c || 0) | currency:'USD' }}</p>
+              <div *ngIf="quantity * (currentStock?.c || 0) > userWalletBalance" class="alert alert-danger">
+                Not enough money in wallet!
+              </div>
+            </div>
+            <div class="modal-footer d-flex justify-content-center">
+              <button type="button" class="btn btn-primary" [disabled]="quantity <= 0 || quantity * (currentStock?.c || 0) > userWalletBalance" (click)="buyStockForm()">Buy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal" tabindex="-1" role="dialog" *ngIf="showSellModal">
+        <div class="modal-dialog" role="document">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">{{ searchResults?.ticker }}</h5>
+              <button type="button" class="close" aria-label="Close" (click)="showSellModal = false">
+                <span aria-hidden="true">&times;</span>
+              </button>
+            </div>
+            <div class="modal-body">
+              <p>Current Price: {{ currentStock?.c }}</p>
+              <p>Stocks Owned: {{ ownedStockQuantity }}</p>
+              <div class="form-group">
+                <input type="number" [(ngModel)]="quantityToSell" class="form-control" placeholder="Quantity" min="0">
+                <div *ngIf="quantityToSell < 0" class="alert alert-danger mt-2">
+                  Quantity can't be less than zero!
+                </div>
+                <div *ngIf="quantityToSell > ownedStockQuantity" class="alert alert-danger mt-2">
+                  Not enough stocks owned!
+                </div>
+              </div>
+              <p>Total: {{ quantityToSell * (currentStock?.c || 0) | currency:'USD' }}</p>
+            </div>
+            <div class="modal-footer d-flex justify-content-center">
+              <button type="button" class="btn btn-danger" [disabled]="quantityToSell <= 0 || quantityToSell > ownedStockQuantity" (click)="sellStockForm()">Sell</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+
+
+
+
+      <button class="btn btn-success" (click)="openBuyModal()">Buy</button>
+
+
+
+      <button class="btn btn-danger" *ngIf="ownedStockQuantity > 0" (click)="openSellModal()">Sell</button>
+    </div>
+
+    <div class="stock-logo">
+      <img [src]="searchResults.logo" alt="Company Logo">
+    </div>
+
+    <div class="stock-financials" *ngIf="currentStock">
+<span class="stock-price" [ngStyle]="{'color': getChangeColor(currentStock)}">
+  {{ currentStock?.c | number:'1.2-2' }}
+</span>
+      <div class="stock-change">
+    <span [ngClass]="{
+      'triangle-up': currentStock.dp > 0,
+      'triangle-down': currentStock.dp < 0
+    }"></span>
+        <span [ngStyle]="{'color': getChangeColor(currentStock)}">
+      {{ formatChangeValue(currentStock) }} ({{ formatChangePercent(currentStock) }})
+    </span>
+      </div>
+      <span>{{ currentDate | date:'yyyy-MM-dd HH:mm:ss' }}</span>
+    </div>
+  </div>
+
+
+
+
+
+  <div class="stock-middle">
+    <div class="market-status" [ngClass]="{'open': marketIsOpen, 'closed': !marketIsOpen}">
+      <span *ngIf="marketIsOpen; else marketClosed">Market is Open</span>
+      <ng-template #marketClosed>
+        <span>Market is Closed on {{ lastClosedTime | date:'medium' }}</span>
+      </ng-template>
+    </div>
+  </div>
+
+
+  <div class="stock-lower">
+    <div class="tabs">
+      <div class="tab" [class.active]="activeTab === 'summary'" (click)="setActiveTab('summary')">Summary</div>
+      <div class="tab" [class.active]="activeTab === 'news'" (click)="setActiveTab('news')">Top News</div>
+      <div class="tab" [class.active]="activeTab === 'charts'" (click)="setActiveTab('charts')">Charts</div>
+      <div class="tab" [class.active]="activeTab === 'insights'" (click)="setActiveTab('insights')">Insights</div>
+    </div>
+
+    <div class="tab-content" *ngIf="activeTab === 'summary'">
+      <div class="summary-container">
+        <div class="left-column">
+          <div class="price-info">
+            <p class="ConstantSummarySet">High Price: <span class="SpanSummarySet">{{ currentStock?.h | number:'1.2-2' }}</span></p>
+            <p class="ConstantSummarySet">Low Price: <span class="SpanSummarySet">{{ currentStock?.l | number:'1.2-2' }}</span></p>
+            <p class="ConstantSummarySet">Open Price: <span class="SpanSummarySet">{{ currentStock?.o | number:'1.2-2' }}</span></p>
+            <p class="ConstantSummarySet">Prev. Close: <span class="SpanSummarySet">{{ currentStock?.pc | number:'1.2-2' }}</span></p>
+          </div>
+
+          <div class="company-info">
+            <h3>About the company</h3>
+            <p class="ConstantSummarySet">IPO Start Date: <span class="SpanSummarySet">{{ searchResults?.ipo }}</span></p>
+            <p class="ConstantSummarySet">Industry: <span>{{ searchResults?.finnhubIndustry }}</span></p>
+            <p class="ConstantSummarySet">Webpage: <a href="{{ searchResults?.weburl }}" id="SummaryWebPageLink" target="_blank">{{ searchResults?.weburl }}</a></p>
+            <p class="ConstantSummarySet">Company peers:</p>
+            <span *ngFor="let peer of companyPeers" (click)="onPeerClick(peer)" class="peer-link">
+              {{ peer }},
+            </span>
+          </div>
+        </div>
+        <div class="right-column">
+          <div id="company-chart">
+            <highcharts-chart
+              *ngIf="chartOptions"
+              [Highcharts]="Highcharts"
+              [options]="chartOptions"
+              style="width: 100%; height: 400px; display: block;">
+            </highcharts-chart>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="tab-content" *ngIf="activeTab === 'news'">
+      <div class="news-grid">
+        <div *ngFor="let newsItem of topNews" class="news-card" (click)="openModal(newsItem)">
+          <img [src]="newsItem.image" alt="news headline" class="news-image">
+          <div class="news-text">
+            <p>{{ newsItem.headline }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div *ngIf="selectedNewsItem" class="modal" tabindex="-1" role="dialog">
+      <div class="modal-dialog" role="document">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 class="modal-title">{{ selectedNewsItem.source }}</h2>
+            <p class="news-datetime">{{ +selectedNewsItem.datetime * 1000 | date:'MMMM d, yyyy' }}</p>
+            <button type="button" class="close" (click)="closeModal()">&times;</button>
+
+          </div>
+          <div class="modal-body">
+            <h5 class="news-source">{{ selectedNewsItem.headline }}</h5>
+            <p class="news-summary">{{ selectedNewsItem.summary }}</p>
+            <p class="news-read-more">
+              For more details click
+              <a href="{{ selectedNewsItem.url }}" target="_blank" rel="noopener noreferrer">here</a>
+            </p>
+          </div>
+          <div class="modal-footer">
+            <p>Share</p>
+            <div class="social-icons">
+            <img src="../../../assets/images/logo-black.png" alt="twitter" (click)="shareOnPlatform(selectedNewsItem, 'twitter')"/>
+            <img src="../../../assets/images/Facebook_Logo_Primary.png" alt="facebook" (click)="shareOnPlatform(selectedNewsItem, 'facebook')"/>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+
+    <div class="tab-content" *ngIf="activeTab === 'charts'">
+      <highcharts-chart
+        *ngIf="bigChartOptions"
+        [Highcharts]="Highcharts"
+        [options]="bigChartOptions"
+        style="width: 100%; height: 600px; display: block;">
+      </highcharts-chart>
+    </div>
+    <div class="tab-content" *ngIf="activeTab === 'insights'">
+      <div class="insights-sentiments">
+        <div class="insights-sentiments-table">
+          <h3>Insider Sentiments</h3>
+          <table class="table">
+            <thead>
+            <tr>
+              <th scope="col">{{ searchResults.name }}</th>
+              <th scope="col">MSPR</th>
+              <th scope="col">Change</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr>
+              <td><strong>Total</strong></td>
+              <td>{{ calculatedSentiments?.totalMspr | number }}</td>
+              <td>{{ calculatedSentiments?.totalChange | number }}</td>
+            </tr>
+            <tr>
+              <td><strong>Positive</strong></td>
+              <td>{{ calculatedSentiments?.positiveMspr | number }}</td>
+              <td>{{ calculatedSentiments?.positiveChange | number }}</td>
+            </tr>
+            <tr>
+              <td><strong>Negative</strong></td>
+              <td>{{ calculatedSentiments?.negativeMspr | number }}</td>
+              <td>{{ calculatedSentiments?.negativeChange | number }}</td>
+            </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="insights-charts">
+        <div class="insights-chart" id="recommendation-trends-chart">
+          <highcharts-chart
+            *ngIf="trendChartOptions"
+            [Highcharts]="Highcharts"
+            [options]="trendChartOptions"
+            style="width: 100%; height: 400px; display: block;">
+          </highcharts-chart>
+        </div>
+
+        <div class="insights-chart" id="historical-eps-chart">
+          <highcharts-chart
+            *ngIf="earningChartOptions"
+            [Highcharts]="Highcharts"
+            [options]="earningChartOptions"
+            style="width: 100%; height: 400px; display: block;">
+          </highcharts-chart>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div *ngIf="invalid_ticker_input" class="error-message">
+  <p>Please enter a valid ticker</p>
+  <button class="close-button" (click)="clearSearch()">&times;</button>
+</div>
+
+<div *ngIf="noDataFound" class="error-message">
+  <p>No data found. Please enter a valid Ticker</p>
+</div>

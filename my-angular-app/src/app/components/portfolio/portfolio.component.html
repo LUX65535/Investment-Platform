@@ -1,0 +1,165 @@
+<div *ngIf="isLoading" class="loading-spinner"></div>
+
+<div *ngIf="showConfirmation"
+     class="confirmation-alert"
+     [ngClass]="confirmationStyle">
+  <span>{{ confirmationMessage }}</span>
+  <button class="close-button" (click)="closeConfirmation()">&times;</button>
+</div>
+
+<div *ngIf="!isLoading">
+
+  <div class="top-bar">
+    <button class="btn-primary-lg" (click)="onInitializeWallet()">Initialize Wallet</button>
+    <h2 class="wallet-balance">Wallet Balance&nbsp;•&nbsp;${{ cashBalance | number:'1.2-2' }}</h2>
+  </div>
+
+  <div class="modal" tabindex="-1" role="dialog" *ngIf="showBuyModal">
+    <div class="modal-dialog" role="document">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">{{ searchResults?.ticker }}</h5>
+          <button type="button" class="close" aria-label="Close" (click)="showBuyModal = false">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p>Current Price: {{ currentStock?.c }}</p>
+          <p>Money in Wallet: {{ userWalletBalance | number:'1.2-2' }}</p>
+
+          <div class="form-group">
+            <input type="number"
+                   [(ngModel)]="quantity"
+                   class="form-control"
+                   placeholder="Quantity"
+                   min="0">
+            <div *ngIf="quantity < 0" class="alert alert-danger mt-2">
+              Quantity can't be less than zero!
+            </div>
+          </div>
+
+          <p>Total: {{ quantity * (currentStock?.c || 0) | currency:'USD' }}</p>
+          <div *ngIf="quantity * (currentStock?.c || 0) > userWalletBalance"
+               class="alert alert-danger">
+            Not enough money in wallet!
+          </div>
+        </div>
+        <div class="modal-footer d-flex justify-content-center">
+          <button type="button"
+                  class="btn btn-primary"
+                  [disabled]="quantity <= 0 || quantity * (currentStock?.c || 0) > userWalletBalance"
+                  (click)="buyStockForm(quantity)">
+            Buy
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" tabindex="-1" role="dialog" *ngIf="showSellModal">
+    <div class="modal-dialog" role="document">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">{{ searchResults?.ticker }}</h5>
+          <button type="button" class="close" aria-label="Close" (click)="showSellModal = false">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p>Current Price: {{ currentStock?.c }}</p>
+          <p>Stocks Owned: {{ ownedStockQuantity }}</p>
+
+          <div class="form-group">
+            <input type="number"
+                   [(ngModel)]="quantityToSell"
+                   class="form-control"
+                   placeholder="Quantity"
+                   min="0">
+            <div *ngIf="quantityToSell < 0" class="alert alert-danger mt-2">
+              Quantity can't be less than zero!
+            </div>
+            <div *ngIf="quantityToSell > ownedStockQuantity" class="alert alert-danger mt-2">
+              Not enough stocks owned!
+            </div>
+          </div>
+
+          <p>Total: {{ quantityToSell * (currentStock?.c || 0) | currency:'USD' }}</p>
+        </div>
+        <div class="modal-footer d-flex justify-content-center">
+          <button type="button"
+                  class="btn btn-danger"
+                  [disabled]="quantityToSell <= 0 || quantityToSell > ownedStockQuantity"
+                  (click)="sellStockForm(quantityToSell)">
+            Sell
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="portfolio-grid">
+    <ng-container *ngFor="let stock of portfolio">
+      <article class="stock-card">
+
+        <!-- Header -->
+        <header class="stock-card__header">
+          <span class="stock-card__ticker">{{ stock.ticker }}</span>
+          <span class="stock-card__name">{{ stock.name }}</span>
+        </header>
+
+        <!-- Body -->
+        <section class="stock-card__body">
+          <div class="stock-card__row">
+            <span>Quantity</span>
+            <strong>{{ stock.quantity }}</strong>
+          </div>
+
+          <div class="stock-card__row">
+            <span>Avg&nbsp;Cost/Share</span>
+            <strong>{{ stock.totalCost / stock.quantity | currency }}</strong>
+          </div>
+
+          <div class="stock-card__row">
+            <span>Total&nbsp;Cost</span>
+            <strong>{{ stock.totalCost | currency }}</strong>
+          </div>
+
+          <div class="stock-card__row">
+            <span>Change</span>
+            <span class="chip"
+                  [ngClass]="{ 'chip--up': stock.change > 0,
+                               'chip--down': stock.change < 0 }">
+               <i class="bi"
+                    [ngClass]="stock.change > 0 ? 'bi-arrow-up-short' : 'bi-arrow-down-short'">
+                </i>
+              {{ stock.change | number:'1.2-2' }}%
+            </span>
+          </div>
+
+          <div class="stock-card__row">
+            <span>Current&nbsp;Price</span>
+            <strong>{{ stock.price | currency }}</strong>
+          </div>
+
+          <div class="stock-card__row">
+            <span>Market&nbsp;Value</span>
+            <strong>{{ stock.quantity * stock.price | currency }}</strong>
+          </div>
+        </section>
+
+        <footer class="stock-card__actions">
+          <button class="btn-icon success"
+                  (click)="openBuyModal(stock.ticker)">
+            <i class="bi bi-plus-circle"></i> Buy
+          </button>
+
+          <button class="btn-icon danger"
+                  (click)="openSellModal(stock.ticker, stock.quantity)">
+            <i class="bi bi-dash-circle"></i> Sell
+          </button>
+        </footer>
+
+      </article>
+    </ng-container>
+  </div>
+</div>

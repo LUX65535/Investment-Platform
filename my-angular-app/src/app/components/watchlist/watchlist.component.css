@@ -1,0 +1,96 @@
+.watchlist-title {
+  display: block;
+  margin: 20px auto;
+  text-align: center;
+  font-size: 30px;
+  font-weight: bold;
+}
+
+.triangle-up {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 10px solid green;
+  display: inline-block;
+  margin-right: 5px;
+}
+
+.triangle-down {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 10px solid red;
+  display: inline-block;
+  margin-right: 5px;
+}
+
+.watchlist-container {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.watchlist-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px;
+  border: 1px solid #ddd;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+
+.watchlist-details {
+  flex-grow: 1;
+}
+
+.watchlist-ticker {
+  display: block;
+  font-weight: bold;
+}
+
+.watchlist-company {
+  display: block;
+  color: #555;
+}
+
+.price-change-container {
+  text-align: right;
+}
+
+.watchlist-price {
+  display: block;
+  font-weight: bold;
+}
+
+.watchlist-percentage {
+  display: block;
+}
+
+.positive {
+  color: green;
+}
+
+.negative {
+  color: red;
+}
+
+.close-btn {
+  cursor: pointer;
+  padding: 5px 10px;
+}
+.spinner-container {
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+}
+.empty-watchlist {
+  border: 1px solid #ddd;
+  margin-top: 20px;
+  text-align: center;
+  padding: 15px;
+  font-size: 12px;
+  background-color: #fff0c9;
+}
