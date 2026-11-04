@@ -20,7 +20,8 @@ import indicators from 'highcharts/indicators/indicators';
 indicators(Highcharts);
 volumeByPrice(Highcharts);
 import { estimateOrderCents, paperOrderConfirmation, PendingOrderError, PendingPaperOrder, PortfolioService, ReferenceQuoteRequired } from '../../services/portfolio.service';
-import { MarketBar as AggregateBarResponse, MarketHistoryService, utcDayMonthsBefore, validClosingBars } from '../../services/market-history.service';
+import { MarketModeService } from '../../services/market-mode.service';
+import { MarketBar as AggregateBarResponse, MarketHistoryService, alignedPriceReturns, utcDayMonthsBefore, validClosingBars } from '../../services/market-history.service';
 
 export interface QuoteResponse {
   c: number;
@@ -55,6 +56,7 @@ export interface CompanyProfile {
 }
 
 export interface TopNews {
+  id: string;
   image: string;
   imageReady: boolean;
   headline: string;
@@ -62,6 +64,7 @@ export interface TopNews {
   datetime: number;
   summary: string;
   url: string;
+  relevance: number;
 }
 export interface Trend {
   buy: number;
@@ -137,6 +140,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   searchSubmitting = false;
   DetailIsLoading = false;
   quoteLoading = false;
+  quoteRefreshFailed = false;
+  private nextQuoteRefresh = 0;
   searchError = '';
   suggestionsError = false;
   watchlistPending = false;
@@ -149,6 +154,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   overviewStart: number | null = null;
   overviewEnd: number | null = null;
   overviewReturn: number | null = null;
+  compareWithSpy = false;
+  benchmarkLoading = false;
+  benchmarkFailed = false;
+  benchmarkResult: { start: number; end: number; stock: number; spy: number } | null = null;
+  private benchmarkBars: AggregateBarResponse[] | null = null;
   private hourlyBars: AggregateBarResponse[] | null = null;
   private overviewDailyBars: AggregateBarResponse[] | null = null;
   private overviewDailyLoading = false;
@@ -164,6 +174,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     { id: 'insights', label: 'Insights' },
   ];
   private readonly destroyRef = inject(DestroyRef);
+  readonly market = inject(MarketModeService);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private searchSubscription = new Subscription();
   activeTab: DetailTab = 'summary';
@@ -467,6 +478,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   getTopNews(ticker: string): Observable<TopNews[]> {
+    const company = this.searchResults?.name ?? '';
+    const compactName = company.replace(/(?:,?\s+)(?:incorporated|inc\.?|corp\.?|corporation|company|co\.?|limited|ltd\.?|plc)$/i, '').trim();
+    const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const nameMatch = compactName.length >= 3
+      ? new RegExp(`\\b${escape(compactName)}\\b`, 'i') : null;
+    const tickerMatch = ticker.length > 1
+      ? new RegExp(`(?:^|[^A-Za-z0-9])\\$?${escape(ticker)}(?=$|[^A-Za-z0-9])`) : null;
+    const mentionsCompany = (text: string) => Boolean(nameMatch?.test(text) || tickerMatch?.test(text));
     return this.http.get<unknown>('/company_news', { params: { symbol: ticker } }).pipe(
       map(payload => {
         if (!Array.isArray(payload)) throw new Error('Unexpected news response');
@@ -475,23 +494,27 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         for (const item of payload) {
           const headline = this.newsText(item?.headline);
           const url = this.httpsUrl(item?.url);
-          if (!headline || !url) continue;
+          const sampleId = this.market.sample && item?.sample === true ? this.newsText(item.id) : '';
+          const id = url || sampleId;
+          if (!headline || !id) continue;
 
+          const summary = this.newsText(item.summary);
           articles.push({
-            headline, url, image: this.httpsUrl(item.image), imageReady: false,
-            source: this.newsText(item.source) || new URL(url).hostname,
-            summary: this.newsText(item.summary),
+            id, headline, url, image: this.httpsUrl(item.image), imageReady: false,
+            source: this.newsText(item.source) || (url ? new URL(url).hostname : 'Demo research notes'),
+            summary,
+            relevance: mentionsCompany(headline) ? 2 : mentionsCompany(summary) ? 1 : 0,
             datetime: Number.isFinite(item.datetime) && item.datetime > 0 && item.datetime < 4_102_444_800
               ? item.datetime : 0,
           });
         }
 
-        const seenUrls = new Set<string>();
+        const seenIds = new Set<string>();
         const seenHeadlines = new Set<string>();
-        const latest = articles.sort((a, b) => b.datetime - a.datetime).filter(article => {
+        const latest = articles.sort((a, b) => b.relevance - a.relevance || b.datetime - a.datetime).filter(article => {
           const key = article.headline.toLowerCase();
-          if (seenUrls.has(article.url) || seenHeadlines.has(key)) return false;
-          seenUrls.add(article.url);
+          if (seenIds.has(article.id) || seenHeadlines.has(key)) return false;
+          seenIds.add(article.id);
           seenHeadlines.add(key);
           return true;
         }).slice(0, 40);
@@ -554,7 +577,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   trackNews(_index: number, article: TopNews): string {
-    return article.url;
+    return article.id;
   }
 
   showMoreNews(): void {
@@ -831,12 +854,20 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.overviewEnd = end?.t ?? null;
     this.overviewReturn = start && end && visible.length > 1 ? (end.c / start.c - 1) * 100 : null;
     if (visible.length < 2) {
+      this.benchmarkResult = null;
       this.chartOptions = {};
       return;
     }
 
     const seriesData = visible.map(point => [point.t, point.c]);
     const ticker = this.lastSuccessfulSearch ?? '';
+    const aligned = this.compareWithSpy && range !== 'Hourly' && this.benchmarkBars
+      ? alignedPriceReturns(visible, this.benchmarkBars) : [];
+    this.benchmarkResult = null;
+    if (aligned.length >= 2) {
+      this.renderBenchmark(ticker, aligned);
+      return;
+    }
 
     this.chartOptions = {
       title: { text: '' },
@@ -871,7 +902,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         backgroundColor: 'transparent',
         style: { fontFamily: 'inherit' },
       },
-      accessibility: { description: `${ticker} ${range === 'Hourly' ? 'hourly' : 'daily'} closing prices from Polygon.` },
+      accessibility: { description: `${ticker} ${range === 'Hourly' ? 'hourly' : 'daily'} closing prices from ${this.market.historySource}.` },
       exporting: {
         enabled: false,
       },
@@ -892,6 +923,29 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     };
   }
 
+  private renderBenchmark(ticker: string, aligned: Array<[number, number, number]>): void {
+    const [end, stock, spy] = aligned[aligned.length - 1];
+    this.benchmarkResult = { start: aligned[0][0], end, stock, spy };
+    this.chartOptions = {
+      title: { text: '' },
+      chart: { animation: false, backgroundColor: 'transparent', style: { fontFamily: 'inherit' } },
+      xAxis: { type: 'datetime', crosshair: true, tickPixelInterval: 100 },
+      yAxis: {
+        title: { text: null }, opposite: true, gridLineColor: '#e3eaf7', labels: { format: '{value}%' },
+        plotLines: [{ value: 0, color: '#a9b7cd', width: 1 }],
+      },
+      tooltip: { shared: true, valueSuffix: '%', valueDecimals: 2 },
+      plotOptions: { series: { animation: false, marker: { enabled: false } } },
+      legend: { enabled: true },
+      accessibility: { description: `${ticker} and SPY price returns on matching trading days, rebased to zero.` },
+      exporting: { enabled: false },
+      series: [
+        { type: 'line', name: ticker, color: '#245adb', lineWidth: 2.5, data: aligned.map(([day, value]) => [day, value]) },
+        { type: 'line', name: 'SPY', color: '#75649f', dashStyle: 'ShortDash', data: aligned.map(([day, , value]) => [day, value]) },
+      ],
+    };
+  }
+
   ngOnDestroy(): void {
     this.searchSubscription.unsubscribe();
     this.tradeModal?.close();
@@ -903,16 +957,19 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     interval(30000).pipe(
       switchMap(() => {
         const ticker = this.lastSuccessfulSearch;
-        if (!ticker || document.hidden) return of(null);
+        if (!ticker || document.hidden || Date.now() < this.nextQuoteRefresh) return of(null);
         const context = this.searchSubscription;
         return this.getLatestQuote(ticker).pipe(
-          map(quote => ({ ticker, quote, context })),
-          catchError(() => of(null))
+          map(quote => ({ quote, context, retryAfter: 0 })),
+          catchError((error: HttpErrorResponse) => of({ quote: null, context, retryAfter: Number(error.headers?.get('Retry-After')) || 0 }))
         );
       }),
       takeUntilDestroyed(this.destroyRef)
     ).subscribe(update => {
-      if (update?.quote && update.context === this.searchSubscription) {
+      if (update?.context === this.searchSubscription) {
+        this.nextQuoteRefresh = Date.now() + Math.max(0, Math.min(update.retryAfter, 300)) * 1000;
+        this.quoteRefreshFailed = !update.quote || Boolean(this.currentStock && update.quote.t < this.currentStock.t);
+        if (!update.quote || this.quoteRefreshFailed) return;
         const previousQuote = this.currentStock;
         this.currentStock = update.quote;
         const nextDay = !previousQuote || Math.floor(previousQuote.t / 86_400) !== Math.floor(update.quote.t / 86_400);
@@ -1052,6 +1109,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.lastSuccessfulSearch = null;
     this.DetailIsLoading = false;
     this.quoteLoading = false;
+    this.quoteRefreshFailed = false;
+    this.nextQuoteRefresh = 0;
     this.searchError = '';
     this.searchResults = null;
     this.companyLogoReady = false;
@@ -1065,6 +1124,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.overviewDailyBars = null;
     this.overviewDailyLoading = false;
     this.overviewDailyFailed = false;
+    this.compareWithSpy = false;
+    this.benchmarkBars = null;
+    this.benchmarkResult = null;
+    this.benchmarkLoading = false;
+    this.benchmarkFailed = false;
     this.overviewStart = null;
     this.overviewEnd = null;
     this.overviewReturn = null;
@@ -1175,6 +1239,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       this.loadHourly(ticker);
       return;
     }
+    this.loadBenchmark();
     if (this.overviewDailyLoading || this.overviewDailyBars) return;
     this.overviewDailyFailed = false;
     this.overviewDailyLoading = true;
@@ -1189,9 +1254,35 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }));
   }
 
+  toggleBenchmark(): void {
+    if (!this.lastSuccessfulSearch || this.lastSuccessfulSearch === 'SPY') return;
+    this.compareWithSpy = !this.compareWithSpy;
+    if (this.compareWithSpy && this.overviewRange === 'Hourly') this.overviewRange = '1M';
+    this.renderOverview();
+    this.loadOverview();
+    this.updateViewQuery();
+  }
+
+  loadBenchmark(): void {
+    if (!this.compareWithSpy || this.benchmarkLoading || this.benchmarkBars || !this.lastSuccessfulSearch
+      || this.lastSuccessfulSearch === 'SPY' || this.overviewRange === 'Hourly') return;
+    this.benchmarkFailed = false;
+    this.benchmarkLoading = true;
+    this.searchSubscription.add(this.getBigChartData('SPY').pipe(
+      finalize(() => this.benchmarkLoading = false),
+    ).subscribe({
+      next: ({ results }) => {
+        this.benchmarkBars = results;
+        this.renderOverview();
+      },
+      error: () => this.benchmarkFailed = true,
+    }));
+  }
+
   selectOverviewRange(range: OverviewRange): void {
     if (this.overviewRange === range) return;
     this.overviewRange = range;
+    if (range === 'Hourly') this.compareWithSpy = false;
     this.renderOverview();
     this.loadOverview();
     this.updateViewQuery();
@@ -1212,10 +1303,12 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const tab = this.detailTabs.find(item => item.id === query.get('view'))?.id ?? 'summary';
     const range = overviewRanges.find(item => item.toLowerCase() === query.get('range')) ?? '1M';
     const history = historyRanges.find(item => item.toLowerCase() === query.get('history')) ?? '1M';
-    const viewChanged = tab !== this.activeTab || range !== this.overviewRange;
+    const comparison = Boolean(ticker && ticker.toUpperCase() !== 'SPY' && query.get('compare') === 'spy' && range !== 'Hourly');
+    const viewChanged = tab !== this.activeTab || range !== this.overviewRange || comparison !== this.compareWithSpy;
     this.activeTab = tab;
-    if (range !== this.overviewRange) {
+    if (range !== this.overviewRange || comparison !== this.compareWithSpy) {
       this.overviewRange = range;
+      this.compareWithSpy = comparison;
       this.renderOverview();
     }
     if (history !== this.historyRange) this.updateHistoryRange(history);
@@ -1230,6 +1323,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         view: this.activeTab === 'summary' ? null : this.activeTab,
         range: this.overviewRange === '1M' ? null : this.overviewRange.toLowerCase(),
         history: history === '1m' ? null : history,
+        compare: this.compareWithSpy ? 'spy' : null,
       },
       queryParamsHandling: 'merge',
       preserveFragment: true,
@@ -1326,7 +1420,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   getLatestQuote(ticker: string): Observable<QuoteResponse | null> {
     return this.http.get<QuoteResponse>('/company_quote', { params: { symbol: ticker } }).pipe(
       map(quote => quote && Number.isFinite(quote.c) && quote.c > 0
-        && Number.isFinite(quote.t) && quote.t > 0 ? quote : null),
+        && Number.isSafeInteger(quote.t) && quote.t > 0 && quote.t <= Math.floor(Date.now() / 1000) + 60 ? quote : null),
     );
   }
 

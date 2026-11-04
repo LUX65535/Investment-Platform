@@ -5,25 +5,35 @@ const axios = require('axios');
 const { subDays, format } = require('date-fns');
 const { MongoClient, ServerApiVersion } = require('mongodb');
 const path = require('node:path');
+const sampleMarket = require('./lib/sample-market');
 const createPaperRouter = require('./routes/paper-sandbox');
 
 const app = express();
 const uri = process.env.MONGO_URI;
 const configuredDatabaseName = process.env.MONGO_DB_NAME?.trim();
 const databaseName = configuredDatabaseName || 'Assignment3';
+const configuredMarketMode = process.env.MARKET_DATA_MODE?.trim().toLowerCase();
+const marketDataMode = configuredMarketMode === 'live' || (!configuredMarketMode && process.env.VERCEL !== '1')
+  ? 'live' : 'sample';
 const maxMarketResponseBytes = 4_000_000;
 const maxHourlyRangeMs = 31 * 24 * 60 * 60 * 1000;
 const maxMarketRequests = 32;
+const maxMarketCacheEntries = 256;
+const maxMarketCacheBytes = 8_000_000;
 const marketRequests = new Map();
+const marketReadCache = new Map();
+let marketCacheBytes = 0;
 const finnhub = {
   origin: 'https://finnhub.io/api/v1',
   key: process.env.API_KEY,
   keyParameter: 'token',
+  retryAt: 0,
 };
 const polygon = {
   origin: 'https://api.polygon.io/v2',
   key: process.env.API_POLY_KEY,
   keyParameter: 'apiKey',
+  retryAt: 0,
 };
 const browserFiles = path.join(__dirname, 'my-angular-app/dist/my-angular-app/browser');
 let client;
@@ -46,16 +56,34 @@ function calendarDateTimestamp(value) {
   return Number.isFinite(timestamp) && date.toISOString().startsWith(value) ? timestamp : NaN;
 }
 
+function marketRequestKey(provider, endpoint, params) {
+  return JSON.stringify([provider.origin, endpoint, params]);
+}
+
+function providerRetryAt(header) {
+  const now = Date.now();
+  const value = typeof header === 'string' ? header.trim() : '';
+  const seconds = /^\d+$/.test(value)
+    ? Number(value)
+    : /^[A-Za-z]/.test(value) ? (Date.parse(value) - now) / 1000 : NaN;
+  const delay = Number.isFinite(seconds) ? Math.max(1, Math.min(seconds, 300)) : 30;
+  return now + delay * 1000;
+}
+
+function marketBusy(retryAt) {
+  return Object.assign(new Error('Market data is busy'), { status: 503, retryAt });
+}
+
 async function requestMarketData(provider, endpoint, params) {
+  if (marketDataMode === 'sample') return sampleMarket(endpoint, params);
   if (!provider.key) {
     throw Object.assign(new Error('Market data is unavailable'), { status: 503 });
   }
-  const requestKey = JSON.stringify([provider.origin, endpoint, params]);
+  const requestKey = marketRequestKey(provider, endpoint, params);
   const pending = marketRequests.get(requestKey);
   if (pending) return pending;
-  if (marketRequests.size >= maxMarketRequests) {
-    throw Object.assign(new Error('Market data is busy'), { status: 503 });
-  }
+  if (provider.retryAt > Date.now()) throw marketBusy(provider.retryAt);
+  if (marketRequests.size >= maxMarketRequests) throw marketBusy(Date.now() + 1000);
 
   const request = axios.get(provider.origin + endpoint, {
     params: { ...params, [provider.keyParameter]: provider.key },
@@ -64,10 +92,16 @@ async function requestMarketData(provider, endpoint, params) {
     responseType: 'json',
     transitional: { silentJSONParsing: false },
   }).then(({ data }) => {
-    if (data === null || typeof data !== 'object' || (endpoint === '/company-news' && !Array.isArray(data))) {
+    if (data === null || typeof data !== 'object' || Object.hasOwn(data, 'error')
+      || (endpoint === '/company-news' && !Array.isArray(data))) {
       throw new Error('Market provider returned an unexpected response');
     }
     return data;
+  }).catch(error => {
+    if (error.response?.status !== 429) throw error;
+    const retryAt = providerRetryAt(error.response.headers?.['retry-after']);
+    provider.retryAt = Math.max(provider.retryAt, retryAt);
+    throw marketBusy(provider.retryAt);
   });
 
   marketRequests.set(requestKey, request);
@@ -85,15 +119,50 @@ function sendMarketError(res, error, key = 'error') {
   else if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') status = 504;
   // An upstream 4xx has no terminal paper receipt and must leave the order retryable.
   else if (key === 'error' && (upstreamStatus === 400 || upstreamStatus === 404)) status = upstreamStatus;
+  if (error.retryAt) res.set('Retry-After', String(Math.max(1, Math.ceil((error.retryAt - Date.now()) / 1000))));
   res.status(status).json({ [key]: 'Market data is temporarily unavailable. Please try again.' });
+}
+
+function removeMarketRead(key) {
+  marketCacheBytes -= marketReadCache.get(key).body.length;
+  marketReadCache.delete(key);
+}
+
+function getCachedMarketRead(key) {
+  const entry = marketReadCache.get(key);
+  if (!entry || entry.expiresAt > Date.now()) return entry;
+  removeMarketRead(key);
+}
+
+async function readMarketData(provider, endpoint, params) {
+  const key = marketRequestKey(provider, endpoint, params);
+  const cached = getCachedMarketRead(key);
+  if (cached) return cached;
+
+  const data = await requestMarketData(provider, endpoint, params);
+  // Another public reader of this in-flight request may have already cached it.
+  const completed = getCachedMarketRead(key);
+  if (completed) return completed;
+
+  const body = Buffer.from(JSON.stringify(data));
+  const ttl = endpoint === '/quote' ? 10_000 : 30_000;
+  const entry = { body, expiresAt: Date.now() + ttl };
+  if (body.length <= maxMarketCacheBytes) {
+    while (marketReadCache.size >= maxMarketCacheEntries || marketCacheBytes + body.length > maxMarketCacheBytes) {
+      removeMarketRead(marketReadCache.keys().next().value);
+    }
+    marketReadCache.set(key, entry);
+    marketCacheBytes += body.length;
+  }
+  return entry;
 }
 
 async function sendMarketData(res, provider, endpoint, params) {
   try {
-    const data = await requestMarketData(provider, endpoint, params);
-    const sharedCacheSeconds = endpoint === '/quote' ? 10 : 30;
+    const { body, expiresAt } = await readMarketData(provider, endpoint, params);
+    const sharedCacheSeconds = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
     res.set('Cache-Control', `public, max-age=0, s-maxage=${sharedCacheSeconds}`);
-    res.json(data);
+    res.set('Content-Type', 'application/json; charset=utf-8').send(body);
   } catch (error) {
     res.set('Cache-Control', 'no-store');
     sendMarketError(res, error);
@@ -109,6 +178,10 @@ const finnhubRoutes = {
   '/company_peers': '/stock/peers',
   '/company_Earning': '/stock/earnings',
 };
+
+app.get('/company_market_mode', (_req, res) => {
+  res.set('Cache-Control', 'no-store').json({ mode: marketDataMode });
+});
 
 for (const [route, endpoint] of Object.entries(finnhubRoutes)) {
   app.get(route, (req, res) => {
@@ -209,7 +282,8 @@ async function getTradeMarket(ticker) {
   return { quote, currency };
 }
 
-app.use('/api', createPaperRouter({ normalizeTicker, getTradeMarket, sendMarketError, sendDatabaseError }));
+app.use('/api', createPaperRouter({ normalizeTicker, getTradeMarket, sendMarketError, sendDatabaseError,
+  sampleMarket: marketDataMode === 'sample' }));
 app.use('/api', (req, res) => {
   res.status(404).json({ message: 'API endpoint not found' });
 });

@@ -110,14 +110,21 @@
   .performance-stat { padding: .21rem .38rem; }
   .performance-stat .quote-movement { font-size: .9rem; }
 
-  .security--charts .security-header {
+  :is(.security--charts, .security--comparison) .security-header {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: .3rem .55rem;
     padding: .5rem;
   }
 
-  .security--charts .security-quote p { line-height: 1.25; }
-  .security--charts .detail-tabs { margin-bottom: .35rem; }
+  :is(.security--charts, .security--comparison) .security-quote p { line-height: 1.25; }
+  :is(.security--charts, .security--comparison) .detail-tabs { margin-bottom: .35rem; }
+
+  .overview-toolbar { gap: .3rem; }
+  .overview-toolbar .range-switch button { min-width: 2.75rem; }
+  .benchmark-toggle { padding-inline: .42rem; }
+  .benchmark-wide-label { display: none; }
+  .benchmark-small-label { display: inline; }
+  .security--comparison .overview-grid .chart-panel { padding: .5rem; }
 
   .chart-panel--history { padding: .5rem; }
   .chart-panel--history .panel-heading { margin-bottom: .45rem; }

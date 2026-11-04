@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { createHash, randomUUID } = require('node:crypto');
 const { once } = require('node:events');
+const { request: httpRequest } = require('node:http');
 const { test } = require('node:test');
 const express = require('express');
 const { MongoClient } = require('mongodb');
@@ -95,13 +96,23 @@ async function fixture(t) {
     async function request(path, method = 'GET', body, additionalHeaders) {
       const headers = { ...additionalHeaders };
       if (cookie) headers.Cookie = cookie;
-      if (body) headers['Content-Type'] = 'application/json';
-      const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/' + path, {
-        method, headers, body: body && JSON.stringify(body),
+      const payload = body && JSON.stringify(body);
+      if (payload) headers['Content-Type'] = 'application/json';
+      // Windows can assign ephemeral ports reserved by Fetch for browser safety.
+      const response = await new Promise((resolve, reject) => {
+        const request = httpRequest({
+          hostname: '127.0.0.1', port: server.address().port, path: '/api/' + path, method, headers, timeout: 5000,
+        }, resolve);
+        request.on('timeout', () => request.destroy(new Error('Paper fixture request timed out')));
+        request.on('error', reject);
+        request.end(payload);
       });
-      const setCookie = response.headers.get('set-cookie');
+      const setCookie = response.headers['set-cookie']?.[0] ?? null;
       if (setCookie) cookie = setCookie.split(';')[0];
-      return { status: response.status, body: await response.json(), setCookie, cache: response.headers.get('cache-control') };
+      response.setEncoding('utf8');
+      let json = '';
+      for await (const chunk of response) json += chunk;
+      return { status: response.statusCode, body: JSON.parse(json), setCookie, cache: response.headers['cache-control'] };
     }
     return {
       request,

@@ -64,7 +64,7 @@
   <button type="button" class="close-button" aria-label="Dismiss notification" (click)="closeConfirmation()">&times;</button>
 </div>
 
-<div *ngIf="searchResults as company" class="security" [class.security--charts]="activeTab === 'charts'">
+<div *ngIf="searchResults as company" class="security" [class.security--charts]="activeTab === 'charts'" [class.security--comparison]="compareWithSpy && activeTab === 'summary'">
   <section class="security-header" aria-labelledby="security-title">
     <div class="security-identity">
       <div class="security-mark" aria-hidden="true">
@@ -80,14 +80,14 @@
     </div>
 
     <div class="security-quote" *ngIf="currentStock as quote; else quoteUnavailable">
-      <p class="quote-caption">Latest quote<span *ngIf="company.currency"> · {{ company.currency }}</span></p>
+      <p class="quote-caption">{{ quoteRefreshFailed ? 'Last available quote' : 'Latest quote' }}<span *ngIf="company.currency"> · {{ company.currency }}</span></p>
       <div class="quote-values">
         <span class="quote-price">{{ company.currency ? (quote.c | currency:company.currency) : (quote.c | number:'1.2-2') }}</span>
         <span class="quote-movement" [class.quote-up]="quote.dp > 0" [class.quote-down]="quote.dp < 0">
           {{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})
         </span>
       </div>
-      <p>Finnhub · <time [attr.datetime]="quote.t * 1000 | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ quote.t * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC</time><span *ngIf="!company.currency"> · Currency unavailable</span></p>
+      <p>{{ market.quoteSource }} · <time [attr.datetime]="quote.t * 1000 | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ quote.t * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC</time><span *ngIf="!company.currency"> · Currency unavailable</span></p>
     </div>
     <ng-template #quoteUnavailable>
       <p class="security-quote quote-note" role="status">{{ quoteLoading ? 'Loading latest quote…' : 'Latest quote unavailable. Historical prices and company details may still be available.' }}</p>
@@ -140,21 +140,38 @@
           <div>
             <p class="chart-eyebrow">Market performance</p>
             <h2 id="overview-chart-title">Price history</h2>
-            <p>{{ overviewRange === 'Hourly' ? 'Hourly' : 'Daily' }} closes from Polygon</p>
+            <p>{{ benchmarkResult ? 'Price return from a shared start · excludes dividends' : (overviewRange === 'Hourly' ? 'Hourly closes · ' : 'Through the last available daily close · ') + market.historySource }}</p>
           </div>
-          <div *ngIf="overviewReturn !== null" class="performance-stat" role="status">
+          <div *ngIf="overviewReturn !== null && !benchmarkResult" class="performance-stat" role="status">
             <span class="quote-movement" [class.quote-up]="overviewReturn > 0" [class.quote-down]="overviewReturn < 0">
               {{ overviewReturn > 0 ? '+' : '' }}{{ overviewReturn | number:'1.2-2' }}%
             </span>
             <p>Period change</p>
           </div>
         </div>
-        <div class="range-switch" role="group" aria-label="Price performance period">
-          <button *ngFor="let range of overviewRanges" type="button"
-                  [attr.aria-pressed]="overviewRange === range"
-                  (click)="selectOverviewRange(range)">{{ range }}</button>
+        <div class="overview-toolbar">
+          <div class="range-switch" role="group" aria-label="Price performance period">
+            <button *ngFor="let range of overviewRanges" type="button"
+                    [attr.aria-pressed]="overviewRange === range"
+                    (click)="selectOverviewRange(range)">{{ range }}</button>
+          </div>
+          <button *ngIf="company.ticker !== 'SPY'" type="button" class="benchmark-toggle"
+                  aria-label="Compare with SPY" [attr.aria-pressed]="compareWithSpy" (click)="toggleBenchmark()">
+            <span class="benchmark-wide-label">Compare with SPY</span><span class="benchmark-small-label" aria-hidden="true">vs SPY</span>
+          </button>
         </div>
-        <p *ngIf="overviewStart !== null && overviewEnd !== null" class="panel-note mb-2">
+        <div *ngIf="benchmarkResult as benchmark" class="benchmark-summary" role="status">
+          <span><strong>{{ company.ticker }}</strong> {{ benchmark.stock > 0 ? '+' : '' }}{{ benchmark.stock | number:'1.2-2' }}%</span>
+          <span><strong>SPY</strong> {{ benchmark.spy > 0 ? '+' : '' }}{{ benchmark.spy | number:'1.2-2' }}%</span>
+          <span><strong>Gap</strong> {{ benchmark.stock > benchmark.spy ? '+' : '' }}{{ benchmark.stock - benchmark.spy | number:'1.2-2' }} pp</span>
+        </div>
+        <p *ngIf="compareWithSpy && benchmarkLoading" class="panel-note mb-2" role="status">Loading SPY benchmark…</p>
+        <p *ngIf="compareWithSpy && benchmarkFailed" class="panel-note mb-2" role="status">
+          SPY is temporarily unavailable. <button type="button" class="state-action" (click)="loadBenchmark()">Retry SPY</button>
+        </p>
+        <p *ngIf="compareWithSpy && !benchmarkFailed && !benchmarkLoading && !benchmarkResult && !overviewLoading && !overviewFailed"
+           class="panel-note mb-2" role="status">There are too few matching trading days to compare this period.</p>
+        <p *ngIf="!benchmarkResult && overviewStart !== null && overviewEnd !== null" class="panel-note mb-2">
           <ng-container *ngIf="overviewRange === 'Hourly'">Bar timestamps · </ng-container>
           {{ overviewStart | date:(overviewRange === 'Hourly' ? 'MMM d, HH:mm' : 'MMM d, yyyy'):'+0000' }} to
           {{ overviewEnd | date:(overviewRange === 'Hourly' ? 'MMM d, HH:mm' : 'MMM d, yyyy'):'+0000' }} UTC
@@ -167,8 +184,12 @@
             <button *ngIf="overviewFailed" type="button" class="state-action" (click)="loadOverview()">Retry prices</button>
           </div>
           <highcharts-chart *ngIf="chartOptions.series?.length" [Highcharts]="Highcharts"
-                            [options]="chartOptions" class="chart chart--intraday"></highcharts-chart>
+                            [options]="chartOptions" [oneToOne]="true" class="chart chart--intraday"></highcharts-chart>
         </div>
+        <p *ngIf="benchmarkResult as benchmark" class="panel-note mb-2">
+          Matching trading days · {{ benchmark.start | date:'MMM d, yyyy':'+0000' }} to
+          {{ benchmark.end | date:'MMM d, yyyy':'+0000' }} · {{ market.historySource }}
+        </p>
         <button type="button" class="state-action" (click)="openHistory()">Open advanced chart</button>
       </section>
 
@@ -206,17 +227,17 @@
         <div>
           <p class="chart-eyebrow">Company coverage</p>
           <h2 id="news-title">Top News</h2>
-          <p>Recent reporting on {{ company.name || company.ticker }}</p>
+          <p>Company reporting and market context for {{ company.name || company.ticker }}</p>
         </div>
-        <span class="news-feed">Via Finnhub</span>
+        <span class="news-feed">{{ market.sample ? 'Fictional stories' : market.quoteSource }}</span>
       </header>
 
       <ng-container *ngIf="topNews[0] as lead; else noNews">
-        <article class="news-lead" aria-label="Latest story">
+        <article class="news-lead" aria-label="Featured story">
           <button type="button" class="news-story news-story--lead" [class.news-story--with-image]="lead.imageReady"
                   (click)="openNews(newsDialog, lead)">
             <span class="news-copy">
-              <span class="news-lead-label">Latest story</span>
+              <span class="news-lead-label">{{ lead.relevance === 2 ? 'Company in the headlines' : lead.relevance === 1 ? 'Company mention' : 'Market context' }}</span>
               <ng-container *ngTemplateOutlet="newsMeta; context: { $implicit: lead }"></ng-container>
               <span class="news-headline">{{ lead.headline }}</span>
               <span class="news-excerpt" *ngIf="lead.summary">{{ lead.summary }}</span>
@@ -228,7 +249,7 @@
 
         <section class="data-panel news-panel" *ngIf="topNews.length > 1" aria-labelledby="more-news-title">
           <header class="panel-heading">
-            <div><h3 id="more-news-title">More coverage</h3><p>Latest first</p></div>
+            <div><h3 id="more-news-title">More coverage</h3><p>Company headlines first, then related market stories</p></div>
             <span class="news-count" role="status">{{ visibleNewsCount < topNews.length ? visibleNewsCount - 1 : topNews.length - 1 }} of {{ topNews.length - 1 }} stories</span>
           </header>
           <ul class="news-list">
@@ -287,7 +308,7 @@
 
     <div class="insights-grid" *ngIf="activeTab === 'insights' && !loadingTabs.has('insights') && !failedTabs.has('insights')">
       <section class="data-panel facts-panel sentiment-panel" aria-labelledby="sentiment-title">
-        <div class="panel-heading"><div><h2 id="sentiment-title">Insider sentiment</h2><p>Reported activity · via Finnhub</p></div></div>
+        <div class="panel-heading"><div><h2 id="sentiment-title">Insider sentiment</h2><p>{{ market.sample ? 'Illustrative transactions' : 'Reported activity · ' + market.quoteSource }}</p></div></div>
         <p *ngIf="!sentiments?.data?.length" class="panel-note">Insider data is unavailable for this symbol.</p>
         <table *ngIf="sentiments?.data?.length" class="sentiment-table">
           <thead><tr><th scope="col">Activity</th><th scope="col">MSPR</th><th scope="col">Change</th></tr></thead>
@@ -365,12 +386,18 @@
         <button type="button" class="btn-close" aria-label="Close news article" (click)="modal.dismiss()"></button>
       </div>
       <div class="modal-body">
-        <p class="news-summary">{{ article.summary || 'Read the article at the publisher for the full story.' }}</p>
+        <p class="news-summary">{{ article.summary || 'The full story is available at the publisher.' }}</p>
+        <p *ngIf="!article.url" class="panel-note">Fictional reporting for this simulated market scenario.</p>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary" (click)="shareOnPlatform(article, 'twitter')">Share on X</button>
-        <button type="button" class="btn btn-outline-secondary" (click)="shareOnPlatform(article, 'facebook')">Share on Facebook</button>
-        <a class="btn btn-primary" [href]="article.url" target="_blank" rel="noopener noreferrer">Read at publisher ↗</a>
+        <ng-container *ngIf="article.url; else closeSampleArticle">
+          <button type="button" class="btn btn-outline-secondary" (click)="shareOnPlatform(article, 'twitter')">Share on X</button>
+          <button type="button" class="btn btn-outline-secondary" (click)="shareOnPlatform(article, 'facebook')">Share on Facebook</button>
+          <a class="btn btn-primary" [href]="article.url" target="_blank" rel="noopener noreferrer">Read at publisher ↗</a>
+        </ng-container>
+        <ng-template #closeSampleArticle>
+          <button type="button" class="btn btn-primary" (click)="modal.dismiss()">Close brief</button>
+        </ng-template>
       </div>
     </ng-container>
   </ng-template>

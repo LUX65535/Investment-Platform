@@ -34,7 +34,7 @@
       </a>
     </nav>
 
-    <span class="mode-badge"><span aria-hidden="true"></span>Paper trading</span>
+    <span class="mode-badge"><span aria-hidden="true"></span>{{ market.sample ? 'Simulated data' : 'Paper trading' }}</span>
   </div>
 </header>
 
@@ -45,6 +45,7 @@
 <footer *ngIf="!embeddedResearch" class="app-footer">
   <div class="shell-width footer-inner">
     <span>Investment Platform <span class="footer-mode">· Simulated orders</span></span>
-    <span>Quotes and news by <a href="https://finnhub.io" target="_blank" rel="noopener noreferrer">Finnhub</a> · Chart data by Polygon</span>
+    <span *ngIf="market.live">Quotes and news by <a href="https://finnhub.io" target="_blank" rel="noopener noreferrer">Finnhub</a> · Chart data by Polygon</span>
+    <span *ngIf="market.sample">Synthetic prices, news, and analytics for the demo.</span>
   </div>
 </footer>

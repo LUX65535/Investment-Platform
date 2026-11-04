@@ -152,8 +152,6 @@
 }
 
 
-.search-form--landing .search-help { color: #d3e2fb; }
-
 .search-error {
   margin: .55rem 0 0;
   padding: .6rem .72rem;
@@ -488,6 +486,45 @@
 
 .range-switch button:hover {
   color: var(--accent);
+}
+
+.overview-toolbar {
+  display: flex;
+  align-items: flex-start;
+  gap: .4rem .65rem;
+  flex-wrap: wrap;
+  margin-bottom: .5rem;
+}
+
+.overview-toolbar .range-switch { margin-bottom: 0; }
+
+.benchmark-toggle {
+  min-height: 2.75rem;
+  padding: .4rem .65rem;
+  border: 1px solid var(--line);
+  border-radius: .45rem;
+  background: #fff;
+  color: #294878;
+  font-size: .8rem;
+  font-weight: 650;
+}
+
+.benchmark-small-label { display: none; }
+
+.benchmark-toggle[aria-pressed="true"] {
+  background: #e8eefc;
+  border-color: #8eabec;
+  color: #1b438f;
+}
+
+.benchmark-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem .85rem;
+  margin-bottom: .25rem;
+  color: #30496b;
+  font-size: .82rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .range-switch button[aria-pressed="true"] {

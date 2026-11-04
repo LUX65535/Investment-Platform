@@ -1,7 +1,6 @@
 const express = require('express');
 const { createHash, randomBytes } = require('node:crypto');
 
-const cookieName = 'investment_paper_v1';
 const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
 const startingCashCents = 2_500_000;
 const limits = { watchlist: 50, positions: 100, receipts: 500, writes: 2500 };
@@ -11,7 +10,7 @@ const referenceQuoteSeconds = 7 * 24 * 60 * 60;
 const quoteClockSkewSeconds = 60;
 const uuidPattern = /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
 
-function cookieToken(req) {
+function cookieToken(req, cookieName) {
   const entry = req.get('cookie')?.split(';').map(part => part.trim())
     .find(part => part.startsWith(cookieName + '='));
   const token = entry?.slice(cookieName.length + 1);
@@ -23,7 +22,7 @@ function hashToken(token) {
 }
 
 function openSandbox(req, res) {
-  const token = cookieToken(req);
+  const token = cookieToken(req, res.locals.paperCookieName);
   if (!token) return null;
   return res.locals.paper.findOne({ _id: hashToken(token), expiresAt: { $gt: new Date() } });
 }
@@ -221,8 +220,10 @@ function publicPosition({ ticker, quantity, costCents }) {
   return { ticker, quantity, totalCost: dollars(costCents) };
 }
 
-module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, sendMarketError, sendDatabaseError }) {
+module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, sendMarketError, sendDatabaseError, sampleMarket }) {
   const router = express.Router();
+  const cookieName = sampleMarket ? 'investment_paper_sample_v1' : 'investment_paper_v1';
+  const collectionName = sampleMarket ? 'paper_sample_sandboxes' : 'paper_sandboxes';
   let ttlIndex;
 
   const run = handler => async (req, res) => {
@@ -249,7 +250,8 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, s
     if (fetchSite === 'cross-site' || fetchSite === 'same-site') {
       return res.status(403).json({ message: 'Open the paper workspace from its own website.' });
     }
-    res.locals.paper = res.locals.db.collection('paper_sandboxes');
+    res.locals.paper = res.locals.db.collection(collectionName);
+    res.locals.paperCookieName = cookieName;
     return next();
   });
 

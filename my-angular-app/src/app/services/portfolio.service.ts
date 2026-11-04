@@ -1,4 +1,5 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
+import { MarketModeService } from './market-mode.service';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, catchError, defer, firstValueFrom, from, map, shareReplay, switchMap, tap, throwError } from 'rxjs';
 
@@ -42,7 +43,6 @@ interface PaperSession {
   expiresAt: string;
 }
 
-const pendingPrefix = 'investment-paper-order:';
 const orderPrice = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -88,11 +88,16 @@ export function paperOrderConfirmation(receipt: PaperOrderReceipt): string {
   providedIn: 'root'
 })
 export class PortfolioService {
+  private readonly market = inject(MarketModeService);
   private session?: Observable<PaperSession>;
   private sessionExpiry = 0;
   private readonly volatileOrders = new Map<string, PendingPaperOrder>();
 
   constructor(private http: HttpClient) { }
+
+  private get pendingPrefix(): string {
+    return this.market.live ? 'investment-paper-order:' : 'investment-sample-order:';
+  }
 
   getStocks(): Observable<Stock[]> {
     return this.paperRequest(() => this.http.get<Stock[]>('/api/stocks')).pipe(
@@ -144,7 +149,7 @@ export class PortfolioService {
   getPendingOrders(): PendingPaperOrder[] {
     let keys: string[];
     try {
-      keys = Object.keys(localStorage).filter(key => key.startsWith(pendingPrefix));
+      keys = Object.keys(localStorage).filter(key => key.startsWith(this.pendingPrefix));
     } catch {
       keys = [];
     }
@@ -169,7 +174,7 @@ export class PortfolioService {
   private submitOrder(
     side: PaperOrderSide, ticker: string, quantity: number, retry?: PendingPaperOrder,
   ): Observable<PaperOrderReceipt> {
-    return defer(() => from(this.withBrowserLock(`${pendingPrefix}${side}:${ticker}`, async () => {
+    return defer(() => from(this.withBrowserLock(`${this.pendingPrefix}${side}:${ticker}`, async () => {
       const existing = this.getPendingOrder(side, ticker);
       if (retry && existing && retry.orderId !== existing.orderId) {
         throw this.orderConflict('Resolve the pending order before submitting another order for this ticker.');
@@ -222,7 +227,7 @@ export class PortfolioService {
   }
 
   private pendingKey(order: Pick<PendingPaperOrder, 'orderId'>): string {
-    return `${pendingPrefix}${order.orderId}`;
+    return `${this.pendingPrefix}${order.orderId}`;
   }
 
   private readPending(key: string): PendingPaperOrder | undefined {
