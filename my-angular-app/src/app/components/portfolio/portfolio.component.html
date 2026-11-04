@@ -1,58 +1,98 @@
-<header class="page-heading workspace-heading">
+<header class="portfolio-heading">
   <div>
-    <p class="page-eyebrow">Paper trading</p>
-    <h1>Portfolio</h1>
-    <p>Track buying power, open positions, and simulated orders.</p>
+    <p class="account-type">Paper account <span aria-hidden="true">/</span> USD</p>
+    <h1 #portfolioHeading tabindex="-1">Portfolio</h1>
   </div>
-  <span class="workspace-label">Paper account · USD</span>
+  <div class="portfolio-toolbar" aria-label="Portfolio actions">
+    <button type="button" class="state-action" [attr.aria-disabled]="isLoading || isInitializing || isPreparingPortfolio || checkingOrderId !== null"
+            (click)="!isInitializing && !isPreparingPortfolio && !checkingOrderId && loadPortfolio()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 7v5h-5M4 17v-5h5m10.6 0a7.6 7.6 0 0 0-13-5.4L4 9m16 6-2.6 2.4a7.6 7.6 0 0 1-13-5.4"/>
+      </svg>
+      <span>Refresh</span>
+    </button>
+    <a class="state-action research-action" routerLink="/search-details">Find stocks</a>
+  </div>
 </header>
+
+<section *ngIf="(!isLoading && walletInitialized === false) || performance?.canPrepare || isPreparingPortfolio"
+         class="wallet-setup" aria-labelledby="portfolio-setup-title">
+  <div>
+    <h2 id="portfolio-setup-title">{{ performance?.canPrepare || isPreparingPortfolio ? 'Start with a trading history' : 'Open your paper account' }}</h2>
+    <p *ngIf="performance?.canPrepare || isPreparingPortfolio; else emptyWalletCopy">Start with holdings and paper orders priced at actual market closes. New paper trades continue in the same account.</p>
+    <ng-template #emptyWalletCopy><p>Start with $25,000 in paper buying power.</p></ng-template>
+    <p class="wallet-storage">Return in this browser during your 30-day paper session.</p>
+  </div>
+  <div class="wallet-actions">
+    <button *ngIf="performance?.canPrepare || isPreparingPortfolio" type="button" class="state-action research-action"
+            [attr.aria-disabled]="isInitializing || isLoading || isPreparingPortfolio" (click)="onPreparePortfolio($event)">
+      {{ isPreparingPortfolio ? 'Preparing portfolio…' : 'Set up prepared portfolio' }}
+    </button>
+    <button *ngIf="walletInitialized === false" type="button" class="state-action"
+            [attr.aria-disabled]="isInitializing || isPreparingPortfolio" (click)="!isPreparingPortfolio && onInitializeWallet()">
+      {{ isInitializing && !isPreparingPortfolio ? 'Initializing…' : 'Initialize demo wallet' }}
+    </button>
+  </div>
+</section>
+
+<div *ngIf="statusMessage || actionError || loadError" class="account-messages">
+  <p *ngIf="statusMessage" class="state-message" role="status">{{ statusMessage }}</p>
+  <p *ngIf="actionError" class="state-message state-message--error" role="alert">{{ actionError }}</p>
+  <p *ngIf="loadError" class="state-message state-message--error" role="alert">{{ loadError }}</p>
+</div>
 
 <section class="portfolio-overview" aria-label="Portfolio overview" [attr.aria-busy]="isLoading">
   <dl class="portfolio-metrics">
     <div class="portfolio-metric primary-metric">
       <dt>Account value</dt>
-      <dd>{{ accountValue === null ? '—' : (accountValue | currency:'USD') }}</dd>
+      <dd>{{ accountValue === null || walletInitialized === false ? '—' : (accountValue | currency:'USD') }}</dd>
     </div>
     <div class="portfolio-metric">
       <dt>Available cash</dt>
-      <dd>{{ cashBalance === null ? '—' : (cashBalance | currency:'USD') }}</dd>
+      <dd>{{ cashBalance === null || walletInitialized === false ? '—' : (cashBalance | currency:'USD') }}</dd>
     </div>
     <div class="portfolio-metric">
       <dt>Holdings value</dt>
-      <dd>{{ marketValue === null ? '—' : (marketValue | currency:'USD') }}</dd>
+      <dd>{{ marketValue === null || walletInitialized === false ? '—' : (marketValue | currency:'USD') }}</dd>
     </div>
     <div class="portfolio-metric">
       <dt>Unrealized P&amp;L</dt>
       <dd [class.positive]="unrealizedProfit !== null && unrealizedProfit > 0"
           [class.negative]="unrealizedProfit !== null && unrealizedProfit < 0">
-        {{ unrealizedProfit !== null && unrealizedProfit > 0 ? '+' : '' }}{{ unrealizedProfit === null ? '—' : (unrealizedProfit | currency:'USD') }}
+        {{ unrealizedProfit !== null && unrealizedProfit > 0 ? '+' : '' }}{{ unrealizedProfit === null || walletInitialized === false ? '—' : (unrealizedProfit | currency:'USD') }}
       </dd>
     </div>
   </dl>
-  <p *ngIf="holdingsCurrent && portfolio.length && marketValue === null" class="quote-coverage" role="status">
-    {{ quotesPending ? 'Valuation in progress.' : 'Some quotes are unavailable.' }}
-    {{ quotedCount }} of {{ portfolio.length }} positions priced.
-  </p>
-  <p *ngIf="holdingsCurrent && portfolio.length && marketValue !== null" class="quote-coverage">
-    Estimated using the latest available quotes.
-    <ng-container *ngIf="oldestQuote as timestamp; else unknownQuoteTimes">
-      Oldest quote {{ timestamp | date:'MMM d, HH:mm':'+0000' }} UTC.
-    </ng-container>
-    <ng-template #unknownQuoteTimes>Some quote times are unavailable.</ng-template>
-  </p>
+  <div class="account-foot" *ngIf="portfolioPrepared || (holdingsCurrent && portfolio.length)">
+    <p *ngIf="holdingsCurrent && portfolio.length && marketValue === null" class="mb-0" role="status">
+      {{ quotesPending ? 'Valuation in progress.' : 'Some quotes are unavailable.' }}
+      {{ quotedCount }} of {{ portfolio.length }} positions priced.
+    </p>
+    <p *ngIf="holdingsCurrent && portfolio.length && marketValue !== null" class="mb-0">
+      Latest available quotes
+      <ng-container *ngIf="oldestQuote as timestamp; else unknownQuoteTimes">
+        · Oldest {{ timestamp | date:'MMM d, HH:mm':'+0000' }} UTC
+      </ng-container>
+      <ng-template #unknownQuoteTimes>· Some quote times unavailable</ng-template>
+    </p>
+    <p *ngIf="portfolioPrepared" class="prepared-account-label mb-0">Prepared starting portfolio</p>
+  </div>
 </section>
 
+<div class="portfolio-analysis" [class.portfolio-analysis--with-allocation]="walletInitialized === true">
 <app-portfolio-performance [points]="performance?.points ?? []" [loading]="performanceLoading"
                            [failed]="performanceFailed" [message]="performance?.message ?? ''"
                            [missingSessions]="performance?.missingSessions ?? 0"
                            [missingBenchmarkSessions]="performance?.missingBenchmarkSessions ?? 0"
                            (retry)="loadPerformance()"></app-portfolio-performance>
 
+<ng-container *ngIf="walletInitialized === true">
 <section class="allocation-panel" aria-labelledby="allocation-title" *ngIf="allocation as composition">
   <div class="panel-header">
     <div>
       <h2 id="allocation-title">Allocation</h2>
-      <p>Cash and holdings as a share of account value</p>
+      <p>Share of account value</p>
     </div>
   </div>
 
@@ -86,7 +126,22 @@
       </details>
     </div>
   </ng-template>
+  <section *ngIf="benchmarkSnapshot as snapshot" class="relative-performance" aria-labelledby="relative-performance-title">
+    <div class="panel-header">
+      <div>
+        <h3 id="relative-performance-title">Relative performance</h3>
+        <p>Through <time [attr.datetime]="snapshot.date">{{ snapshot.date | date:'MMM d, yyyy':'+0000' }}</time></p>
+      </div>
+    </div>
+    <dl class="allocation-body relative-values">
+      <div class="d-flex justify-content-between gap-2 py-1"><dt>Portfolio</dt><dd class="mb-0">{{ snapshot.portfolio > 0 ? '+' : '' }}{{ snapshot.portfolio | percent:'1.2-2' }}</dd></div>
+      <div class="d-flex justify-content-between gap-2 py-1"><dt>SPY</dt><dd class="mb-0">{{ snapshot.spy > 0 ? '+' : '' }}{{ snapshot.spy | percent:'1.2-2' }}</dd></div>
+      <div class="d-flex justify-content-between gap-2 py-1"><dt>Difference</dt><dd class="mb-0">{{ snapshot.differencePoints > 0 ? '+' : '' }}{{ snapshot.differencePoints | number:'1.2-2' }} pp</dd></div>
+    </dl>
+  </section>
 </section>
+</ng-container>
+</div>
 
 <section class="positions-panel" aria-labelledby="positions-title" [attr.aria-busy]="isLoading">
   <div class="panel-header">
@@ -95,23 +150,7 @@
       <p *ngIf="holdingsCurrent">{{ portfolio.length }} open {{ portfolio.length === 1 ? 'position' : 'positions' }}</p>
       <p *ngIf="!holdingsCurrent && !isLoading && portfolio.length">Showing the last loaded positions</p>
     </div>
-    <div class="portfolio-toolbar">
-      <button type="button" class="state-action" [attr.aria-disabled]="isLoading || isInitializing || checkingOrderId !== null"
-              (click)="!isInitializing && !checkingOrderId && loadPortfolio()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M20 7v5h-5M4 17v-5h5m10.6 0a7.6 7.6 0 0 0-13-5.4L4 9m16 6-2.6 2.4a7.6 7.6 0 0 1-13-5.4"/>
-        </svg>
-        <span>Refresh</span>
-      </button>
-      <a class="state-action research-action" routerLink="/search-details">Find stocks</a>
-    </div>
-  </div>
-
-  <div *ngIf="statusMessage || actionError || loadError" class="panel-messages">
-    <p *ngIf="statusMessage" class="state-message" role="status">{{ statusMessage }}</p>
-    <p *ngIf="actionError" class="state-message state-message--error" role="alert">{{ actionError }}</p>
-    <p *ngIf="loadError" class="state-message state-message--error" role="alert">{{ loadError }}</p>
+    <span class="panel-context" *ngIf="portfolio.length">USD · Quotes may be delayed</span>
   </div>
 
   <div *ngIf="isLoading" class="status-loading" role="status">
@@ -119,21 +158,9 @@
     {{ portfolio.length ? 'Refreshing positions…' : 'Loading positions…' }}
   </div>
 
-  <div *ngIf="!isLoading && walletInitialized === false" class="wallet-setup">
-    <div>
-      <h3>Activate your demo wallet</h3>
-      <p>Get $25,000 in simulated cash to place your first paper order.</p>
-    </div>
-    <button type="button" class="btn-primary-lg" [attr.aria-disabled]="isInitializing" (click)="onInitializeWallet()">
-      {{ isInitializing ? 'Initializing…' : 'Initialize demo wallet' }}
-    </button>
-  </div>
+  <p *ngIf="!isLoading && walletInitialized === false" class="panel-footer">Open your paper account to start building positions.</p>
 
-  <div *ngIf="!isLoading && !loadError && !portfolio.length && walletInitialized !== false" class="empty-state portfolio-empty">
-    <span class="empty-state-icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
-           stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V4h8v3M3 12h18m-10 0v2h2v-2"/></svg>
-    </span>
+  <div *ngIf="!isLoading && !loadError && !portfolio.length && walletInitialized !== false" class="portfolio-empty">
     <h3>No positions yet</h3>
     <p>Open a company’s research page and place a simulated buy to add your first position.</p>
     <a class="state-action" routerLink="/search-details">Explore stocks</a>
@@ -210,7 +237,7 @@
     </tbody>
   </table>
 
-  <footer *ngIf="portfolio.length" class="panel-footer">Quotes may be delayed. Unrealized P&amp;L compares market value with the original cost of open shares.</footer>
+  <footer *ngIf="portfolio.length" class="panel-footer">Unrealized P&amp;L compares market value with the cost of open shares.</footer>
 </section>
 
 <section class="orders-panel" aria-labelledby="orders-title" [attr.aria-busy]="receiptsLoading">
@@ -242,17 +269,24 @@
     <li *ngFor="let receipt of receipts">
       <details class="order-receipt">
         <summary>
-          <span class="receipt-symbol"><strong>{{ receipt.side === 'buy' ? 'Buy' : 'Sell' }} {{ receipt.ticker }}</strong><span>{{ receipt.quantity }} {{ receipt.quantity === 1 ? 'share' : 'shares' }}</span></span>
-          <time [attr.datetime]="receipt.submittedAt">{{ receipt.submittedAt | date:'MMM d, h:mm a':'+0000' }} UTC</time>
+          <span class="receipt-symbol">
+            <strong>{{ receipt.side === 'buy' ? 'Buy' : 'Sell' }} {{ receipt.ticker }}</strong>
+            <span>{{ receipt.quantity }} {{ receipt.quantity === 1 ? 'share' : 'shares' }}<ng-container *ngIf="receipt.source === 'prepared'"> · Prepared</ng-container></span>
+          </span>
+          <time [attr.datetime]="receipt.submittedAt">
+            <ng-container *ngIf="receipt.source === 'prepared'; else submittedTime">{{ receipt.submittedAt | date:'MMM d, yyyy':'+0000' }}</ng-container>
+            <ng-template #submittedTime>{{ receipt.submittedAt | date:'MMM d, h:mm a':'+0000' }} UTC</ng-template>
+          </time>
           <span class="receipt-status" [class.receipt-status--rejected]="receipt.status === 'rejected'">{{ receipt.status === 'filled' ? 'Filled' : 'Rejected' }}</span>
           <span class="receipt-caret" aria-hidden="true">⌄</span>
         </summary>
         <div class="receipt-body">
           <p>{{ receipt.message }}</p>
           <dl>
+            <div *ngIf="receipt.source === 'prepared'"><dt>Order source</dt><dd>Prepared at a historical market close</dd></div>
             <div *ngIf="receipt.price !== null"><dt>Execution price</dt><dd>{{ receipt.price | currency:'USD':'symbol':'1.2-6' }}</dd></div>
             <div *ngIf="receipt.quotedAt as quotedAt">
-              <dt>{{ receipt.quoteKind === 'reference' ? 'Reference quote time' : 'Quote time' }}</dt>
+              <dt>{{ receipt.quoteKind === 'historical_close' ? 'Market close time' : receipt.quoteKind === 'reference' ? 'Reference quote time' : 'Quote time' }}</dt>
               <dd><time [attr.datetime]="quotedAt">{{ quotedAt | date:'MMM d, y, h:mm a':'+0000' }} UTC</time></dd>
             </div>
             <div *ngIf="receipt.total !== null"><dt>Order value</dt><dd>{{ receipt.total | currency:'USD' }}</dd></div>

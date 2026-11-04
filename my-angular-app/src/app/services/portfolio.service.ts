@@ -14,6 +14,8 @@ export interface PortfolioPerformance {
   message: string;
   missingSessions: number;
   missingBenchmarkSessions: number;
+  canPrepare?: boolean;
+  prepared?: boolean;
 }
 
 export interface Stock {
@@ -45,7 +47,8 @@ export interface PaperOrderReceipt extends Omit<PendingPaperOrder, 'expiresAt' |
   status: 'filled' | 'rejected';
   submittedAt: string;
   quotedAt?: string | null;
-  quoteKind?: 'recent' | 'reference' | null;
+  quoteKind?: 'recent' | 'reference' | 'historical_close' | null;
+  source?: 'prepared';
   price: number | null;
   total: number | null;
   balance: number | null;
@@ -129,6 +132,10 @@ export class PortfolioService {
   }
   initializeWallet(): Observable<{ message: string }> {
     return this.paperRequest(() => this.http.post<{ message: string }>('/api/initWallet', {}), false);
+  }
+
+  preparePortfolio(): Observable<{ message: string }> {
+    return this.paperRequest(() => this.http.post<{ message: string }>('/api/portfolio/prepare', {}), false);
   }
   checkStock(ticker: string): Observable<{ quantity: number }> {
     return this.paperRequest(() => this.http.get<{ quantity: number }>(`/api/stocks/${encodeURIComponent(ticker)}`));

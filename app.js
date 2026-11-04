@@ -32,6 +32,7 @@ const polygon = {
   retryAt: 0,
 };
 const browserFiles = path.join(__dirname, 'my-angular-app/dist/my-angular-app/browser');
+let databaseClient;
 let databaseConnection;
 
 app.set('query parser', 'simple');
@@ -243,7 +244,9 @@ app.use('/api', async (req, res, next) => {
           deprecationErrors: true,
         },
       });
+      databaseClient = client;
       databaseConnection = client.connect().then(() => client.db(databaseName)).catch(error => {
+        databaseClient = undefined;
         databaseConnection = undefined;
         throw error;
       });
@@ -311,7 +314,7 @@ app.use((error, req, res, next) => {
 });
 
 process.on('SIGINT', async () => {
-  await client?.close();
+  await databaseClient?.close();
   process.exit(0);
 });
 

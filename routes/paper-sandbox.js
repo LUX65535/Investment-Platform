@@ -1,6 +1,7 @@
 const express = require('express');
-const { createHash, randomBytes } = require('node:crypto');
+const { createHash, randomBytes, randomUUID } = require('node:crypto');
 const { loadPortfolioHistory } = require('../lib/load-portfolio-history');
+const { planPreparedPortfolio } = require('../lib/prepare-portfolio');
 
 const cookieName = 'investment_paper_v1';
 const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
@@ -116,6 +117,7 @@ function receiptBody(order) {
     total: dollars(order.totalCents),
     balance: dollars(order.balanceCents),
     message: order.message,
+    ...(order.source === 'prepared' ? { source: order.source } : {}),
   };
 }
 
@@ -149,10 +151,12 @@ function calculateFill(sandbox, intent, market, submittedAt, confirmation) {
     return { status: 422, message: 'A valid trading quote is unavailable for this ticker.' };
   }
 
-  const { unitPrice, totalCents } = value;
-  const quote = checkQuoteTime(market.quote.t, unitPrice, submittedAt, confirmation);
+  const quote = checkQuoteTime(market.quote.t, value.unitPrice, submittedAt, confirmation);
   if (!quote.quotedAt) return quote;
+  return settleFill(sandbox, intent, value, quote);
+}
 
+function settleFill(sandbox, intent, { unitPrice, totalCents }, quote) {
   const { side, ticker, quantity } = intent;
   const previous = sandbox.positions.find(position => position.ticker === ticker);
   const positions = sandbox.positions.filter(position => position.ticker !== ticker);
@@ -183,6 +187,21 @@ function calculateFill(sandbox, intent, market, submittedAt, confirmation) {
   return { status: 200, message: 'Paper sell filled.', unitPrice, totalCents, ...quote, positions, balanceCents };
 }
 
+function orderRecord(intent, submittedAt, fill) {
+  return {
+    ...intent,
+    submittedAt,
+    quotedAt: fill.quotedAt ?? null,
+    quoteKind: fill.quoteKind ?? null,
+    status: fill.status === 200 ? 'filled' : 'rejected',
+    responseStatus: fill.status,
+    message: fill.message,
+    unitPrice: fill.unitPrice ?? null,
+    totalCents: fill.totalCents ?? null,
+    balanceCents: fill.balanceCents ?? null,
+  };
+}
+
 function decideOrder(sandbox, intent, market, confirmation) {
   const replay = existingOrder(sandbox, intent);
   if (replay) return replay;
@@ -198,24 +217,39 @@ function decideOrder(sandbox, intent, market, confirmation) {
   const fill = calculateFill(sandbox, intent, market, submittedAt, confirmation);
   if (fill.body) return fill;
 
-  const order = {
-    ...intent,
-    submittedAt,
-    quotedAt: fill.quotedAt ?? null,
-    quoteKind: fill.quoteKind ?? null,
-    status: fill.status === 200 ? 'filled' : 'rejected',
-    responseStatus: fill.status,
-    message: fill.message,
-    unitPrice: fill.unitPrice ?? null,
-    totalCents: fill.totalCents ?? null,
-    balanceCents: fill.balanceCents ?? null,
-  };
+  const order = orderRecord(intent, submittedAt, fill);
   const patch = { receipts: [...sandbox.receipts, order] };
   if (fill.positions) {
     patch.positions = fill.positions;
     patch.cashCents = fill.balanceCents;
   }
   return receiptResponse(order, patch);
+}
+
+function canPreparePortfolio(sandbox) {
+  return !sandbox.preparedPortfolioCreatedAt && !sandbox.positions.length && !sandbox.receipts.length
+    && (sandbox.cashCents === null || sandbox.cashCents === startingCashCents);
+}
+
+function prepareUnavailable(sandbox) {
+  if (sandbox.preparedPortfolioCreatedAt) return { body: { message: 'Your prepared portfolio is already in place.' } };
+  if (canPreparePortfolio(sandbox)) return null;
+  return { status: 409, body: { message: 'A prepared portfolio can only be added to an unused paper wallet.' } };
+}
+
+function preparedWallet(orders) {
+  const wallet = { cashCents: startingCashCents, positions: [], receipts: [] };
+  for (const { ticker, side, quantity, price, closedAt } of orders) {
+    const intent = { ticker, side, quantity, orderId: randomUUID() };
+    const value = orderValue({ c: price }, quantity);
+    if (!value) return null;
+    const fill = settleFill(wallet, intent, value, { quotedAt: closedAt, quoteKind: 'historical_close' });
+    if (fill.status !== 200) return null;
+    wallet.cashCents = fill.balanceCents;
+    wallet.positions = fill.positions;
+    wallet.receipts.push({ ...orderRecord(intent, closedAt, fill), source: 'prepared' });
+  }
+  return wallet;
 }
 
 function publicPosition({ ticker, quantity, costCents }) {
@@ -317,6 +351,36 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, g
     return { body: { message: 'Paper wallet initialized with $25,000.' }, patch: { cashCents: startingCashCents, walletInitializedAt: new Date() } };
   }, initial))));
 
+  router.post('/portfolio/prepare', withSandbox(async (req, res, initial) => {
+    const unavailable = prepareUnavailable(initial);
+    if (unavailable) return send(res, unavailable);
+
+    let plan;
+    try {
+      plan = await planPreparedPortfolio(startingCashCents, getHistoricalCloses);
+    } catch (error) {
+      return sendMarketError(res, error, 'message');
+    }
+    const wallet = plan && preparedWallet(plan.orders);
+    if (!wallet) {
+      return res.status(503).json({ message: 'There is not enough shared closing-price history to prepare the portfolio. Try again later.' });
+    }
+    return send(res, await mutate(req, res, sandbox => {
+      const unavailable = prepareUnavailable(sandbox);
+      if (unavailable) return unavailable;
+      if (sandbox.cashCents !== initial.cashCents) {
+        return { status: 409, body: { message: 'Your wallet changed during setup. Refresh the portfolio to try again.' } };
+      }
+      const existingStart = sandbox.walletInitializedAt;
+      const walletInitializedAt = existingStart instanceof Date && existingStart < plan.walletInitializedAt
+        ? existingStart : plan.walletInitializedAt;
+      return {
+        body: { message: 'Your prepared portfolio is ready.' },
+        patch: { ...wallet, walletInitializedAt, preparedPortfolioCreatedAt: new Date() },
+      };
+    }, initial));
+  }));
+
   for (const side of ['buy', 'sell']) {
     router.post('/' + side, withSandbox(async (req, res, initial) => {
       const ticker = parseTicker(res, req.body?.ticker);
@@ -352,7 +416,8 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, g
 
   router.get('/portfolio/history', withSandbox(async (_req, res, sandbox) => {
     const history = await loadPortfolioHistory(sandbox, startingCashCents, getHistoricalCloses);
-    return res.json(history);
+    const setup = sandbox.preparedPortfolioCreatedAt ? { prepared: true } : canPreparePortfolio(sandbox) ? { canPrepare: true } : {};
+    return res.json({ ...history, ...setup });
   }));
 
   router.get('/orders', withSandbox((_req, res, sandbox) => res.json(sandbox.receipts.slice().reverse().map(receiptBody))));

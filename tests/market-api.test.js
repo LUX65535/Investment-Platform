@@ -1,9 +1,24 @@
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
+const { request: httpRequest } = require('node:http');
 const { test } = require('node:test');
 const axios = require('axios');
 const { MongoClient } = require('mongodb');
+
+async function localhost(server, path, { headers, method = 'GET', payload } = {}) {
+  // The OS may assign an ephemeral port on Fetch's browser-only blocked list.
+  const response = await new Promise((resolve, reject) => {
+    const request = httpRequest({ hostname: '127.0.0.1', port: server.address().port, path, method, headers, timeout: 5000 }, resolve);
+    request.on('timeout', () => request.destroy(new Error('Market fixture request timed out')));
+    request.on('error', reject);
+    request.end(payload);
+  });
+  response.setEncoding('utf8');
+  let body = '';
+  for await (const chunk of response) body += chunk;
+  return { status: response.statusCode, headers: response.headers, body };
+}
 
 test('market reads expire, back off on provider limits, and leave paper orders retryable', async t => {
   Object.assign(process.env, {
@@ -69,12 +84,12 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   async function request(path, body, headers = {}) {
     if (cookie) headers.Cookie = cookie;
     if (body) headers['Content-Type'] = 'application/json';
-    const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, {
-      headers, method: body ? 'POST' : 'GET', body: body && JSON.stringify(body),
+    const response = await localhost(server, path, {
+      headers, method: body ? 'POST' : 'GET', payload: body && JSON.stringify(body),
     });
-    cookie = response.headers.get('set-cookie')?.split(';')[0] ?? cookie;
-    return { status: response.status, body: await response.json(), cache: response.headers.get('cache-control'),
-      retryAfter: response.headers.get('retry-after') };
+    cookie = response.headers['set-cookie']?.[0]?.split(';')[0] ?? cookie;
+    return { status: response.status, body: JSON.parse(response.body), cache: response.headers['cache-control'],
+      retryAfter: response.headers['retry-after'] ?? null };
   }
 
   const invalidNews = await request('/company_news?symbol=AAPL');
@@ -207,18 +222,15 @@ test('production market endpoints fail closed without provider credentials', asy
   const server = require('../app').listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const origin = 'http://127.0.0.1:' + server.address().port;
-
   for (const path of ['/company_quote?symbol=AAPL', '/company_data?symbol=AAPL']) {
-    const response = await fetch(origin + path);
+    const response = await localhost(server, path);
     assert.equal(response.status, 503);
-    assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.deepEqual(await response.json(), { error: 'Market data is temporarily unavailable. Please try again.' });
+    assert.equal(response.headers['cache-control'], 'no-store');
+    assert.deepEqual(JSON.parse(response.body), { error: 'Market data is temporarily unavailable. Please try again.' });
   }
 
-  const retiredMode = await fetch(origin + '/company_market_mode');
+  const retiredMode = await localhost(server, '/company_market_mode');
   assert.equal(retiredMode.status, 404);
-  await retiredMode.text();
   assert.equal(upstream.mock.callCount(), 0);
 });
 
@@ -238,16 +250,14 @@ test('a failed initial Mongo connection is retried and shared by concurrent requ
   const server = require('../app').listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const history = `http://127.0.0.1:${server.address().port}/api/portfolio/history`;
+  const history = '/api/portfolio/history';
 
-  const first = await fetch(history);
+  const first = await localhost(server, history);
   assert.equal(first.status, 503);
-  assert.equal(first.headers.get('cache-control'), 'private, no-store');
-  await first.text();
+  assert.equal(first.headers['cache-control'], 'private, no-store');
 
   const statuses = await Promise.all(Array.from({ length: 6 }, async () => {
-    const response = await fetch(history);
-    await response.text();
+    const response = await localhost(server, history);
     return response.status;
   }));
   assert.deepEqual(statuses, Array(6).fill(428));

@@ -16,6 +16,7 @@ interface PlotPoint extends ClosingPoint {
 
 interface Series {
   path: string;
+  area: string;
   singles: { x: number; y: number }[];
 }
 
@@ -52,15 +53,29 @@ function validRows(points: readonly PortfolioPerformancePoint[]): ClosingPoint[]
 
 function lineSeries(points: PlotPoint[], axis: 'navY' | 'spyY'): Series {
   const commands: string[] = [];
+  const areas: string[] = [];
   const singles: Series['singles'] = [];
+  let segment = '';
+  let start = '';
   for (const [index, point] of points.entries()) {
     const y = point[axis];
     if (y === null) continue;
     const connected = points[index - 1]?.[axis] != null;
-    commands.push(`${connected ? 'L' : 'M'}${point.x.toFixed(2)} ${y.toFixed(2)}`);
-    if (!connected && points[index + 1]?.[axis] == null) singles.push({ x: point.x, y });
+    const x = point.x.toFixed(2);
+    const command = `${connected ? 'L' : 'M'}${x} ${y.toFixed(2)}`;
+    commands.push(command);
+    if (!connected) {
+      start = x;
+      segment = command;
+    } else {
+      segment += ` ${command}`;
+    }
+    if (points[index + 1]?.[axis] == null) {
+      if (connected) areas.push(`${segment} L${x} ${height - 16} L${start} ${height - 16} Z`);
+      else singles.push({ x: point.x, y });
+    }
   }
-  return { path: commands.join(' '), singles };
+  return { path: commands.join(' '), area: areas.join(' '), singles };
 }
 
 function plotScale(values: number[], compared: boolean): { low: number; high: number; step: number } {

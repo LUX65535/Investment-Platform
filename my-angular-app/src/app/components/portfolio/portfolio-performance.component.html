@@ -2,7 +2,7 @@
   <header class="performance-header">
     <div>
       <h2 id="portfolio-performance-title" #performanceHeading tabindex="-1">Portfolio performance</h2>
-      <p>End-of-day paper account value</p>
+      <p>Daily closes · Up to 30 days</p>
     </div>
     <div class="latest-valuation" *ngIf="!loading && !failed && chart as series">
       <strong>{{ series.lastValuation.nav | currency:'USD' }}</strong>
@@ -50,8 +50,15 @@
                  [attr.aria-valuetext]="selectedDescription" (input)="inspectPoint($event)">
           <svg class="performance-chart" [attr.viewBox]="'0 0 ' + width + ' ' + height" preserveAspectRatio="none" role="img"
                [attr.aria-label]="series.compared ? 'Portfolio and SPY price returns from the same closing date' : 'Portfolio closing value in U.S. dollars'">
+            <defs>
+              <linearGradient id="portfolio-area-fade" x2="0" y2="1" gradientUnits="objectBoundingBox">
+                <stop stop-color="var(--accent)" stop-opacity=".15"/>
+                <stop offset="100%" stop-color="var(--accent)" stop-opacity=".015"/>
+              </linearGradient>
+            </defs>
             <line *ngFor="let tick of series.ticks" class="grid-line" [class.grid-line--zero]="series.compared && tick.value === 0"
                   x1="8" [attr.x2]="width - 8" [attr.y1]="tick.y" [attr.y2]="tick.y" vector-effect="non-scaling-stroke"/>
+            <path class="valuation-area" fill="url(#portfolio-area-fade)" [attr.d]="series.nav.area"/>
             <path class="series-line" [attr.d]="series.nav.path" vector-effect="non-scaling-stroke"/>
             <path *ngIf="series.compared" class="series-line series-line--spy" [attr.d]="series.spy.path" vector-effect="non-scaling-stroke"/>
             <line class="selection-line" [attr.x1]="point.x" [attr.x2]="point.x" y1="12" [attr.y2]="height - 16"

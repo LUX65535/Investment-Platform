@@ -67,4 +67,22 @@ describe('PortfolioPerformanceComponent', () => {
     expect(element.contains(retry)).toBeFalse();
     expect(document.activeElement).toBe(element.querySelector('h2'));
   });
+
+  it('breaks the chart line and fill when a closing valuation is missing', () => {
+    fixture.componentRef.setInput('points', [
+      { date: '2026-01-05', nav: 25000, spyClose: 99 },
+      { date: '2026-01-06', nav: 25100, spyClose: 100 },
+      { date: '2026-01-07', nav: null, spyClose: 105 },
+      { date: '2026-01-08', nav: 25250, spyClose: 104 },
+      { date: '2026-01-09', nav: 25400, spyClose: 106 },
+    ]);
+    fixture.detectChanges();
+
+    const element: HTMLElement = fixture.nativeElement;
+    const line = element.querySelector('.series-line')?.getAttribute('d');
+    const area = element.querySelector('.valuation-area')?.getAttribute('d');
+    expect(line?.match(/M/g)?.length).toBe(2);
+    expect(area?.match(/Z/g)?.length).toBe(2);
+    expect(element.querySelectorAll('.gap-tick').length).toBe(1);
+  });
 });

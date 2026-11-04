@@ -41,7 +41,7 @@ function memoryStore() {
   };
 }
 
-async function fixture(t) {
+async function fixture(t, getHistoricalCloses) {
   const testPort = process.env.PAPER_TEST_MONGO_PORT;
   let collection;
   if (testPort) {
@@ -84,6 +84,7 @@ async function fixture(t) {
       if (market.offline) throw new Error('Provider unavailable');
       return { quote: { c: market.price, t: market.timestamp }, currency: market.currency };
     },
+    getHistoricalCloses,
     sendMarketError(res) { res.status(503).json({ message: 'Market unavailable' }); },
     sendDatabaseError(_res, error) { throw error; },
   }));
@@ -163,6 +164,106 @@ test('browser sessions isolate the watchlist, cash, holdings and receipts', asyn
   assert.equal((await first.request('orders')).status, 428);
   assert.notEqual((await first.request('paper/session')).setCookie, null);
   assert.deepEqual((await first.request('stocks')).body, []);
+});
+
+const preparedDates = ['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-27', '2026-11-30', '2026-12-01'];
+const preparedCloses = {
+  AAPL: [100, 104, 108, 112, 116, 120],
+  MSFT: [198, 200, 202, 204, 206, 208],
+  SPY: [500, 502, 505, 507, 510, 512],
+};
+
+function historicalBars(ticker) {
+  return preparedDates.map((date, index) => ({ t: Date.parse(date + 'T05:00:00Z'), c: preparedCloses[ticker][index] }));
+}
+
+test('concurrent prepared portfolio requests create one usable ledger with closing-price inputs', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-02T17:00:00Z') });
+  const marketCalls = [];
+  const { browser, collection } = await fixture(t, async (ticker, from, through) => {
+    assert.equal(from, '2026-11-02');
+    assert.equal(through, '2026-12-01');
+    marketCalls.push(ticker);
+    return historicalBars(ticker);
+  });
+  const first = browser();
+  const other = browser();
+  assert.equal((await first.request('portfolio/prepare', 'POST')).status, 428);
+  await first.initialize();
+  await first.request('watchlist', 'POST', { ticker: 'TSLA' });
+  assert.equal((await first.request('portfolio/history')).body.canPrepare, true);
+  assert.equal((await first.request('portfolio/prepare', 'POST', {}, { 'sec-fetch-site': 'cross-site' })).status, 403);
+  assert.equal(marketCalls.length, 0);
+
+  const setup = await Promise.all([first.request('portfolio/prepare', 'POST'), first.request('portfolio/prepare', 'POST')]);
+  assert.deepEqual(setup.map(result => result.status), [200, 200]);
+  assert.ok(setup.every(result => result.cache === 'private, no-store'));
+  const saved = await collection.findOne({ _id: first.id });
+  assert.equal(saved.revision, 3, 'Wallet initialization, watchlist add and one prepared portfolio update.');
+  assert.deepEqual((await first.request('watchlist')).body, [{ ticker: 'TSLA' }]);
+  assert.equal((await first.request('balance')).body.balance, 9412);
+  const receipts = (await first.request('orders')).body;
+  assert.deepEqual(receipts.map(({ side, ticker, quantity, price }) => [side, ticker, quantity, price]), [
+    ['sell', 'AAPL', 26, 112], ['buy', 'MSFT', 40, 200], ['buy', 'AAPL', 105, 100],
+  ]);
+  assert.ok(receipts.every(receipt => receipt.source === 'prepared' && receipt.quoteKind === 'historical_close'));
+  assert.equal(receipts[0].quotedAt, '2026-11-27T18:00:00.000Z', 'Uses the actual 1 p.m. Eastern early close.');
+  assert.deepEqual((await first.request('orders/' + receipts[0].orderId)).body, receipts[0]);
+  assert.equal((await first.request('stocks/AAPL')).body.totalCost, 7900);
+
+  const history = (await first.request('portfolio/history')).body;
+  assert.equal(history.prepared, true);
+  assert.equal(history.canPrepare, undefined);
+  assert.equal(history.status, 'ok');
+  assert.deepEqual(history.points.map(({ nav }) => nav), [25000, 25420, 25920, 26420, 26816, 27212]);
+  assert.deepEqual(history.points.map(({ spyClose }) => spyClose), preparedCloses.SPY);
+
+  await other.request('paper/session');
+  assert.deepEqual((await other.request('orders')).body, []);
+  const realOrder = await first.request('sell', 'POST', { orderId: randomUUID(), ticker: 'AAPL', quantity: 1 });
+  assert.equal(realOrder.status, 200);
+  assert.equal(realOrder.body.receipt.source, undefined);
+  assert.equal((await first.request('balance')).body.balance, 9512.01);
+  assert.equal((await first.request('stocks/AAPL')).body.quantity, 78);
+  assert.deepEqual((await first.request('portfolio/history')).body.points, history.points);
+
+  const calls = marketCalls.length;
+  assert.equal((await first.request('portfolio/prepare', 'POST')).status, 200);
+  assert.equal(marketCalls.length, calls, 'Reopening an existing prepared portfolio does not reload provider prices.');
+  assert.equal((await first.request('orders')).body.length, 4);
+});
+
+test('prepared setup leaves balances untouched on provider failure or existing activity', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-02T17:00:00Z') });
+  let unavailable = true;
+  let incomplete = true;
+  let calls = 0;
+  const { browser } = await fixture(t, async ticker => {
+    calls++;
+    if (unavailable) throw new Error('Provider unavailable');
+    return incomplete && ticker === 'MSFT' ? [] : historicalBars(ticker);
+  });
+  const empty = browser();
+  await empty.request('paper/session');
+  assert.equal((await empty.request('portfolio/history')).body.canPrepare, true);
+  assert.equal((await empty.request('portfolio/prepare', 'POST')).status, 503);
+  unavailable = false;
+  assert.equal((await empty.request('portfolio/prepare', 'POST')).status, 503);
+  assert.deepEqual((await empty.request('balance')).body, { balance: 0, initialized: false });
+  assert.deepEqual((await empty.request('orders')).body, []);
+  incomplete = false;
+  assert.equal((await empty.request('portfolio/prepare', 'POST')).status, 200);
+  assert.equal((await empty.request('orders')).body.length, 3);
+
+  const active = browser();
+  await active.initialize();
+  const order = await active.request('buy', 'POST', { ticker: 'MSFT', quantity: 1, orderId: randomUUID() });
+  assert.equal(order.status, 200);
+  const before = calls;
+  assert.equal((await active.request('portfolio/history')).body.canPrepare, undefined);
+  assert.equal((await active.request('portfolio/prepare', 'POST')).status, 409);
+  assert.equal(calls, before);
+  assert.deepEqual((await active.request('orders')).body, [order.body.receipt]);
 });
 
 test('concurrent orders settle once and receipt replay bypasses the price provider', async t => {
