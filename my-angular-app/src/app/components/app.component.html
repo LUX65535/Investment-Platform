@@ -1,30 +1,50 @@
-<header>
-  <nav class="navbar navbar-expand-lg navbar-dark custom-header d-flex align-items-center" role="navigation" aria-label="Primary">
-      <a href="/search-details" class="navbar-brand"> <img src="assets/images/brandLogo.png" alt="Investment Platform logo" class="brand-logo">Investment&nbsp;Platform</a>
-      <button class="navbar-toggler" type="button" (click)="isCollapsed = !isCollapsed" [attr.aria-expanded]="!isCollapsed" aria-controls="navbarNav">
-        <span class="navbar-toggler-icon"></span>
-      </button>
-      <div class="collapse navbar-collapse" id="navbarNav" [ngbCollapse]="isCollapsed">
-        <ul class="navbar-nav ml-auto align-items-center gap-1">
-          <li class="nav-item">
-            <a class="nav-link" routerLink="/search-details" routerLinkActive="active">Search</a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link" routerLink="/watchlist" routerLinkActive="active">Watchlist</a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link" routerLink="/portfolio" routerLinkActive="active">Portfolio</a>
-          </li>
-        </ul>
-      </div>
-  </nav>
-</header>
-<div class="container content-container">
-  <router-outlet></router-outlet>
-</div>
+<a class="skip-link" href="#workspace">Skip to content</a>
 
-<footer class="footer bg-light">
-  <div class="FooterContainer">
-    <p class="footer-text">Powered by <a href="https://finnhub.io" target="_blank">Finnhub.io</a></p>
+<header class="app-header">
+  <div class="shell-width header-inner">
+    <a class="brand" routerLink="/search-details" aria-label="Investment Platform home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <path d="M4 17l5-5 4 3 7-8m-4 0h4v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="brand-name">Investment Platform</span>
+    </a>
+
+    <nav class="app-nav" aria-label="Primary">
+      <a routerLink="/search-details" routerLinkActive="active" ariaCurrentWhenActive="page">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="5.5" stroke="currentColor" stroke-width="1.7"/>
+          <path d="m15 15 4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <span>Research</span>
+      </a>
+      <a routerLink="/watchlist" routerLinkActive="active" ariaCurrentWhenActive="page">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8L12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+        <span>Watchlist</span>
+      </a>
+      <a routerLink="/portfolio" routerLinkActive="active" ariaCurrentWhenActive="page">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="4.5" y="8" width="15" height="11" rx="2" stroke="currentColor" stroke-width="1.7"/>
+          <path d="M9 8V6.5c0-.8.7-1.5 1.5-1.5h3c.8 0 1.5.7 1.5 1.5V8m-10 5h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <span>Portfolio</span>
+      </a>
+    </nav>
+
+    <span class="mode-badge"><span aria-hidden="true"></span>Paper trading</span>
+  </div>
+</header>
+
+<main id="workspace" class="shell-width content-container" tabindex="-1">
+  <router-outlet></router-outlet>
+</main>
+
+<footer class="app-footer">
+  <div class="shell-width footer-inner">
+    <span>Investment Platform</span>
+    <span>Market data by <a href="https://finnhub.io" target="_blank" rel="noopener noreferrer">Finnhub</a></span>
   </div>
 </footer>

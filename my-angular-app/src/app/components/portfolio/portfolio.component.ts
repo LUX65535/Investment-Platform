@@ -1,262 +1,176 @@
-import {ChangeDetectorRef, Component, OnInit} from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { PortfolioService } from '../../services/portfolio.service';
-import { Router } from '@angular/router';
-import {forkJoin, Observable} from "rxjs";
-import {CompanyProfile, QuoteResponse} from "../search-details/search-details.component";
-import {tap} from "rxjs/operators";
+import { Component, DestroyRef, OnInit, TemplateRef, ViewChild, inject } from '@angular/core';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
+import { catchError, finalize, forkJoin, map, of, switchMap } from 'rxjs';
+import { PortfolioService, Stock } from '../../services/portfolio.service';
 
-export interface Stock {
-  ticker: string;
-  name: string;
-  price: number;
-  change: number;
-  quantity: number;
-  totalCost: number;
+interface Holding extends Omit<Stock, 'price' | 'change'> {
+  price: number | null;
+  change: number | null;
 }
-
 
 @Component({
   selector: 'app-portfolio',
   templateUrl: './portfolio.component.html',
-  styleUrls: ['./portfolio.component.css']
+  styleUrls: ['./portfolio.component.css'],
 })
 export class PortfolioComponent implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+  private tradeRef?: NgbModalRef;
 
-  showBuyModal: boolean = false;
-  quantity: number = 0 ;
-  userWalletBalance: number = 0;
+  @ViewChild('tradeDialog', { static: true }) private tradeDialog!: TemplateRef<unknown>;
+  portfolio: Holding[] = [];
+  cashBalance: number | null = null;
+  isLoading = false;
+  isInitializing = false;
+  loadError = '';
+  statusMessage = '';
+  actionError = '';
+  activeTrade?: { holding: Holding; side: 'buy' | 'sell'; price: number };
+  tradeError = '';
+  submittingTrade = false;
+  quantity: number | null = 1;
 
-  showSellModal: boolean = false;
-  quantityToSell: number = 0;
-  ownedStockQuantity: number = 0;
-
-  currentStock: QuoteResponse | null = null;
-  searchResults: CompanyProfile | null = null;
-
-
-  showConfirmation: boolean = false;
-  confirmationMessage: string = '';
-  confirmationStyle: string = '';
-
-  portfolio: Stock[] = [];
-  cashBalance: number = 0;
-  isLoading: boolean = true;
-  constructor(private portfolioService: PortfolioService,private http: HttpClient,private cdr: ChangeDetectorRef,private router: Router) {}
+  constructor(
+    private portfolioService: PortfolioService,
+    private http: HttpClient,
+    private modal: NgbModal,
+  ) {
+    this.destroyRef.onDestroy(() => this.tradeRef?.close());
+  }
 
   ngOnInit(): void {
     this.loadPortfolio();
-    this.loadBalance();
   }
-  onInitializeWallet(): void {
-    this.portfolioService.initializeWallet().subscribe({
-      next: (response) => console.log(response.message),
-      error: (error) => console.error('Error initializing wallet:', error)
-    });
-    this.loadBalance();
-    this.cdr.detectChanges();
-    this.router.navigateByUrl(`/portfolio`);
-    this.refreshComponent()
+
+  get marketValue(): number | null {
+    return this.portfolio.some(stock => stock.price === null)
+      ? null
+      : this.portfolio.reduce((total, stock) => total + stock.quantity * (stock.price ?? 0), 0);
   }
+
+  get estimatedTotal(): number {
+    return (this.quantity ?? 0) * (this.activeTrade?.price ?? 0);
+  }
+
+  get validQuantity(): boolean {
+    return this.quantity !== null && Number.isSafeInteger(this.quantity) && this.quantity > 0;
+  }
+
+  get canSubmitTrade(): boolean {
+    const trade = this.activeTrade;
+    if (!trade || !this.validQuantity || this.submittingTrade || this.quantity === null) return false;
+    return trade.side === 'sell'
+      ? this.quantity <= trade.holding.quantity
+      : this.cashBalance !== null && this.estimatedTotal <= this.cashBalance;
+  }
+
   loadPortfolio(): void {
-    this.portfolioService.getStocks().subscribe({
-      next: (stocks) => {
-        this.portfolio = stocks;
-        this.isLoading = false;
-        this.updatePortfolioPricesAndChanges();
-      },
-      error: (error) => {
-        console.error('Error loading portfolio:', error);
-        this.isLoading = false;
-      }
-    });
-  }
+    if (this.isLoading) return;
+    this.isLoading = true;
+    this.loadError = '';
 
-  refreshComponent(): void {
-    this.loadPortfolio();
-    this.loadBalance();
-    this.updatePortfolioPricesAndChanges();
-    const currentUrl = this.router.url;
-    this.router.navigateByUrl('/', { skipLocationChange: true }).then(() => {
-      this.router.navigate([currentUrl]);
-    });
-  }
-
-  updatePortfolioPricesAndChanges(): void {
-    const quoteRequests = this.portfolio.map(stock => this.getLatestQuote(stock.ticker));
-    forkJoin(quoteRequests).subscribe(quotes => {
-      quotes.forEach((quote, index) => {
-        this.portfolio[index].price = quote.c;
-        this.portfolio[index].change = quote.d;
-      });
-    });
-  }
-
-  getStockQuantity(ticker:string): void{
-    this.portfolioService.checkStock(ticker).subscribe(
-      {
-        next: (response) =>{
-          this.ownedStockQuantity = response.quantity;
-          return;
-        }
-      }
-    )
-  }
-
-  loadBalance(): void {
-    this.portfolioService.getBalance().subscribe({
-      next: (data) => {
-        this.cashBalance = data.balance;
-        this.isLoading = false;
-
-      },
-      error: (error) => {
-        console.error('Error fetching balance:', error);
-        this.isLoading = false;
-
-      }
-    });
-  }
-  private showErrorMessage(message: string): void {
-  this.confirmationMessage = message;
-  this.confirmationStyle = 'alert-danger';
-  this.showConfirmation = true;
-  setTimeout(() => this.showConfirmation = false, 3000);
-}
-  buyStockForm(quantity: number) {
-    if (!this.searchResults){
-      console.error('No ticker bug');
-      return
-    }
-    if (!this.currentStock) {
-      console.error('No stock data available');
-      return;
-    }
-    if(quantity * this.currentStock.c > this.userWalletBalance) {
-      console.log('Not Enough Money');
-      return;
-    }
-    console.log(`Bought ${quantity} share ${this.searchResults?.ticker}`);
-    this.buyStock(this.searchResults?.ticker,quantity,this.currentStock.c);
-    this.buyOrSell(true);
-    this.showBuyModal = false;
-  }
-
-
-  buyStock(ticker: string, quantity: number, buyPrice: number): void {
-    this.portfolioService.buyStock(ticker, quantity, buyPrice).subscribe({
-      next: (response) => {
-        console.log('Stock purchased successfully', response);
-        this.loadPortfolio();
-        this.loadBalance();
-      },
-      error: (error) => console.error('Error buying stock:', error)
-    });
-  }
-  getStockDetails(ticker: string): Observable<CompanyProfile> {
-    const url = `/company_profile?symbol=${ticker}`;
-    return this.http.get<CompanyProfile>(url);
-  }
-
-    sellStockForm(quantityToSell: number): void {
-    if (!this.searchResults || !this.searchResults.ticker || !this.currentStock){
-      this.showErrorMessage('No valid stock data available. Please search for a ticker first.');
-      return
-    }
-
-    if (this.quantityToSell <= 0) {
-      this.showErrorMessage('Quantity must be greater than zero.');
-      return;
-    }
-
-    if (this.quantityToSell > this.ownedStockQuantity) {
-      this.showErrorMessage('Not enough stocks owned.');
-      return;
-    }
-    console.log(`Sold ${this.quantityToSell} share ${this.searchResults?.ticker}`);
-    this.sellStock(this.searchResults?.ticker,quantityToSell,this.currentStock.c);
-    this.buyOrSell(false);
-    this.showSellModal = false;
-  }
-
-  sellStock(ticker: string, quantity: number, sellPrice: number): void {
-    this.portfolioService.sellStock(ticker, quantity, sellPrice).subscribe({
-      next: (response) => {
-        console.log('Stock Sold successfully', response);
-        this.loadPortfolio();
-        this.loadBalance();
-      },
-      error: (error) => console.error('Error buying stock:', error)
-    });
-  }
-  openBuyModal(ticker: string) {
-    this.getBalance();
-
-    forkJoin({
-      latestQuote: this.getLatestQuote(ticker),
-      stockDetails: this.getStockDetails(ticker)
-    }).subscribe({
-      next: ({ latestQuote, stockDetails }) => {
-        this.currentStock = latestQuote;
-        this.searchResults = stockDetails;
-        this.showBuyModal = true;
-      },
-      error: (error) => {
-        console.error('Error fetching stock data:', error);
-      }
-    });
-  }
-  getBalance(): void{
-    this.portfolioService.getBalance().subscribe(
-      {
-        next: (response) =>{
-          this.userWalletBalance = response.balance;
-          return;
-        }
-      }
-    )
-  }
-
-  openSellModal(ticker: string, quantity: number): void {
-    forkJoin({
-      latestQuote: this.getLatestQuote(ticker),
-      stockDetails: this.getStockDetails(ticker),
-    }).subscribe({
-      next: ({ latestQuote, stockDetails }) => {
-        this.currentStock = latestQuote;
-        this.searchResults = stockDetails;
-        this.ownedStockQuantity = quantity;
-        this.showSellModal = true;
-      },
-      error: (error) => {
-        console.error('Error fetching stock data:', error);
-      }
-    });
-  }
-
-  closeConfirmation(): void {
-    this.showConfirmation = false;
-  }
-  getLatestQuote(ticker: string): Observable<QuoteResponse> {
-    const url = `/company_quote?symbol=${ticker}`;
-    return this.http.get<QuoteResponse>(url).pipe(
-      tap(quote => {
-        this.currentStock = quote;
-      })
+    const holdings = this.portfolioService.getStocks().pipe(
+      switchMap(stocks => stocks.length ? forkJoin(stocks.map(stock =>
+        this.http.get<{ c: number; dp: number }>('/company_quote', { params: { symbol: stock.ticker } }).pipe(
+          catchError(() => of(null)),
+          map((quote): Holding => ({
+            ...stock,
+            price: quote && Number.isFinite(quote.c) && quote.c > 0 ? quote.c : null,
+            change: quote && quote.c > 0 && Number.isFinite(quote.dp) ? quote.dp : null,
+          })),
+        ),
+      )) : of([])),
+      catchError(() => of(null)),
     );
-  }
-  buyOrSell(buyStock: boolean): void{
-    this.showConfirmation = true;
-    const ticker = this.searchResults?.ticker;
-    if (ticker) {
-      if (buyStock) {
-        this.confirmationMessage = `${ticker} bought successfully`;
-        this.confirmationStyle = 'alert-success';
-      } else {
-        this.confirmationMessage = `${ticker} sold successfully`;
-        this.confirmationStyle = 'alert-danger';
+
+    forkJoin({
+      holdings,
+      wallet: this.portfolioService.getBalance().pipe(catchError(() => of(null))),
+    }).pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.isLoading = false),
+    ).subscribe(({ holdings, wallet }) => {
+      if (holdings) this.portfolio = holdings;
+      this.cashBalance = wallet?.balance ?? null;
+      if (!holdings || !wallet) {
+        this.loadError = !holdings && !wallet
+          ? 'We couldn’t load your holdings or wallet. Try refreshing.'
+          : !holdings
+            ? 'We couldn’t refresh your holdings.'
+            : 'We couldn’t load your wallet balance.';
       }
-      setTimeout(() => this.showConfirmation = false, 3000);
-    }
+    });
+  }
+
+  onInitializeWallet(): void {
+    if (this.isInitializing || this.isLoading) return;
+    this.isInitializing = true;
+    this.actionError = '';
+    this.statusMessage = '';
+    this.portfolioService.initializeWallet().pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.isInitializing = false),
+    ).subscribe({
+      next: ({ message }) => {
+        this.statusMessage = message;
+        this.loadPortfolio();
+      },
+      error: () => this.actionError = 'We couldn’t initialize the wallet. Please try again.',
+    });
+  }
+
+  openTrade(holding: Holding, side: 'buy' | 'sell'): void {
+    if (this.tradeRef || holding.price === null || this.isLoading) return;
+    this.actionError = '';
+    this.statusMessage = '';
+    this.tradeError = '';
+    this.quantity = 1;
+    this.activeTrade = { holding, side, price: holding.price };
+    this.tradeRef = this.modal.open(this.tradeDialog, {
+      centered: true,
+      windowClass: 'trade-window',
+      ariaLabelledBy: 'portfolio-trade-title',
+      beforeDismiss: () => !this.submittingTrade,
+    });
+    const clearTrade = () => {
+      this.tradeRef = undefined;
+      this.activeTrade = undefined;
+    };
+    this.tradeRef.result.then(clearTrade, clearTrade);
+  }
+
+  submitTrade(): void {
+    const trade = this.activeTrade;
+    const quantity = this.quantity;
+    if (!trade || quantity === null || !this.canSubmitTrade) return;
+
+    this.submittingTrade = true;
+    this.tradeError = '';
+    const ticker = trade.holding.ticker;
+    const request = trade.side === 'buy'
+      ? this.portfolioService.buyStock(ticker, quantity, trade.price)
+      : this.portfolioService.sellStock(ticker, quantity, trade.price);
+
+    request.pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.submittingTrade = false),
+    ).subscribe({
+      next: () => {
+        this.statusMessage = `${trade.side === 'buy' ? 'Bought' : 'Sold'} ${quantity} ${quantity === 1 ? 'share' : 'shares'} of ${ticker}.`;
+        this.tradeRef?.close();
+        this.loadPortfolio();
+      },
+      error: (error: HttpErrorResponse) => {
+        this.tradeError = error.status >= 400 && error.status < 500 && typeof error.error?.message === 'string'
+          ? error.error.message
+          : 'We couldn’t confirm this trade. Refresh your portfolio before trying again.';
+      },
+    });
+  }
+
+  trackByTicker(_index: number, stock: Holding): string {
+    return stock.ticker;
   }
 }

@@ -1,34 +1,18 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, DestroyRef, OnInit, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import {forkJoin, Observable, of} from 'rxjs';
-import {catchError,mergeMap} from 'rxjs/operators';
-import { ActivatedRoute, Router } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { catchError, finalize, forkJoin, map, of, switchMap } from 'rxjs';
 
-
-interface QuoteResponse {
+interface Quote {
   c: number;
   d: number;
   dp: number;
-  o: number;
 }
-interface CompanyProfile {
-  country: string;
-  currency: string;
-  exchange: string;
-  name: string;
-  ticker: string;
-  ipo: string;
-  marketCapitalization: number;
-  shareOutstanding: number;
-  logo: string;
-  phone: string;
-  weburl: string;
-  finnhubIndustry: string;
-}
+
 interface WatchlistItem {
   ticker: string;
-  quote?: QuoteResponse;
-  profile?: CompanyProfile;
+  name?: string;
+  quote?: Quote;
 }
 
 @Component({
@@ -37,95 +21,66 @@ interface WatchlistItem {
   styleUrls: ['./watchlist.component.css'],
 })
 export class WatchlistComponent implements OnInit {
-  public watchlist: WatchlistItem[] = [];
-  public loading = true;
+  private readonly destroyRef = inject(DestroyRef);
+  readonly removing = new Set<string>();
+  watchlist: WatchlistItem[] = [];
+  loading = false;
+  loadError = '';
+  actionError = '';
+  actionStatus = '';
 
-  constructor(private http: HttpClient,private route: ActivatedRoute, private router: Router) {}
+  constructor(private http: HttpClient) {}
 
   ngOnInit(): void {
     this.loadWatchlist();
   }
 
   loadWatchlist(): void {
+    if (this.loading || this.removing.size) return;
     this.loading = true;
+    this.loadError = '';
     this.http.get<WatchlistItem[]>('/api/watchlist').pipe(
-      mergeMap(watchlistItems => {
-        if (watchlistItems.length === 0) {
-          this.loading = false;
-          return of([]);
-        }
-        return forkJoin(
-          watchlistItems.map(item =>
-            forkJoin({
-              profile: this.getCompanyProfile(item.ticker),
-              quote: this.getCompanyQuote(item.ticker)
-            }).pipe(
-              catchError(error => {
-                console.error(`Error loading data for ticker ${item.ticker}: `, error);
-                return of({ profile: undefined, quote: undefined });
-              })
-            )
-          )
-        );
-      }),
-      catchError(error => {
-        console.error('Error loading watchlist: ', error);
-        this.loading = false;
-        return of([]);
-      })
-    ).subscribe((results: Array<{profile?: CompanyProfile, quote?: QuoteResponse}>) => {
-      this.watchlist = [];
-      results.forEach(result => {
-        if (result.profile && result.quote) {
-          this.watchlist.push({
-            ticker: result.profile.ticker,
-            profile: result.profile,
-            quote: result.quote
-          });
-        }
-      });
-      this.loading = false;
+      switchMap(items => items.length ? forkJoin(items.map(({ ticker }) => {
+        const params = { symbol: ticker };
+        return forkJoin({
+          profile: this.http.get<{ name?: string }>('/company_profile', { params }).pipe(
+            catchError(() => of(null)),
+          ),
+          quote: this.http.get<Quote>('/company_quote', { params }).pipe(
+            catchError(() => of(null)),
+          ),
+        }).pipe(map(({ profile, quote }): WatchlistItem => ({
+          ticker,
+          name: profile?.name,
+          quote: quote && Number.isFinite(quote.c) && quote.c > 0 ? quote : undefined,
+        })));
+      })) : of([])),
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.loading = false),
+    ).subscribe({
+      next: items => this.watchlist = items,
+      error: () => this.loadError = 'We couldn’t load your watchlist. Try again in a moment.',
     });
-  }
-  selectStock(ticker: string): void {
-    this.router.navigateByUrl(`/search-details/${ticker}`);
-  }
-  getChangeColor(item: WatchlistItem): string {
-    if (item.quote && typeof item.quote.dp === 'number') {
-      return item.quote.dp > 0 ? 'green' : item.quote.dp < 0 ? 'red' : 'black';
-    }
-    return 'black';
-  }
-  formatChangePercent(item: WatchlistItem): string {
-    if (item.quote && typeof item.quote.dp === 'number') {
-      return item.quote.dp.toFixed(2);
-    }
-    return '0.00';
-  }
-
-  formatChangeValue(item: WatchlistItem): string {
-    if (item.quote && typeof item.quote.dp === 'number') {
-      const changeValue = item.quote.dp > 0 ? `+${item.quote.d}` : item.quote.d.toString();
-      return changeValue;
-    }
-    return '0.00';
-  }
-
-  getCompanyProfile(ticker: string): Observable<CompanyProfile> {
-    return this.http.get<CompanyProfile>(`/company_profile?symbol=${encodeURIComponent(ticker)}`);
-  }
-
-  getCompanyQuote(ticker: string): Observable<QuoteResponse> {
-    return this.http.get<QuoteResponse>(`/company_quote?symbol=${encodeURIComponent(ticker)}`);
   }
 
   removeStock(ticker: string): void {
-    this.http.delete(`/api/watchlist/${ticker}`).subscribe(() => {
-      this.loadWatchlist();
+    if (this.loading || this.removing.has(ticker)) return;
+    this.actionError = '';
+    this.actionStatus = '';
+    this.removing.add(ticker);
+    this.http.delete(`/api/watchlist/${encodeURIComponent(ticker)}`).pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.removing.delete(ticker)),
+    ).subscribe({
+      next: () => {
+        this.watchlist = this.watchlist.filter(item => item.ticker !== ticker);
+        this.actionStatus = `${ticker} removed from your watchlist.`;
+      },
+      error: () => this.actionError = `Couldn’t remove ${ticker}. Please try again.`,
     });
   }
 
-
-
-
+  trackByTicker(_index: number, item: WatchlistItem): string {
+    return item.ticker;
+  }
 }

@@ -1,7 +1,9 @@
-import {Component, OnDestroy, OnInit } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import {Observable, of, Subscription, interval, startWith, forkJoin} from 'rxjs';
-import { catchError, debounceTime, distinctUntilChanged, finalize, map, switchMap, tap } from 'rxjs/operators';
+import { Component, DestroyRef, inject, OnDestroy, OnInit, TemplateRef } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import {Observable, of, Subscription, interval, forkJoin, shareReplay} from 'rxjs';
+import { catchError, debounceTime, distinctUntilChanged, finalize, map, switchMap } from 'rxjs/operators';
 import {Router} from '@angular/router';
 import {FormControl} from "@angular/forms";
 import * as Highcharts from 'highcharts/highstock';
@@ -113,18 +115,22 @@ export interface Earning {
   styleUrls: ['./search-details.component.css'],
 })
 export class SearchDetailsComponent implements OnInit, OnDestroy {
-  tickerFormControl = new FormControl();
+  tickerFormControl = new FormControl<string | StockResult>('', { nonNullable: true });
   filteredOptions: Observable<StockResult[]> = of([]);
   isLoading = false;
   DetailIsLoading = false;
-  noDataFound = false;
-  invalid_ticker_input = false;
+  searchError = '';
+  suggestionsError = false;
+  watchlistPending = false;
+  readonly exampleTickers = ['AAPL', 'MSFT', 'NVDA', 'AMZN'];
+  private readonly destroyRef = inject(DestroyRef);
+  private searchSubscription?: Subscription;
   activeTab: string = 'summary';
   searchResults: CompanyProfile | null = null;
 
-  private updateSubscription: Subscription = new Subscription();
-  marketIsOpen: boolean = false;
+
   private lastSuccessfulSearch: string | null = null;
+  private confirmationTimeout?: ReturnType<typeof setTimeout>;
 
   currentStock: QuoteResponse | null = null;
   companyPeers: string[] = [];
@@ -134,13 +140,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   trendChartOptions: Highcharts.Options = {};
   earningChartOptions: Highcharts.Options = {};
 
-  lastClosedTime: number | null = null;
-  currentDate = new Date();
+
 
   isFavorited: boolean = false;
 
 
-  historicalData: AggregateBarResponse[] | null = null;
   topNews: TopNews[] = [];
   selectedNewsItem: TopNews | null = null;
 
@@ -164,146 +168,122 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   confirmationStyle: string = '';
 
 
-  showBuyModal: boolean = false;
-  quantity: number = 0 ;
-  userWalletBalance: number = 0;
+  tradeSide: 'buy' | 'sell' = 'buy';
+  tradeQuantity: number | null = 1;
+  tradeError = '';
+  tradePending = false;
+  walletLoading = false;
+  userWalletBalance = 0;
+  ownedStockQuantity = 0;
+  private tradeModal?: NgbModalRef;
+  private newsModal?: NgbModalRef;
 
-  showSellModal: boolean = false;
-  quantityToSell: number = 0;
-  ownedStockQuantity: number = 0;
-
-
-  currentTickerForSecure: string = '';
-  constructor(private http: HttpClient,private route: ActivatedRoute,
-              private router: Router, private portfolioService: PortfolioService) {}
+  constructor(
+    private http: HttpClient,
+    private route: ActivatedRoute,
+    private router: Router,
+    private portfolioService: PortfolioService,
+    private modal: NgbModal
+  ) {}
 
   ngOnInit(): void {
-    this.route.params.subscribe(params => {
-      const ticker = params['ticker'];
+    this.setupSearch();
+    this.route.paramMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(params => {
+      const ticker = params.get('ticker');
       if (ticker) {
-        this.currentTickerForSecure = ticker;
-        this.onSearch(ticker);
-      }
-    });
-    this.Highcharts.setOptions({
-      global: {
-        useUTC: false,
-      },
-      lang: {
-        shortMonths: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-        weekdays: ['Sunday', 'Monday', 'Tuesday', 'Wednesday',
-          'Thursday', 'Friday', 'Saturday']
+        this.loadSearch(ticker);
+      } else {
+        this.resetSearch();
+        this.tickerFormControl.setValue('');
       }
     });
     this.setupAutoUpdate();
-    this.setupSearch();
   }
 
-  private showErrorMessage(message: string): void {
-  this.confirmationMessage = message;
-  this.confirmationStyle = 'alert-danger';
-  this.showConfirmation = true;
-  setTimeout(() => this.showConfirmation = false, 3000);
-}
-
-private updatePortfolioData(): void {
-  this.getBalance();
-  if (this.lastSuccessfulSearch) {
-    this.getStockQuantity(this.lastSuccessfulSearch);
+  private showConfirmationMessage(message: string, isError = false): void {
+    clearTimeout(this.confirmationTimeout);
+    this.confirmationMessage = message;
+    this.confirmationStyle = isError ? 'alert-danger' : 'alert-success';
+    this.showConfirmation = true;
+    this.confirmationTimeout = setTimeout(() => this.closeConfirmation(), 5000);
   }
-}
 
-  getStockQuantity(ticker:string): void{
-    this.portfolioService.checkStock(ticker).subscribe(
-      {
-        next: (response) =>{
-          this.ownedStockQuantity = response.quantity;
-          return;
-        }
+  private refreshHolding(ticker: string): void {
+    this.portfolioService.checkStock(ticker).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: position => {
+        if (ticker === this.lastSuccessfulSearch) this.ownedStockQuantity = position.quantity;
+      },
+      error: () => {
+        if (ticker === this.lastSuccessfulSearch) this.ownedStockQuantity = 0;
       }
-    )
-  }
-  openSellModal(): void {
-    this.showSellModal = true;
+    });
   }
 
-  sellStockForm(): void {
-    if (!this.searchResults || !this.searchResults.ticker || !this.currentStock){
-      this.showErrorMessage('No valid stock data available. Please search for a ticker first.');
-      return
+  openTrade(template: TemplateRef<unknown>, side: 'buy' | 'sell'): void {
+    if (!this.currentStock || this.tradeModal) return;
+    this.tradeSide = side;
+    this.tradeQuantity = 1;
+    this.tradeError = '';
+    this.userWalletBalance = 0;
+    this.walletLoading = side === 'buy';
+    this.tradeModal = this.modal.open(template, {
+      ariaLabelledBy: 'trade-dialog-title',
+      centered: true,
+      beforeDismiss: () => !this.tradePending
+    });
+    this.tradeModal.result.then(() => this.tradeModal = undefined, () => this.tradeModal = undefined);
+
+    if (this.walletLoading) {
+      this.portfolioService.getBalance().pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.walletLoading = false)
+      ).subscribe({
+        next: ({ balance }) => this.userWalletBalance = balance,
+        error: () => this.tradeError = 'Could not load your balance. Close this dialog and try again.'
+      });
     }
-
-    if (this.quantityToSell <= 0) {
-      this.showErrorMessage('Quantity must be greater than zero.');
-      return;
-    }
-
-    if (this.quantityToSell > this.ownedStockQuantity) {
-      this.showErrorMessage('Not enough stocks owned.');
-      return;
-    }
-    console.log(`Sold ${this.quantityToSell} share ${this.searchResults?.ticker}`);
-    this.sellStock(this.searchResults?.ticker,this.quantityToSell,this.currentStock.c);
-    this.buyOrSell(false);
-    this.showSellModal = false;
   }
 
-
-  openBuyModal() {
-    this.getBalance();
-    this.showBuyModal = true;
+  get estimatedTradeTotal(): number {
+    return (this.tradeQuantity ?? 0) * (this.currentStock?.c ?? 0);
   }
-  getBalance(): void{
-    this.portfolioService.getBalance().subscribe(
-      {
-        next: (response) =>{
-          this.userWalletBalance = response.balance;
-          return;
-        }
+
+  get canSubmitTrade(): boolean {
+    const quantity = this.tradeQuantity ?? 0;
+    const price = this.currentStock?.c ?? 0;
+    return !this.tradePending && !this.walletLoading && price > 0
+      && Number.isSafeInteger(quantity) && quantity > 0
+      && (this.tradeSide === 'buy' ? this.estimatedTradeTotal <= this.userWalletBalance : quantity <= this.ownedStockQuantity);
+  }
+
+  submitTrade(): void {
+    const ticker = this.lastSuccessfulSearch;
+    const price = this.currentStock?.c;
+    const quantity = this.tradeQuantity;
+    if (!this.canSubmitTrade || !ticker || !price || !quantity) return;
+
+    const side = this.tradeSide;
+    this.tradePending = true;
+    this.tradeError = '';
+    const trade = side === 'buy'
+      ? this.portfolioService.buyStock(ticker, quantity, price)
+      : this.portfolioService.sellStock(ticker, quantity, price);
+    trade.pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.tradePending = false)
+    ).subscribe({
+      next: () => {
+        this.tradeModal?.close();
+        this.refreshHolding(ticker);
+        this.showConfirmationMessage(`${side === 'buy' ? 'Bought' : 'Sold'} ${quantity} ${ticker} ${quantity === 1 ? 'share' : 'shares'}.`);
+      },
+      error: (error: HttpErrorResponse) => {
+        this.tradeError = typeof error.error?.message === 'string'
+          ? error.error.message
+          : 'The order did not go through. Please try again.';
       }
-    )
+    });
   }
-
-
-buyStockForm() {
-  if (!this.searchResults || !this.searchResults.ticker || !this.currentStock) {
-    this.showErrorMessage('No valid stock data available. Please search for a ticker first.');
-    return;
-  }
-  if (this.quantity <= 0) {
-    this.showErrorMessage('Quantity must be greater than zero.');
-    return;
-  }
-  if (this.quantity * this.currentStock.c > this.userWalletBalance) {
-    this.showErrorMessage('Not enough money in wallet.');
-    return;
-  }
-    console.log(`Bought ${this.quantity} share ${this.searchResults?.ticker}`);
-    this.buyStock(this.searchResults?.ticker,this.quantity,this.currentStock.c);
-    this.buyOrSell(true);
-    this.showBuyModal = false;
-  }
-
-
-buyStock(ticker: string, quantity: number, buyPrice: number): void {
-  this.portfolioService.buyStock(ticker, quantity, buyPrice).subscribe({
-    next: (response) => {
-      console.log('Stock purchased successfully', response);
-      this.updatePortfolioData();
-    },
-    error: (error) => console.error('Error buying stock:', error)
-  });
-}
-sellStock(ticker: string, quantity: number, sellPrice: number): void {
-  this.portfolioService.sellStock(ticker, quantity, sellPrice).subscribe({
-    next: (response) => {
-      console.log('Stock sold successfully', response);
-      this.updatePortfolioData();
-    },
-    error: (error) => console.error('Error selling stock:', error)
-  });
-}
 
   createInsightChart(): void {
     const earningsData = this.earnings;
@@ -440,11 +420,18 @@ sellStock(ticker: string, quantity: number, sellPrice: number): void {
     const url = `/company_news?symbol=${ticker}`;
     return this.http.get<TopNews[]>(url);
   }
-  openModal(newsItem: TopNews): void {
+  openNews(template: TemplateRef<unknown>, newsItem: TopNews): void {
     this.selectedNewsItem = newsItem;
-  }
-  closeModal(): void {
-    this.selectedNewsItem = null;
+    this.newsModal = this.modal.open(template, {
+      ariaLabelledBy: 'news-dialog-title',
+      centered: true,
+      scrollable: true
+    });
+    const clearArticle = () => {
+      this.newsModal = undefined;
+      this.selectedNewsItem = null;
+    };
+    this.newsModal.result.then(clearArticle, clearArticle);
   }
 
   shareOnPlatform(newsItem: TopNews, platform: string): void {
@@ -454,7 +441,7 @@ sellStock(ticker: string, quantity: number, sellPrice: number): void {
     } else if (platform === 'facebook') {
       url = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(newsItem.url)}`;
     }
-    window.open(url, '_blank');
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   getEarnings(ticker: string): Observable<Earning[]> {
@@ -487,7 +474,7 @@ sellStock(ticker: string, quantity: number, sellPrice: number): void {
         negativeChange: 0
       };
 
-      this.calculatedSentiments = this.sentiments.data.reduce((accumulator, current) => {
+      this.calculatedSentiments = (this.sentiments.data ?? []).reduce((accumulator, current) => {
         accumulator.totalMspr += current.mspr;
         accumulator.totalChange += current.change;
 
@@ -658,49 +645,17 @@ sellStock(ticker: string, quantity: number, sellPrice: number): void {
     return chartOptions;
   }
 
-  getHistoricalData(ticker: string): Observable<AggregateBarResponse[]> {
-    return this.getLatestQuote(ticker).pipe(
-      switchMap(quote => {
-        let from_date = new Date();
-        let to_date = new Date();
-
-        if (this.marketIsOpen) {
-          from_date = subDays(from_date, 1);
-        } else {
-          from_date = new Date(quote.t * 1000);
-          from_date = subDays(from_date, 1);
-          to_date = new Date(quote.t * 1000);
-        }
-
-        const from_date_str = format(from_date, 'yyyy-MM-dd');
-        const to_date_str = format(to_date, 'yyyy-MM-dd');
-
-        return this.http.get<{results: AggregateBarResponse[]}>(`/company_OneDay_data?symbol=${ticker}&from=${from_date_str}&to=${to_date_str}`)
-          .pipe(
-            map(response => {
-              if (response && Array.isArray(response.results)) {
-                return response.results;
-              } else {
-                throw new Error('Response does not contain array');
-              }
-            }),
-            catchError(error => {
-              console.error('Error fetching data: ', error);
-              return of([]);
-            })
-          );
-      })
-    );
+  getHistoricalData(ticker: string, quote: QuoteResponse): Observable<AggregateBarResponse[]> {
+    const latest = new Date(quote.t * 1000);
+    const from = format(subDays(latest, 1), 'yyyy-MM-dd');
+    const to = format(latest, 'yyyy-MM-dd');
+    return this.http.get<{ results?: AggregateBarResponse[] }>('/company_OneDay_data', {
+      params: { symbol: ticker, from, to }
+    }).pipe(map(response => response.results ?? []));
   }
 
-
-
-
   createChart(data: AggregateBarResponse[]): void {
-    const etToPdt = (timestamp: number): number => {
-      return timestamp - (3 * 3600000);
-    };
-    const seriesData = data.map(point => [etToPdt(point.t), point.c]);
+    const seriesData = data.map(point => [point.t, point.c]);
 
     const stockColor = this.currentStock ? this.getChangeColor(this.currentStock) : 'black';
 
@@ -709,7 +664,7 @@ sellStock(ticker: string, quantity: number, sellPrice: number): void {
         selected: 1
       },
       title: {
-        text: `${this.lastSuccessfulSearch} Hourly Price Variation`
+        text: `${this.lastSuccessfulSearch} hourly price`
       },
       legend: {
         enabled: false
@@ -751,274 +706,214 @@ sellStock(ticker: string, quantity: number, sellPrice: number): void {
   }
 
   ngOnDestroy(): void {
-    if (this.updateSubscription) {
-      this.updateSubscription.unsubscribe();
-    }
+    this.searchSubscription?.unsubscribe();
+    this.tradeModal?.close();
+    this.newsModal?.close();
+    clearTimeout(this.confirmationTimeout);
   }
+
   setupAutoUpdate(): void {
-    this.updateSubscription = interval(15000)
-      .pipe(
-        startWith(0),
-        tap(() => {
-          this.currentDate = new Date();
-        }),
-        switchMap(() => {
-          if (!this.lastSuccessfulSearch || !this.marketIsOpen) {
-          return of(null);
-        }
-          return this.getLatestQuote(this.lastSuccessfulSearch);
-        })
-      )
-      .subscribe(
-        quote  => {
-          if (quote) {
-            this.currentStock = quote;
-            if (this.historicalData) {
-              this.createChart(this.historicalData);
-            }
-            const marketStatus = this.isMarketOpen(quote.t);
-            this.marketIsOpen = marketStatus.isOpen;
-            this.lastClosedTime = marketStatus.lastClosed;
-          }
-        },
-        error => console.error('Error updating data: ', error)
-      );
-  }
-
-  setupSearch(): void {
-    this.filteredOptions = this.tickerFormControl.valueChanges.pipe(
-      debounceTime(1000),
-      distinctUntilChanged(),
-      tap(() => this.isLoading = true),
-      switchMap(term => term === "" ? of([]) : this.getStocks(term).pipe(finalize(() => this.isLoading = false))),
-      catchError(() => of([]))
-    );
-  }
-
-  getStocks(term: string): Observable<StockResult[]> {
-    return this.http.get<{result: StockResult[]}>(`/Autocomplete_Search?symbol=${term}`).pipe(
-      map(response => response.result)
-    );
-  }
-
-  getStockDetails(ticker: string): Observable<CompanyProfile> {
-    const url = `/company_profile?symbol=${ticker}`;
-    return this.http.get<CompanyProfile>(url);
-  }
-
-  onPeerClick(ticker: string): void {
-    this.onSearch(ticker);
-  }
-
-  SearchButton(ticker?: string): void {
-    const searchTerm = ticker ?? this.tickerFormControl.value;
-    this.router.navigateByUrl(`/search-details/${searchTerm}`);
-  }
-  loadAndCreateChart(ticker: string): void {
-    this.getBigChartData(ticker).subscribe({
-      next: (data) => {
-        if (data.results.length > 0) {
-          this.bigChartOptions = this.createBigChart(data, ticker);
-        } else {
-          console.error('No data available for chart.');
-        }
-      },
-      error: (error) => console.error('Error fetching chart data:', error)
-    });
-  }
-  onSearch(selectedOption?: StockResult | string): void {
-    this.DetailIsLoading = true;
-    this.invalid_ticker_input = false;
-    this.noDataFound = false;
-    this.searchResults = null;
-    this.currentStock = null;
-    this.isLoading = true;
-
-    const searchTerm = typeof selectedOption === 'string'
-      ? selectedOption
-      : selectedOption?.displaySymbol || this.tickerFormControl.value;
-    if (this.tickerFormControl.value) {
-
-    this.getStockQuantity(this.tickerFormControl.value);
-    }else{
-      this.getStockQuantity(this.currentTickerForSecure);
-    }
-    if (searchTerm) {
-      this.loadAndCreateChart(searchTerm)
-      forkJoin({
-        profile: this.getStockDetails(searchTerm),
-        quote: this.getLatestQuote(searchTerm),
-        peer: this.getCompanyPeers(searchTerm),
-        historicalData: this.getHistoricalData(searchTerm),
-        news: this.getTopNews(searchTerm),
-        earning: this.getEarnings(searchTerm),
-        sentiment: this.getSentiments(searchTerm),
-        trend: this.getRecommendations(searchTerm)
-      }).subscribe(
-        ({ profile, quote,peer, historicalData,news,earning,sentiment,trend  }) => {
-
-          if (profile && Object.keys(profile).length > 0) {
-            this.sentiments = sentiment;
-            this.recommendations = trend;
-            this.earnings = earning;
-            this.calculateSummary();
-            this.topNews = news
-              .filter(n => n.image)
-              .slice(0, 20);
-            this.lastSuccessfulSearch = searchTerm;
-            this.searchResults = profile;
-            this.currentStock = quote;
-            this.companyPeers = peer;
-            this.checkIfFavorited();
-            this.createInsightChart();
-            this.historicalData = historicalData;
-            this.createChart(this.historicalData);
-          } else {
-            console.error("No data found for ticker: ", searchTerm);
-            this.noDataFound = true;
-            this.DetailIsLoading = false;
-          }
-          this.DetailIsLoading = false;
-          this.isLoading = false;
-        },
-        error => {
-          console.error("Search failed for ticker: ", searchTerm, error);
-          this.invalid_ticker_input = true;
-          this.isLoading = false;
-          this.DetailIsLoading = false;
-        }
-      );
-    } else {
-      console.error("Invalid search term.");
-      this.invalid_ticker_input = true;
-      this.isLoading = false;
-      this.DetailIsLoading = false;
-    }
-
-  }
-  setActiveTab(tabName: string) {
-    this.activeTab = tabName;
-  }
-  clearSearch(): void {
-
-
-
-
-
-    this.showBuyModal = false;
-    this.quantity=0;
-    this.userWalletBalance= 0;
-
-    this.showSellModal = false;
-    this.quantityToSell = 0;
-    this.ownedStockQuantity = 0;
-
-    this.lastSuccessfulSearch = null;
-    this.tickerFormControl.setValue("");
-    this.searchResults = null;
-    this.invalid_ticker_input = false;
-    this.noDataFound = false;
-    if (this.updateSubscription) {
-      this.updateSubscription.unsubscribe();
-    }
-    this.router.navigate(['/search-details']);
-  }
-
-  checkIfFavorited(): void {
-    if (!this.lastSuccessfulSearch) return;
-
-    this.http.get<boolean>(`/api/watchlist/check/${this.lastSuccessfulSearch}`).subscribe({
-      next: (isFavorited: boolean) => {
-        this.isFavorited = isFavorited;
-      },
-      error: (error) => {
-        console.error('Error checking if in watchlist', error);
+    interval(30000).pipe(
+      switchMap(() => {
+        const ticker = this.lastSuccessfulSearch;
+        if (!ticker || document.hidden) return of(null);
+        return this.getLatestQuote(ticker).pipe(
+          map(quote => ({ ticker, quote })),
+          catchError(() => of(null))
+        );
+      }),
+      takeUntilDestroyed(this.destroyRef)
+    ).subscribe(update => {
+      if (update && update.quote.c > 0 && update.ticker === this.lastSuccessfulSearch) {
+        this.currentStock = update.quote;
       }
     });
   }
 
-  getLatestQuote(ticker: string): Observable<QuoteResponse> {
-    const url = `/company_quote?symbol=${ticker}`;
-    return this.http.get<QuoteResponse>(url).pipe(
-      tap(quote => {
-        const marketStatus = this.isMarketOpen(quote.t);
-        this.marketIsOpen = marketStatus.isOpen;
-        if (!marketStatus.isOpen && marketStatus.lastClosed !== null) {
-          this.lastClosedTime = marketStatus.lastClosed;
-          if (this.lastClosedTime) {
-            this.lastClosedTime = new Date(this.lastClosedTime).setSeconds(new Date(this.lastClosedTime).getSeconds());
-          }
-        } else {
-          this.lastClosedTime = null;
-        }
+  setupSearch(): void {
+    this.filteredOptions = this.tickerFormControl.valueChanges.pipe(
+      map(value => typeof value === 'string' ? value.trim() : ''),
+      debounceTime(250),
+      distinctUntilChanged(),
+      switchMap(term => {
+        this.suggestionsError = false;
+        if (!term) return of([]);
+        this.isLoading = true;
+        return this.getStocks(term).pipe(
+          catchError(() => {
+            this.suggestionsError = true;
+            return of([]);
+          }),
+          finalize(() => this.isLoading = false)
+        );
       })
     );
   }
+
+  getStocks(term: string): Observable<StockResult[]> {
+    return this.http.get<{ result: StockResult[] }>('/Autocomplete_Search', { params: { symbol: term } }).pipe(
+      map(response => (response.result ?? []).slice(0, 10))
+    );
+  }
+
+  getStockDetails(ticker: string): Observable<CompanyProfile> {
+    return this.http.get<CompanyProfile>('/company_profile', { params: { symbol: ticker } });
+  }
+
+  submitSearch(selection: StockResult | string = this.tickerFormControl.value): void {
+    const ticker = this.displayFn(selection).trim().toUpperCase();
+    if (!/^[A-Z0-9][A-Z0-9.:-]{0,24}$/.test(ticker)) {
+      this.searchError = ticker ? 'Enter a valid ticker such as AAPL or BRK.B.' : 'Enter a ticker to start your search.';
+      return;
+    }
+    if (this.route.snapshot.paramMap.get('ticker') === ticker) {
+      this.loadSearch(ticker);
+    } else {
+      void this.router.navigate(['/search-details', ticker]);
+    }
+  }
+
+  private resetSearch(): void {
+    this.searchSubscription?.unsubscribe();
+    this.lastSuccessfulSearch = null;
+    this.DetailIsLoading = false;
+    this.searchError = '';
+    this.searchResults = null;
+    this.currentStock = null;
+    this.isFavorited = false;
+    this.ownedStockQuantity = 0;
+    this.activeTab = 'summary';
+    this.tradeModal?.close();
+    this.newsModal?.close();
+    this.selectedNewsItem = null;
+    this.chartOptions = {};
+    this.bigChartOptions = {};
+    this.trendChartOptions = {};
+    this.earningChartOptions = {};
+    this.closeConfirmation();
+  }
+
+  private loadSearch(value: string): void {
+    this.resetSearch();
+    const ticker = value.trim().toUpperCase();
+    this.tickerFormControl.setValue(ticker, { emitEvent: false });
+    if (!/^[A-Z0-9][A-Z0-9.:-]{0,24}$/.test(ticker)) {
+      this.searchError = 'Enter a valid ticker such as AAPL or BRK.B.';
+      return;
+    }
+
+    this.DetailIsLoading = true;
+    const quote$ = this.getLatestQuote(ticker).pipe(
+      catchError(() => of(null)),
+      shareReplay({ bufferSize: 1, refCount: true })
+    );
+    this.searchSubscription = forkJoin({
+      profile: this.getStockDetails(ticker),
+      quote: quote$,
+      peers: this.getCompanyPeers(ticker).pipe(catchError(() => of([]))),
+      hourly: quote$.pipe(
+        switchMap(quote => quote && quote.t > 0 ? this.getHistoricalData(ticker, quote) : of([])),
+        catchError(() => of([]))
+      ),
+      daily: this.getBigChartData(ticker).pipe(catchError(() => of(null))),
+      news: this.getTopNews(ticker).pipe(catchError(() => of([]))),
+      earnings: this.getEarnings(ticker).pipe(catchError(() => of([]))),
+      sentiment: this.getSentiments(ticker).pipe(catchError(() => of(null))),
+      recommendations: this.getRecommendations(ticker).pipe(catchError(() => of([])))
+    }).pipe(finalize(() => this.DetailIsLoading = false)).subscribe({
+      next: ({ profile, quote, peers, hourly, daily, news, earnings, sentiment, recommendations }) => {
+        if (!profile?.ticker) {
+          this.searchError = `No company found for ${ticker}. Try another ticker.`;
+          return;
+        }
+
+        this.lastSuccessfulSearch = ticker;
+        this.searchResults = profile;
+        this.currentStock = quote && quote.c > 0 ? quote : null;
+        this.companyPeers = peers;
+        this.topNews = news.filter(article => article.image).slice(0, 20);
+        this.earnings = earnings;
+        this.recommendations = recommendations;
+        this.sentiments = sentiment;
+        this.calculateSummary();
+        if (earnings.length || recommendations.length) this.createInsightChart();
+        if (hourly.length) this.createChart(hourly);
+        if (daily?.results?.length) this.bigChartOptions = this.createBigChart(daily, ticker);
+        this.checkIfFavorited(ticker);
+        this.refreshHolding(ticker);
+      },
+      error: (error: HttpErrorResponse) => {
+        this.searchError = error.status === 404
+          ? `No company found for ${ticker}. Try another ticker.`
+          : 'Company data is temporarily unavailable. Please try again.';
+      }
+    });
+  }
+
+  setActiveTab(tabName: string): void {
+    this.activeTab = tabName;
+  }
+
+  clearSearch(): void {
+    this.resetSearch();
+    this.tickerFormControl.setValue('');
+    void this.router.navigate(['/search-details']);
+  }
+
+  private checkIfFavorited(ticker: string): void {
+    this.http.get<boolean>(`/api/watchlist/check/${encodeURIComponent(ticker)}`).pipe(
+      takeUntilDestroyed(this.destroyRef)
+    ).subscribe({
+      next: favorited => {
+        if (ticker === this.lastSuccessfulSearch) this.isFavorited = favorited;
+      },
+      error: () => {}
+    });
+  }
+
+  getLatestQuote(ticker: string): Observable<QuoteResponse> {
+    return this.http.get<QuoteResponse>('/company_quote', { params: { symbol: ticker } });
+  }
+
   getCompanyPeers(ticker: string): Observable<string[]> {
     const url = `/company_peers?symbol=${ticker}`;
     return this.http.get<string[]>(url);
   }
 
 
-  addToWatchlist(): void {
-    if (!this.lastSuccessfulSearch) return;
-     this.http.post('/api/watchlist', { ticker: this.lastSuccessfulSearch }).subscribe({
-        next: () => console.log('Added to watchlist', this.lastSuccessfulSearch),
-        error: (error) => console.error('Error adding to watchlist', error)
-      });
-  }
+  toggleFavorite(): void {
+    const ticker = this.lastSuccessfulSearch;
+    if (!ticker || this.watchlistPending) return;
 
-  removeFromWatchlist(): void {
-    if (!this.lastSuccessfulSearch) return;
-
-    this.http.delete(`/api/watchlist/${this.lastSuccessfulSearch}`).subscribe({
-      next: () => console.log('Removed from watchlist', this.lastSuccessfulSearch),
-      error: (error) => console.error('Error removing from watchlist', error)
+    const adding = !this.isFavorited;
+    this.watchlistPending = true;
+    const request = adding
+      ? this.http.post('/api/watchlist', { ticker })
+      : this.http.delete(`/api/watchlist/${encodeURIComponent(ticker)}`);
+    request.pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.watchlistPending = false)
+    ).subscribe({
+      next: () => {
+        if (ticker === this.lastSuccessfulSearch) {
+          this.isFavorited = adding;
+          this.showConfirmationMessage(adding ? `${ticker} added to your watchlist.` : `${ticker} removed from your watchlist.`);
+        }
+      },
+      error: () => this.showConfirmationMessage('Could not update your watchlist. Please try again.', true)
     });
   }
 
-  toggleFavorite(): void {
-    if (!this.lastSuccessfulSearch) return;
-
-    this.isFavorited = !this.isFavorited;
-    this.showConfirmation = true;
-    const ticker = this.searchResults?.ticker;
-    if (ticker) {
-      if (this.isFavorited) {
-        this.confirmationMessage = `${ticker} added to Watchlist.`;
-        this.confirmationStyle = 'alert-success';
-        this.addToWatchlist();
-      } else {
-        this.confirmationMessage = `${ticker} removed from Watchlist.`;
-        this.confirmationStyle = 'alert-danger';
-        this.removeFromWatchlist();
-      }
-      setTimeout(() => this.showConfirmation = false, 3000);
-    }
-  }
-  buyOrSell(buyStock: boolean): void{
-    this.showConfirmation = true;
-    const ticker = this.searchResults?.ticker;
-    if (ticker) {
-      if (buyStock) {
-        this.confirmationMessage = `${ticker} bought successfully`;
-        this.confirmationStyle = 'alert-success';
-      } else {
-        this.confirmationMessage = `${ticker} sold successfully`;
-        this.confirmationStyle = 'alert-danger';
-      }
-      setTimeout(() => this.showConfirmation = false, 3000);
-    }
-  }
   closeConfirmation(): void {
     this.showConfirmation = false;
   }
-  displayFn(stockResult: StockResult): string {
-    return stockResult && stockResult.displaySymbol ? stockResult.displaySymbol : '';
+
+  displayFn(selection: StockResult | string): string {
+    return typeof selection === 'string' ? selection : selection?.displaySymbol ?? '';
   }
 
   getChangeColor(stock: QuoteResponse): string {
-    return stock.dp > 0 ? 'green' : stock.dp < 0 ? 'red' : 'black';
+    return stock.dp > 0 ? '#08734b' : stock.dp < 0 ? '#b4233c' : '#293950';
   }
 
   formatChangeValue(quote: QuoteResponse | null): string {
@@ -1031,10 +926,4 @@ sellStock(ticker: string, quantity: number, sellPrice: number): void {
     return `${quote.dp.toFixed(2)}%`;
   }
 
-  isMarketOpen(timestamp: number): { isOpen: boolean; lastClosed: number | null } {
-    const currentTimestamp = Date.now();
-    const isOpen = (currentTimestamp - timestamp * 1000) < 5 * 60 * 1000;
-    const lastClosed = isOpen ? null : timestamp * 1000;
-    return { isOpen, lastClosed };
-  }
 }

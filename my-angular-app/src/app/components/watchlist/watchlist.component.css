@@ -1,96 +1,118 @@
-.watchlist-title {
+:host {
   display: block;
-  margin: 20px auto;
-  text-align: center;
-  font-size: 30px;
-  font-weight: bold;
-}
-
-.triangle-up {
-  width: 0;
-  height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-bottom: 10px solid green;
-  display: inline-block;
-  margin-right: 5px;
-}
-
-.triangle-down {
-  width: 0;
-  height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-top: 10px solid red;
-  display: inline-block;
-  margin-right: 5px;
 }
 
 .watchlist-container {
-  max-width: 900px;
-  margin: 0 auto;
+  min-width: 0;
+}
+
+.watchlist {
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  list-style: none;
 }
 
 .watchlist-item {
-  display: flex;
+  display: grid;
+  min-height: 5rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px;
-  border: 1px solid #ddd;
-  margin-bottom: 10px;
-  cursor: pointer;
+  gap: clamp(.45rem, 2vw, 1.25rem);
+  padding: .8rem clamp(.65rem, 3vw, 1.45rem);
 }
 
+.watchlist-item + .watchlist-item {
+  border-top: 1px solid var(--line);
+}
+
+.watchlist-item:hover {
+  background: var(--surface-subtle);
+}
+
+.watchlist-item:first-child {
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.watchlist-item:last-child {
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.watchlist-item:only-child {
+  border-radius: var(--radius);
+}
 
 .watchlist-details {
-  flex-grow: 1;
+  display: block;
+  min-width: 0;
+  color: var(--ink);
+  text-decoration: none;
 }
 
-.watchlist-ticker {
+.watchlist-details:hover .watchlist-ticker {
+  color: var(--accent);
+}
+
+.watchlist-ticker,
+.watchlist-price {
   display: block;
-  font-weight: bold;
+  color: var(--ink);
+  font-size: 1.03rem;
+  font-weight: 720;
+  letter-spacing: -.025em;
 }
 
 .watchlist-company {
   display: block;
-  color: #555;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: .8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .price-change-container {
+  color: var(--muted);
+  font-size: .78rem;
+  font-variant-numeric: tabular-nums;
   text-align: right;
-}
-
-.watchlist-price {
-  display: block;
-  font-weight: bold;
 }
 
 .watchlist-percentage {
   display: block;
 }
 
+.close-btn {
+  display: grid;
+  width: 2.65rem;
+  min-height: 2.65rem;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1.22rem;
+  line-height: 1;
+}
+
+.close-btn:hover:not(:disabled) {
+  border-color: #edc2ce;
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.close-btn:disabled {
+  opacity: .65;
+}
+
 .positive {
-  color: green;
+  color: var(--positive);
 }
 
 .negative {
-  color: red;
-}
-
-.close-btn {
-  cursor: pointer;
-  padding: 5px 10px;
-}
-.spinner-container {
-  display: flex;
-  justify-content: center;
-  padding: 20px;
-}
-.empty-watchlist {
-  border: 1px solid #ddd;
-  margin-top: 20px;
-  text-align: center;
-  padding: 15px;
-  font-size: 12px;
-  background-color: #fff0c9;
+  color: var(--negative);
 }
