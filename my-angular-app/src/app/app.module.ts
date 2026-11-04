@@ -1,4 +1,4 @@
-import { APP_INITIALIZER, NgModule } from '@angular/core';
+import { NgModule } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
 import { HttpClientModule } from '@angular/common/http';
 import { RouterModule } from '@angular/router';
@@ -12,7 +12,6 @@ import { AppComponent } from './components/app.component';
 import { AppRoutingModule } from './app-routing.module';
 import { WatchlistComponent } from './components/watchlist/watchlist.component';
 import { PortfolioComponent } from './components/portfolio/portfolio.component';
-import { MarketModeService } from './services/market-mode.service';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 
 @NgModule({
@@ -32,10 +31,7 @@ import { provideAnimationsAsync } from '@angular/platform-browser/animations/asy
     NgbModule,
     CommonModule,
   ],
-  providers: [
-    DecimalPipe, provideAnimationsAsync('noop'), provideAnimationsAsync(),
-    { provide: APP_INITIALIZER, multi: true, deps: [MarketModeService], useFactory: (market: MarketModeService) => () => market.load() },
-  ],
+  providers: [DecimalPipe, provideAnimationsAsync('noop'), provideAnimationsAsync()],
   bootstrap: [AppComponent]
 })
 export class AppModule { }

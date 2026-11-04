@@ -5,16 +5,12 @@ const axios = require('axios');
 const { subDays, format } = require('date-fns');
 const { MongoClient, ServerApiVersion } = require('mongodb');
 const path = require('node:path');
-const sampleMarket = require('./lib/sample-market');
 const createPaperRouter = require('./routes/paper-sandbox');
 
 const app = express();
 const uri = process.env.MONGO_URI;
 const configuredDatabaseName = process.env.MONGO_DB_NAME?.trim();
 const databaseName = configuredDatabaseName || 'Assignment3';
-const configuredMarketMode = process.env.MARKET_DATA_MODE?.trim().toLowerCase();
-const marketDataMode = configuredMarketMode === 'live' || (!configuredMarketMode && process.env.VERCEL !== '1')
-  ? 'live' : 'sample';
 const maxMarketResponseBytes = 4_000_000;
 const maxHourlyRangeMs = 31 * 24 * 60 * 60 * 1000;
 const maxMarketRequests = 32;
@@ -75,7 +71,6 @@ function marketBusy(retryAt) {
 }
 
 async function requestMarketData(provider, endpoint, params) {
-  if (marketDataMode === 'sample') return sampleMarket(endpoint, params);
   if (!provider.key) {
     throw Object.assign(new Error('Market data is unavailable'), { status: 503 });
   }
@@ -179,10 +174,6 @@ const finnhubRoutes = {
   '/company_Earning': '/stock/earnings',
 };
 
-app.get('/company_market_mode', (_req, res) => {
-  res.set('Cache-Control', 'no-store').json({ mode: marketDataMode });
-});
-
 for (const [route, endpoint] of Object.entries(finnhubRoutes)) {
   app.get(route, (req, res) => {
     const symbol = normalizeTicker(req.query.symbol);
@@ -282,8 +273,7 @@ async function getTradeMarket(ticker) {
   return { quote, currency };
 }
 
-app.use('/api', createPaperRouter({ normalizeTicker, getTradeMarket, sendMarketError, sendDatabaseError,
-  sampleMarket: marketDataMode === 'sample' }));
+app.use('/api', createPaperRouter({ normalizeTicker, getTradeMarket, sendMarketError, sendDatabaseError }));
 app.use('/api', (req, res) => {
   res.status(404).json({ message: 'API endpoint not found' });
 });

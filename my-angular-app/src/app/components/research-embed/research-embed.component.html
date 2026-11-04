@@ -1,7 +1,7 @@
 <header class="research-heading">
   <p class="preview-label">Investment Platform</p>
   <h1>Market research</h1>
-  <span class="preview-badge">{{ market.sample ? 'Simulated data' : 'Read-only preview' }}</span>
+  <span class="preview-badge">Read-only research</span>
 </header>
 
 <div class="research-tools">
@@ -90,7 +90,5 @@
     </ng-container>
   </section>
 
-  <footer class="data-note">
-    {{ market.sample ? 'Read-only preview using synthetic prices.' : market.live ? 'U.S. market data from Finnhub and Polygon. Quotes may be delayed.' : 'Read-only research preview.' }}
-  </footer>
+  <footer class="data-note">U.S. market data from Finnhub and Massive (Polygon). Quotes may be delayed.</footer>
 </div>

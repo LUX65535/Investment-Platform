@@ -8,7 +8,6 @@ import * as Highcharts from 'highcharts/highstock';
 import HighchartsAccessibility from 'highcharts/modules/accessibility';
 import { HighchartsChartModule } from 'highcharts-angular';
 import { catchError, distinctUntilChanged, map, merge, of, Subject, switchMap } from 'rxjs';
-import { MarketModeService } from '../../services/market-mode.service';
 
 interface Quote {
   c: number;
@@ -58,7 +57,6 @@ export class ResearchEmbedComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   private readonly requests = new Subject<string>();
 
-  readonly market = inject(MarketModeService);
   readonly highcharts = Highcharts;
   readonly exampleTickers = ['AAPL', 'MSFT', 'NVDA'];
   readonly ranges = chartRanges;

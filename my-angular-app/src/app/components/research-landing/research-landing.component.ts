@@ -3,7 +3,6 @@ import { Component, DestroyRef, OnInit, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { finalize } from 'rxjs';
-import { MarketModeService } from '../../services/market-mode.service';
 import { MarketBar, MarketHistoryService, utcDayMonthsBefore } from '../../services/market-history.service';
 
 interface FeaturedSeries {
@@ -28,7 +27,6 @@ interface FeaturedSeries {
 export class ResearchLandingComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   private readonly history = inject(MarketHistoryService);
-  readonly market = inject(MarketModeService);
   loading = false;
   requestFailed = false;
   featured: FeaturedSeries | null = null;

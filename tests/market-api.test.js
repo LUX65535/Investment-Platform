@@ -7,6 +7,7 @@ const { MongoClient } = require('mongodb');
 
 test('market reads expire, back off on provider limits, and leave paper orders retryable', async t => {
   Object.assign(process.env, {
+    VERCEL: '1', VERCEL_ENV: 'production',
     API_KEY: 'test-token', API_POLY_KEY: 'test-chart-token',
     MONGO_URI: 'mongodb://127.0.0.1:27017', MONGO_DB_NAME: 'Assignment3_demo',
   });
@@ -23,7 +24,12 @@ test('market reads expire, back off on provider limits, and leave paper orders r
       return { matchedCount: 1 };
     },
   };
-  const selectDatabase = t.mock.method(MongoClient.prototype, 'db', () => ({ collection: () => collection }));
+  const selectDatabase = t.mock.method(MongoClient.prototype, 'db', () => ({
+    collection(name) {
+      assert.equal(name, 'paper_sandboxes');
+      return collection;
+    },
+  }));
   const clock = Date.now;
   const clockStart = clock();
   let clockOffset = 0;
@@ -36,6 +42,7 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   let currency;
   let news = { error: 'Unexpected provider response' };
   t.mock.method(axios, 'get', async (url, { params }) => {
+    assert.match(url, /^https:\/\/(finnhub\.io\/api\/v1|api\.polygon\.io\/v2)\//);
     if (url.endsWith('/company-news')) return { data: news };
     if (url.endsWith('/stock/profile2')) return { data: { currency } };
     if (url.includes('/aggs/ticker/')) {
@@ -56,7 +63,7 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   await once(server, 'listening');
   t.after(() => new Promise(resolve => server.close(resolve)));
 
-  let cookie;
+  let cookie = 'investment_paper_sample_v1=' + 'a'.repeat(43);
   async function request(path, body) {
     const headers = {};
     if (cookie) headers.Cookie = cookie;
@@ -78,7 +85,9 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   });
   assert.equal((await request('/company_quote?symbol=AAPL')).status, 404);
   assert.equal(selectDatabase.mock.callCount(), 0, 'Public market reads do not connect to MongoDB.');
+  assert.equal((await request('/api/balance')).status, 428, 'The old sample cookie cannot load a real account.');
   assert.equal((await request('/api/paper/session')).status, 200);
+  assert.match(cookie, /^investment_paper_v1=/);
   assert.equal((await request('/api/initWallet', {})).status, 200);
   const order = { orderId: randomUUID(), ticker: 'AAPL', quantity: 1 };
   const failure = await request('/api/buy', order);
@@ -154,4 +163,29 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   const timed = await request('/company_quote?symbol=GOOG');
   assert.equal(timed.status, 503);
   assert.ok(Number(timed.retryAfter) >= 8 && Number(timed.retryAfter) <= 10);
+});
+
+test('production market endpoints fail closed without provider credentials', async t => {
+  Object.assign(process.env, {
+    VERCEL: '1', VERCEL_ENV: 'production', API_KEY: '', API_POLY_KEY: '',
+    MONGO_URI: '', MONGO_DB_NAME: '',
+  });
+  const upstream = t.mock.method(axios, 'get', () => assert.fail('Missing credentials must stop the upstream call.'));
+  delete require.cache[require.resolve('../app')];
+  const server = require('../app').listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+
+  for (const path of ['/company_quote?symbol=AAPL', '/company_data?symbol=AAPL']) {
+    const response = await fetch(origin + path);
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await response.json(), { error: 'Market data is temporarily unavailable. Please try again.' });
+  }
+
+  const retiredMode = await fetch(origin + '/company_market_mode');
+  assert.equal(retiredMode.status, 404);
+  await retiredMode.text();
+  assert.equal(upstream.mock.callCount(), 0);
 });

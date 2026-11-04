@@ -3,7 +3,6 @@ import { Component, DestroyRef, ElementRef, OnInit, ViewChild, inject } from '@a
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, Scroll } from '@angular/router';
 import { filter } from 'rxjs';
-import { MarketModeService } from '../services/market-mode.service';
 import { StockService } from '../services/stock.service';
 
 @Component({
@@ -15,7 +14,6 @@ import { StockService } from '../services/stock.service';
 
 export class AppComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
-  readonly market = inject(MarketModeService);
   private lastWorkspacePath = '';
 
   @ViewChild('workspace', { static: true }) private workspace!: ElementRef<HTMLElement>;

@@ -20,7 +20,6 @@ import indicators from 'highcharts/indicators/indicators';
 indicators(Highcharts);
 volumeByPrice(Highcharts);
 import { estimateOrderCents, paperOrderConfirmation, PendingOrderError, PendingPaperOrder, PortfolioService, ReferenceQuoteRequired } from '../../services/portfolio.service';
-import { MarketModeService } from '../../services/market-mode.service';
 import { MarketBar as AggregateBarResponse, MarketHistoryService, alignedPriceReturns, utcDayMonthsBefore, validClosingBars } from '../../services/market-history.service';
 
 export interface QuoteResponse {
@@ -56,7 +55,6 @@ export interface CompanyProfile {
 }
 
 export interface TopNews {
-  id: string;
   image: string;
   imageReady: boolean;
   headline: string;
@@ -174,7 +172,6 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     { id: 'insights', label: 'Insights' },
   ];
   private readonly destroyRef = inject(DestroyRef);
-  readonly market = inject(MarketModeService);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private searchSubscription = new Subscription();
   activeTab: DetailTab = 'summary';
@@ -494,14 +491,12 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         for (const item of payload) {
           const headline = this.newsText(item?.headline);
           const url = this.httpsUrl(item?.url);
-          const sampleId = this.market.sample && item?.sample === true ? this.newsText(item.id) : '';
-          const id = url || sampleId;
-          if (!headline || !id) continue;
+          if (!headline || !url) continue;
 
           const summary = this.newsText(item.summary);
           articles.push({
-            id, headline, url, image: this.httpsUrl(item.image), imageReady: false,
-            source: this.newsText(item.source) || (url ? new URL(url).hostname : 'Demo research notes'),
+            headline, url, image: this.httpsUrl(item.image), imageReady: false,
+            source: this.newsText(item.source) || new URL(url).hostname,
             summary,
             relevance: mentionsCompany(headline) ? 2 : mentionsCompany(summary) ? 1 : 0,
             datetime: Number.isFinite(item.datetime) && item.datetime > 0 && item.datetime < 4_102_444_800
@@ -509,12 +504,12 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
           });
         }
 
-        const seenIds = new Set<string>();
+        const seenUrls = new Set<string>();
         const seenHeadlines = new Set<string>();
         const latest = articles.sort((a, b) => b.relevance - a.relevance || b.datetime - a.datetime).filter(article => {
           const key = article.headline.toLowerCase();
-          if (seenIds.has(article.id) || seenHeadlines.has(key)) return false;
-          seenIds.add(article.id);
+          if (seenUrls.has(article.url) || seenHeadlines.has(key)) return false;
+          seenUrls.add(article.url);
           seenHeadlines.add(key);
           return true;
         }).slice(0, 40);
@@ -577,7 +572,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   trackNews(_index: number, article: TopNews): string {
-    return article.id;
+    return article.url;
   }
 
   showMoreNews(): void {
@@ -902,7 +897,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         backgroundColor: 'transparent',
         style: { fontFamily: 'inherit' },
       },
-      accessibility: { description: `${ticker} ${range === 'Hourly' ? 'hourly' : 'daily'} closing prices from ${this.market.historySource}.` },
+      accessibility: { description: `${ticker} ${range === 'Hourly' ? 'hourly' : 'daily'} closing prices from Massive (Polygon).` },
       exporting: {
         enabled: false,
       },

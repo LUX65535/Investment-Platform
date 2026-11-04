@@ -2,7 +2,7 @@
   <header class="desk-heading">
     <div>
       <h1 id="research-title">Research desk</h1>
-      <p>{{ market.sample ? 'Explore five U.S. symbols with simulated prices, company news, and analytics.' : 'Explore U.S. stocks, price history, company news, and analyst ratings.' }}</p>
+      <p>Explore U.S. stocks, price history, company news, and analyst ratings.</p>
     </div>
     <div class="desk-search"><ng-content></ng-content></div>
   </header>
@@ -64,7 +64,7 @@
         </div>
       </ng-template>
       <footer class="featured-footer">
-        <span>Daily closes · {{ market.historySource }}</span>
+        <span>Daily closes · Massive (Polygon)</span>
         <a [routerLink]="['/search-details', 'AAPL']" [queryParams]="{ range: '3m', compare: 'spy' }">Compare with SPY <span aria-hidden="true">↗</span></a>
       </footer>
     </section>
