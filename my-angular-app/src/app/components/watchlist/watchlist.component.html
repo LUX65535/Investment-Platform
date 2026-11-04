@@ -63,7 +63,7 @@
         </th>
         <td role="cell" class="price-cell">
           <ng-container *ngIf="item.quote as quote; else unavailableQuote">
-            <span class="watchlist-price">{{ item.currency ? (quote.c | currency:item.currency:'code') : (quote.c | number:'1.2-2') }}</span>
+            <span class="watchlist-price">{{ item.currency ? (quote.c | currency:item.currency:(item.currency + ' ')) : (quote.c | number:'1.2-2') }}</span>
             <span *ngIf="!item.currency" class="watchlist-unavailable currency-missing">Currency unavailable</span>
           </ng-container>
           <ng-template #unavailableQuote>
@@ -75,7 +75,7 @@
             <span *ngIf="quote.dp !== null; else missingChange" class="watchlist-change"
                   [class.positive]="quote.dp > 0" [class.negative]="quote.dp < 0">
               <span *ngIf="quote.d !== null" class="absolute-change">
-                {{ quote.d > 0 ? '+' : '' }}{{ item.currency ? (quote.d | currency:item.currency:'code') : (quote.d | number:'1.2-2') }}
+                {{ quote.d > 0 ? '+' : '' }}{{ item.currency ? (quote.d | currency:item.currency:(item.currency + ' ')) : (quote.d | number:'1.2-2') }}
               </span>
               <span class="percent-change">{{ quote.dp > 0 ? '+' : '' }}{{ quote.dp | number:'1.2-2' }}%</span>
             </span>
