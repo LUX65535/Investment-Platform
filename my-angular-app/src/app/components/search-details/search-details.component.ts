@@ -2,8 +2,8 @@ import { Component, DestroyRef, inject, OnDestroy, OnInit, TemplateRef } from '@
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import {Observable, of, Subscription, interval, forkJoin, shareReplay} from 'rxjs';
-import { catchError, debounceTime, distinctUntilChanged, finalize, map, switchMap } from 'rxjs/operators';
+import {Observable, of, Subscription, interval, forkJoin} from 'rxjs';
+import { catchError, debounceTime, distinctUntilChanged, finalize, map, switchMap, takeUntil, tap } from 'rxjs/operators';
 import {Router} from '@angular/router';
 import {FormControl} from "@angular/forms";
 import * as Highcharts from 'highcharts/highstock';
@@ -109,6 +109,8 @@ export interface Earning {
   surprise: number;
 }
 
+type DetailTab = 'summary' | 'news' | 'charts' | 'insights';
+
 @Component({
   selector: 'app-search-details',
   templateUrl: './search-details.component.html',
@@ -122,10 +124,16 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   searchError = '';
   suggestionsError = false;
   watchlistPending = false;
+  watchlistLoading = false;
+  watchlistUnavailable = false;
+  hourlyLoading = false;
+  readonly loadingTabs = new Set<DetailTab>();
+  readonly failedTabs = new Set<DetailTab>();
+  private readonly loadedTabs = new Set<DetailTab>();
   readonly exampleTickers = ['AAPL', 'MSFT', 'NVDA', 'AMZN'];
   private readonly destroyRef = inject(DestroyRef);
-  private searchSubscription?: Subscription;
-  activeTab: string = 'summary';
+  private searchSubscription = new Subscription();
+  activeTab: DetailTab = 'summary';
   searchResults: CompanyProfile | null = null;
 
 
@@ -172,11 +180,16 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   tradeQuantity: number | null = 1;
   tradeError = '';
   tradePending = false;
+  tradeNeedsRefresh = false;
   walletLoading = false;
   userWalletBalance = 0;
   ownedStockQuantity = 0;
   private tradeModal?: NgbModalRef;
   private newsModal?: NgbModalRef;
+
+  get showSearchHero(): boolean {
+    return !this.searchResults && !this.DetailIsLoading;
+  }
 
   constructor(
     private http: HttpClient,
@@ -209,37 +222,49 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   private refreshHolding(ticker: string): void {
-    this.portfolioService.checkStock(ticker).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.searchSubscription.add(this.portfolioService.checkStock(ticker).subscribe({
       next: position => {
         if (ticker === this.lastSuccessfulSearch) this.ownedStockQuantity = position.quantity;
       },
       error: () => {
         if (ticker === this.lastSuccessfulSearch) this.ownedStockQuantity = 0;
       }
-    });
+    }));
+  }
+
+  get supportsPaperTrade(): boolean {
+    return !this.searchResults?.currency || this.searchResults.currency.toUpperCase() === 'USD';
   }
 
   openTrade(template: TemplateRef<unknown>, side: 'buy' | 'sell'): void {
-    if (!this.currentStock || this.tradeModal) return;
+    if (!this.currentStock || !this.supportsPaperTrade || this.tradeModal || this.tradePending) return;
     this.tradeSide = side;
     this.tradeQuantity = 1;
     this.tradeError = '';
+    this.tradeNeedsRefresh = false;
     this.userWalletBalance = 0;
     this.walletLoading = side === 'buy';
-    this.tradeModal = this.modal.open(template, {
+    const tradeModal = this.modal.open(template, {
       ariaLabelledBy: 'trade-dialog-title',
       centered: true,
       beforeDismiss: () => !this.tradePending
     });
-    this.tradeModal.result.then(() => this.tradeModal = undefined, () => this.tradeModal = undefined);
+    this.tradeModal = tradeModal;
+    const clearTrade = () => {
+      if (this.tradeModal === tradeModal) this.tradeModal = undefined;
+    };
+    tradeModal.result.then(clearTrade, clearTrade);
 
     if (this.walletLoading) {
       this.portfolioService.getBalance().pipe(
         takeUntilDestroyed(this.destroyRef),
-        finalize(() => this.walletLoading = false)
+        takeUntil(tradeModal.hidden),
+        finalize(() => { if (this.tradeModal === tradeModal) this.walletLoading = false; })
       ).subscribe({
-        next: ({ balance }) => this.userWalletBalance = balance,
-        error: () => this.tradeError = 'Could not load your balance. Close this dialog and try again.'
+        next: ({ balance }) => { if (this.tradeModal === tradeModal) this.userWalletBalance = balance; },
+        error: () => {
+          if (this.tradeModal === tradeModal) this.tradeError = 'Could not load your balance. Close this dialog and try again.';
+        }
       });
     }
   }
@@ -251,7 +276,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   get canSubmitTrade(): boolean {
     const quantity = this.tradeQuantity ?? 0;
     const price = this.currentStock?.c ?? 0;
-    return !this.tradePending && !this.walletLoading && price > 0
+    return this.supportsPaperTrade && !this.tradePending && !this.tradeNeedsRefresh && !this.walletLoading && price > 0
       && Number.isSafeInteger(quantity) && quantity > 0
       && (this.tradeSide === 'buy' ? this.estimatedTradeTotal <= this.userWalletBalance : quantity <= this.ownedStockQuantity);
   }
@@ -263,6 +288,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     if (!this.canSubmitTrade || !ticker || !price || !quantity) return;
 
     const side = this.tradeSide;
+    const context = this.searchSubscription;
     this.tradePending = true;
     this.tradeError = '';
     const trade = side === 'buy'
@@ -273,14 +299,22 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       finalize(() => this.tradePending = false)
     ).subscribe({
       next: () => {
+        if (this.lastSuccessfulSearch === ticker) this.refreshHolding(ticker);
+        if (this.searchSubscription !== context) return;
         this.tradeModal?.close();
-        this.refreshHolding(ticker);
         this.showConfirmationMessage(`${side === 'buy' ? 'Bought' : 'Sold'} ${quantity} ${ticker} ${quantity === 1 ? 'share' : 'shares'}.`);
       },
       error: (error: HttpErrorResponse) => {
-        this.tradeError = typeof error.error?.message === 'string'
-          ? error.error.message
-          : 'The order did not go through. Please try again.';
+        if (this.searchSubscription !== context) return;
+        if (error.status === 0 || error.status >= 500) {
+          this.tradeNeedsRefresh = true;
+          this.refreshHolding(ticker);
+          this.tradeError = 'We couldn’t confirm this order. Close this dialog and check your holdings before trying again.';
+        } else {
+          this.tradeError = typeof error.error?.message === 'string'
+            ? error.error.message
+            : 'The order did not go through. Please try again.';
+        }
       }
     });
   }
@@ -651,7 +685,9 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const to = format(latest, 'yyyy-MM-dd');
     return this.http.get<{ results?: AggregateBarResponse[] }>('/company_OneDay_data', {
       params: { symbol: ticker, from, to }
-    }).pipe(map(response => response.results ?? []));
+    }).pipe(map(response => Array.isArray(response?.results)
+      ? response.results.filter(point => Number.isFinite(point?.t) && Number.isFinite(point.c))
+      : []));
   }
 
   createChart(data: AggregateBarResponse[]): void {
@@ -706,7 +742,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    this.searchSubscription?.unsubscribe();
+    this.searchSubscription.unsubscribe();
     this.tradeModal?.close();
     this.newsModal?.close();
     clearTimeout(this.confirmationTimeout);
@@ -717,15 +753,18 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       switchMap(() => {
         const ticker = this.lastSuccessfulSearch;
         if (!ticker || document.hidden) return of(null);
+        const context = this.searchSubscription;
         return this.getLatestQuote(ticker).pipe(
-          map(quote => ({ ticker, quote })),
+          map(quote => ({ ticker, quote, context })),
           catchError(() => of(null))
         );
       }),
       takeUntilDestroyed(this.destroyRef)
     ).subscribe(update => {
-      if (update && update.quote.c > 0 && update.ticker === this.lastSuccessfulSearch) {
+      if (update?.quote && update.context === this.searchSubscription) {
+        const hadQuote = !!this.currentStock;
         this.currentStock = update.quote;
+        if (!hadQuote) this.loadHourly(update.ticker);
       }
     });
   }
@@ -774,13 +813,24 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   private resetSearch(): void {
-    this.searchSubscription?.unsubscribe();
+    this.searchSubscription.unsubscribe();
+    this.searchSubscription = new Subscription();
+    this.loadedTabs.clear();
+    this.loadingTabs.clear();
+    this.failedTabs.clear();
     this.lastSuccessfulSearch = null;
     this.DetailIsLoading = false;
     this.searchError = '';
     this.searchResults = null;
     this.currentStock = null;
     this.isFavorited = false;
+    this.watchlistUnavailable = false;
+    this.companyPeers = [];
+    this.hourlyLoading = false;
+    this.topNews = [];
+    this.earnings = [];
+    this.recommendations = [];
+    this.sentiments = null;
     this.ownedStockQuantity = 0;
     this.activeTab = 'summary';
     this.tradeModal?.close();
@@ -803,25 +853,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }
 
     this.DetailIsLoading = true;
-    const quote$ = this.getLatestQuote(ticker).pipe(
-      catchError(() => of(null)),
-      shareReplay({ bufferSize: 1, refCount: true })
-    );
-    this.searchSubscription = forkJoin({
+    this.searchSubscription.add(forkJoin({
       profile: this.getStockDetails(ticker),
-      quote: quote$,
-      peers: this.getCompanyPeers(ticker).pipe(catchError(() => of([]))),
-      hourly: quote$.pipe(
-        switchMap(quote => quote && quote.t > 0 ? this.getHistoricalData(ticker, quote) : of([])),
-        catchError(() => of([]))
-      ),
-      daily: this.getBigChartData(ticker).pipe(catchError(() => of(null))),
-      news: this.getTopNews(ticker).pipe(catchError(() => of([]))),
-      earnings: this.getEarnings(ticker).pipe(catchError(() => of([]))),
-      sentiment: this.getSentiments(ticker).pipe(catchError(() => of(null))),
-      recommendations: this.getRecommendations(ticker).pipe(catchError(() => of([])))
+      quote: this.getLatestQuote(ticker).pipe(catchError(() => of(null))),
     }).pipe(finalize(() => this.DetailIsLoading = false)).subscribe({
-      next: ({ profile, quote, peers, hourly, daily, news, earnings, sentiment, recommendations }) => {
+      next: ({ profile, quote }) => {
         if (!profile?.ticker) {
           this.searchError = `No company found for ${ticker}. Try another ticker.`;
           return;
@@ -829,17 +865,9 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
         this.lastSuccessfulSearch = ticker;
         this.searchResults = profile;
-        this.currentStock = quote && quote.c > 0 ? quote : null;
-        this.companyPeers = peers;
-        this.topNews = news.filter(article => article.image).slice(0, 20);
-        this.earnings = earnings;
-        this.recommendations = recommendations;
-        this.sentiments = sentiment;
-        this.calculateSummary();
-        if (earnings.length || recommendations.length) this.createInsightChart();
-        if (hourly.length) this.createChart(hourly);
-        if (daily?.results?.length) this.bigChartOptions = this.createBigChart(daily, ticker);
-        this.checkIfFavorited(ticker);
+        this.currentStock = quote;
+        this.loadSummary(ticker);
+        this.checkWatchlistStatus();
         this.refreshHolding(ticker);
       },
       error: (error: HttpErrorResponse) => {
@@ -847,11 +875,68 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
           ? `No company found for ${ticker}. Try another ticker.`
           : 'Company data is temporarily unavailable. Please try again.';
       }
-    });
+    }));
   }
 
-  setActiveTab(tabName: string): void {
+  private loadSummary(ticker: string): void {
+    this.searchSubscription.add(this.getCompanyPeers(ticker).subscribe({
+      next: peers => this.companyPeers = Array.isArray(peers) ? peers : [],
+      error: () => this.companyPeers = [],
+    }));
+    this.loadHourly(ticker);
+  }
+
+  private loadHourly(ticker: string): void {
+    if (!this.currentStock) return;
+    this.hourlyLoading = true;
+    this.searchSubscription.add(this.getHistoricalData(ticker, this.currentStock).pipe(
+      finalize(() => this.hourlyLoading = false),
+    ).subscribe({
+      next: hourly => { if (hourly.length) this.createChart(hourly); },
+      error: () => this.chartOptions = {},
+    }));
+  }
+
+  setActiveTab(tabName: DetailTab): void {
     this.activeTab = tabName;
+    const ticker = this.lastSuccessfulSearch;
+    if (!ticker || tabName === 'summary' || this.loadingTabs.has(tabName) || this.loadedTabs.has(tabName)) return;
+
+    this.loadingTabs.add(tabName);
+    this.failedTabs.delete(tabName);
+    let request: Observable<unknown>;
+    switch (tabName) {
+      case 'news':
+        request = this.getTopNews(ticker).pipe(tap(news => {
+          this.topNews = news.filter(article => article.image).slice(0, 20);
+        }));
+        break;
+      case 'charts':
+        request = this.getBigChartData(ticker).pipe(tap(daily => {
+          if (daily?.results?.length) this.bigChartOptions = this.createBigChart(daily, ticker);
+        }));
+        break;
+      case 'insights':
+        request = forkJoin({
+          earnings: this.getEarnings(ticker).pipe(catchError(() => of(null))),
+          sentiment: this.getSentiments(ticker).pipe(catchError(() => of(null))),
+          recommendations: this.getRecommendations(ticker).pipe(catchError(() => of(null))),
+        }).pipe(tap(({ earnings, sentiment, recommendations }) => {
+          if (!earnings && !sentiment && !recommendations) throw new Error('Insights unavailable');
+          this.earnings = earnings ?? [];
+          this.recommendations = recommendations ?? [];
+          this.sentiments = sentiment;
+          this.calculateSummary();
+          if (this.earnings.length || this.recommendations.length) this.createInsightChart();
+        }));
+        break;
+    }
+    this.searchSubscription.add(request.pipe(
+      finalize(() => this.loadingTabs.delete(tabName)),
+    ).subscribe({
+      next: () => this.loadedTabs.add(tabName),
+      error: () => this.failedTabs.add(tabName),
+    }));
   }
 
   clearSearch(): void {
@@ -860,19 +945,24 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     void this.router.navigate(['/search-details']);
   }
 
-  private checkIfFavorited(ticker: string): void {
-    this.http.get<boolean>(`/api/watchlist/check/${encodeURIComponent(ticker)}`).pipe(
-      takeUntilDestroyed(this.destroyRef)
+  checkWatchlistStatus(): void {
+    const ticker = this.lastSuccessfulSearch;
+    if (!ticker || this.watchlistLoading || this.watchlistPending) return;
+    this.watchlistUnavailable = false;
+    this.watchlistLoading = true;
+    this.searchSubscription.add(this.http.get<boolean>(`/api/watchlist/check/${encodeURIComponent(ticker)}`).pipe(
+      finalize(() => this.watchlistLoading = false),
     ).subscribe({
-      next: favorited => {
-        if (ticker === this.lastSuccessfulSearch) this.isFavorited = favorited;
-      },
-      error: () => {}
-    });
+      next: favorited => this.isFavorited = favorited,
+      error: () => this.watchlistUnavailable = true,
+    }));
   }
 
-  getLatestQuote(ticker: string): Observable<QuoteResponse> {
-    return this.http.get<QuoteResponse>('/company_quote', { params: { symbol: ticker } });
+  getLatestQuote(ticker: string): Observable<QuoteResponse | null> {
+    return this.http.get<QuoteResponse>('/company_quote', { params: { symbol: ticker } }).pipe(
+      map(quote => quote && Number.isFinite(quote.c) && quote.c > 0
+        && Number.isFinite(quote.t) && quote.t > 0 ? quote : null),
+    );
   }
 
   getCompanyPeers(ticker: string): Observable<string[]> {
@@ -883,24 +973,32 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
   toggleFavorite(): void {
     const ticker = this.lastSuccessfulSearch;
-    if (!ticker || this.watchlistPending) return;
+    if (!ticker || this.watchlistLoading || this.watchlistPending || this.watchlistUnavailable) return;
 
     const adding = !this.isFavorited;
+    const context = this.searchSubscription;
     this.watchlistPending = true;
     const request = adding
       ? this.http.post('/api/watchlist', { ticker })
       : this.http.delete(`/api/watchlist/${encodeURIComponent(ticker)}`);
     request.pipe(
       takeUntilDestroyed(this.destroyRef),
-      finalize(() => this.watchlistPending = false)
+      finalize(() => {
+        this.watchlistPending = false;
+        if (this.searchSubscription !== context && !this.searchSubscription.closed) this.checkWatchlistStatus();
+      })
     ).subscribe({
       next: () => {
-        if (ticker === this.lastSuccessfulSearch) {
+        if (this.searchSubscription === context) {
           this.isFavorited = adding;
           this.showConfirmationMessage(adding ? `${ticker} added to your watchlist.` : `${ticker} removed from your watchlist.`);
         }
       },
-      error: () => this.showConfirmationMessage('Could not update your watchlist. Please try again.', true)
+      error: () => {
+        if (this.searchSubscription === context) {
+          this.showConfirmationMessage('Could not update your watchlist. Please try again.', true);
+        }
+      },
     });
   }
 
@@ -917,12 +1015,12 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   formatChangeValue(quote: QuoteResponse | null): string {
-    if (!quote || quote.d === undefined) return '0.00';
+    if (!quote || !Number.isFinite(quote.d)) return '—';
     return `${quote.d >= 0 ? '+' : ''}${quote.d.toFixed(2)}`;
   }
 
   formatChangePercent(quote: QuoteResponse | null): string {
-    if (!quote || quote.dp === undefined) return '0.00';
+    if (!quote || !Number.isFinite(quote.dp)) return '—';
     return `${quote.dp.toFixed(2)}%`;
   }
 

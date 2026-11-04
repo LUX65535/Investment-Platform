@@ -11,6 +11,8 @@ const uri = process.env.MONGO_URI;
 const configuredDatabaseName = process.env.MONGO_DB_NAME?.trim();
 const databaseName = configuredDatabaseName || 'Assignment3';
 const initialDemoBalance = 25000;
+const maxMarketResponseBytes = 4_000_000;
+const maxHourlyRangeMs = 31 * 24 * 60 * 60 * 1000;
 const finnhub = {
   origin: 'https://finnhub.io/api/v1',
   key: process.env.API_KEY,
@@ -24,6 +26,7 @@ const polygon = {
 const browserFiles = path.join(__dirname, 'my-angular-app/dist/my-angular-app/browser');
 let client;
 
+app.set('query parser', 'simple');
 app.use(express.json());
 app.use(express.static(browserFiles));
 
@@ -33,10 +36,11 @@ function normalizeTicker(value) {
   return /^[A-Z0-9][A-Z0-9._:/-]{0,31}$/.test(ticker) ? ticker : null;
 }
 
-function isCalendarDate(value) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+function calendarDateTimestamp(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return NaN;
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) && date.toISOString().startsWith(value);
+  const timestamp = date.getTime();
+  return Number.isFinite(timestamp) && date.toISOString().startsWith(value) ? timestamp : NaN;
 }
 
 async function requestMarketData(provider, endpoint, params) {
@@ -46,7 +50,13 @@ async function requestMarketData(provider, endpoint, params) {
   const response = await axios.get(provider.origin + endpoint, {
     params: { ...params, [provider.keyParameter]: provider.key },
     timeout: 8000,
+    maxContentLength: maxMarketResponseBytes,
+    responseType: 'json',
+    transitional: { silentJSONParsing: false },
   });
+  if (response.data === null || typeof response.data !== 'object') {
+    throw new Error('Market provider returned an unexpected response');
+  }
   return response.data;
 }
 
@@ -122,8 +132,9 @@ app.get('/company_data', (req, res) => {
 app.get('/company_OneDay_data', (req, res) => {
   const symbol = normalizeTicker(req.query.symbol);
   const { from, to } = req.query;
-  if (!symbol || !isCalendarDate(from) || !isCalendarDate(to) || from > to) {
-    return res.status(400).json({ error: 'Enter a valid stock symbol and date range.' });
+  const duration = calendarDateTimestamp(to) - calendarDateTimestamp(from);
+  if (!symbol || !Number.isFinite(duration) || duration < 0 || duration > maxHourlyRangeMs) {
+    return res.status(400).json({ error: 'Enter a valid stock symbol and a date range of at most 31 days.' });
   }
   return sendChartData(res, symbol, 'hour', from, to);
 });
@@ -218,6 +229,15 @@ function toCents(amount) {
   return Math.round((amount + Math.abs(amount) * Number.EPSILON) * 100);
 }
 
+function isValidMoney(amount) {
+  return typeof amount === 'number' && amount >= 0 && Number.isSafeInteger(toCents(amount));
+}
+
+function isValidPosition(stock) {
+  return Number.isFinite(stock.quantity) && stock.quantity > 0 &&
+    stock.quantity <= Number.MAX_SAFE_INTEGER && isValidMoney(stock.totalCost);
+}
+
 async function buyStock(wallets, portfolio, wallet, ticker, quantity, cost, session) {
   const balance = toCents(wallet.balance) / 100;
   if (balance < cost) {
@@ -225,8 +245,12 @@ async function buyStock(wallets, portfolio, wallet, ticker, quantity, cost, sess
   }
 
   const stock = await portfolio.findOne({ ticker }, { session });
+  if (stock && !isValidPosition(stock)) return { status: 409, message: 'This position needs to be reconciled before trading.' };
   const nextQuantity = (stock?.quantity ?? 0) + quantity;
   const totalCost = toCents((stock?.totalCost ?? 0) + cost) / 100;
+  if (nextQuantity > Number.MAX_SAFE_INTEGER || !isValidMoney(totalCost)) {
+    return { status: 409, message: 'This trade would exceed the demo portfolio limits.' };
+  }
   await wallets.updateOne({ _id: wallet._id }, { $set: { balance: toCents(balance - cost) / 100 } }, { session });
   await portfolio.updateOne(stock ? { _id: stock._id } : { ticker }, {
     $set: { quantity: nextQuantity, totalCost },
@@ -237,11 +261,14 @@ async function buyStock(wallets, portfolio, wallet, ticker, quantity, cost, sess
 async function sellStock(wallets, portfolio, wallet, ticker, quantity, proceeds, session) {
   const stock = await portfolio.findOne({ ticker }, { session });
   if (!stock) return { status: 404, message: 'Stock not found in portfolio' };
+  if (!isValidPosition(stock)) return { status: 409, message: 'This position needs to be reconciled before trading.' };
   if (stock.quantity < quantity) {
     return { status: 400, message: 'Insufficient stock quantity' };
   }
 
-  await wallets.updateOne({ _id: wallet._id }, { $set: { balance: toCents(wallet.balance + proceeds) / 100 } }, { session });
+  const nextBalance = toCents(wallet.balance + proceeds) / 100;
+  if (!isValidMoney(nextBalance)) return { status: 409, message: 'This trade would exceed the demo wallet limit.' };
+  await wallets.updateOne({ _id: wallet._id }, { $set: { balance: nextBalance } }, { session });
   const remainingQuantity = stock.quantity - quantity;
   if (remainingQuantity === 0) {
     await portfolio.deleteOne({ _id: stock._id }, { session });
@@ -281,6 +308,7 @@ for (const [side, execute] of Object.entries({ buy: buyStock, sell: sellStock })
       const outcome = await client.withSession(session => session.withTransaction(async () => {
         const wallet = await wallets.findOne({}, { session });
         if (!wallet) return { status: 409, message: 'Initialize the demo wallet before placing a trade.' };
+        if (!isValidMoney(wallet.balance)) return { status: 409, message: 'The demo wallet needs to be reconciled before trading.' };
         return execute(wallets, portfolio, wallet, ticker, quantity, cents / 100, session);
       }));
       res.status(outcome.status).json({ message: outcome.message });
@@ -315,7 +343,10 @@ app.get('/api/stocks/:ticker', async (req, res) => {
 app.get('/api/balance', async (req, res) => {
   try {
     const wallet = await res.locals.db.collection('wallet').findOne({});
-    res.status(200).json({ balance: wallet?.balance ?? 0 });
+    if (wallet && !isValidMoney(wallet.balance)) {
+      return res.status(409).json({ message: 'The demo wallet balance needs to be reconciled.' });
+    }
+    res.status(200).json({ balance: wallet?.balance ?? 0, initialized: Boolean(wallet) });
   } catch (error) {
     sendDatabaseError(res, error);
   }

@@ -1,21 +1,10 @@
-<section class="search-hero" *ngIf="!searchResults && !DetailIsLoading; else compactSearch" aria-labelledby="research-title">
-  <div class="search-eyebrow page-eyebrow">Market research</div>
-  <h1 id="research-title">Research stocks with clarity</h1>
-  <p class="search-intro">Find a company, compare market data, and practice investing with a simulated portfolio.</p>
-  <ng-container *ngTemplateOutlet="searchForm"></ng-container>
-  <div class="search-suggestions" aria-label="Example symbols">
-    <span>Try a symbol</span>
-    <button type="button" *ngFor="let ticker of exampleTickers" (click)="submitSearch(ticker)">{{ ticker }}</button>
-  </div>
-</section>
-
-<ng-template #compactSearch>
-  <div class="search-container">
-    <ng-container *ngTemplateOutlet="searchForm"></ng-container>
-  </div>
-</ng-template>
-
-<ng-template #searchForm>
+<section [class.search-hero]="showSearchHero" [class.search-container]="!showSearchHero"
+         [attr.aria-labelledby]="showSearchHero ? 'research-title' : null">
+  <ng-container *ngIf="showSearchHero">
+    <div class="search-eyebrow page-eyebrow">Market research</div>
+    <h1 id="research-title">Research stocks with clarity</h1>
+    <p class="search-intro">Find a company, compare market data, and practice investing with a simulated portfolio.</p>
+  </ng-container>
   <form class="search-bar-auto-complete" role="search" (ngSubmit)="submitSearch()">
     <div class="input-container">
       <input matInput id="ticker-search" aria-label="Stock ticker or company"
@@ -36,7 +25,11 @@
     </mat-autocomplete>
     <p *ngIf="suggestionsError" class="search-hint" role="status">Suggestions are unavailable. You can still search by ticker.</p>
   </form>
-</ng-template>
+  <div *ngIf="showSearchHero" class="search-suggestions" aria-label="Example symbols">
+    <span>Try a symbol</span>
+    <button type="button" *ngFor="let ticker of exampleTickers" (click)="submitSearch(ticker)">{{ ticker }}</button>
+  </div>
+</section>
 
 <div *ngIf="DetailIsLoading" class="spinner-container" role="status">
   <mat-spinner diameter="32"></mat-spinner>
@@ -56,13 +49,18 @@
       <h1>{{ company.ticker }}
         <button type="button" class="star" [class.yellow]="isFavorited"
                 [attr.aria-pressed]="isFavorited" [attr.aria-label]="isFavorited ? 'Remove from watchlist' : 'Add to watchlist'"
-                [disabled]="watchlistPending" (click)="toggleFavorite()">&#9733;</button>
+                [disabled]="watchlistPending || watchlistLoading || watchlistUnavailable" (click)="toggleFavorite()">&#9733;</button>
       </h1>
       <h2>{{ company.name }}</h2>
       <p>{{ company.exchange }}</p>
-      <button type="button" class="btn btn-success" [disabled]="!currentStock" (click)="openTrade(tradeDialog, 'buy')">Buy</button>
-      <button type="button" class="btn btn-outline-secondary" *ngIf="ownedStockQuantity > 0" [disabled]="!currentStock"
+      <button type="button" class="btn btn-success" [disabled]="!currentStock || !supportsPaperTrade || tradePending" (click)="openTrade(tradeDialog, 'buy')">Buy</button>
+      <button type="button" class="btn btn-outline-secondary" *ngIf="ownedStockQuantity > 0" [disabled]="!currentStock || !supportsPaperTrade || tradePending"
               (click)="openTrade(tradeDialog, 'sell')">Sell</button>
+      <p *ngIf="!supportsPaperTrade">Paper trading is available for USD quotes.</p>
+      <div *ngIf="watchlistUnavailable" class="mt-2">
+        <span role="status">Watchlist status unavailable.</span>
+        <button type="button" class="state-action ms-2" (click)="checkWatchlistStatus()">Retry watchlist</button>
+      </div>
     </div>
 
     <div class="stock-logo" aria-hidden="true">
@@ -76,7 +74,7 @@
         <span aria-hidden="true" [ngClass]="{'triangle-up': quote.dp > 0, 'triangle-down': quote.dp < 0}"></span>
         <span>{{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})</span>
       </div>
-      <span class="current-time">Last quote {{ quote.t * 1000 | date:'MMM d, h:mm a' }}</span>
+      <span class="current-time">Last quote {{ quote.t * 1000 | date:'MMM d, h:mm a z' }}</span>
     </div>
     <ng-template #quoteUnavailable><p class="stock-financials current-time">Latest quote unavailable</p></ng-template>
   </div>
@@ -96,14 +94,14 @@
         <p *ngIf="tradeSide === 'sell'">Shares available <strong>{{ ownedStockQuantity }}</strong></p>
         <label for="research-trade-quantity" class="form-label">Number of shares</label>
         <input id="research-trade-quantity" name="quantity" class="form-control" type="number" min="1" step="1"
-               [(ngModel)]="tradeQuantity" [disabled]="tradePending" ngbAutofocus required>
+               [(ngModel)]="tradeQuantity" [readonly]="tradePending" ngbAutofocus required>
         <p class="mt-3 mb-1">Estimated total <strong>{{ estimatedTradeTotal | currency:(company.currency || 'USD') }}</strong></p>
         <p class="small text-muted">Simulated orders use the latest quote at execution.</p>
         <p *ngIf="tradeError" class="error-message" role="alert">{{ tradeError }}</p>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" [disabled]="tradePending" (click)="modal.dismiss()">Cancel</button>
-        <button type="submit" class="btn btn-primary" [disabled]="!canSubmitTrade">
+        <button type="submit" class="btn btn-primary" [attr.aria-disabled]="!canSubmitTrade">
           {{ tradePending ? 'Submitting…' : (tradeSide === 'buy' ? 'Confirm buy' : 'Confirm sell') }}
         </button>
       </div>
@@ -116,6 +114,12 @@
       <button type="button" class="tab" [class.active]="activeTab === 'news'" [attr.aria-pressed]="activeTab === 'news'" (click)="setActiveTab('news')">Top News</button>
       <button type="button" class="tab" [class.active]="activeTab === 'charts'" [attr.aria-pressed]="activeTab === 'charts'" (click)="setActiveTab('charts')">Charts</button>
       <button type="button" class="tab" [class.active]="activeTab === 'insights'" [attr.aria-pressed]="activeTab === 'insights'" (click)="setActiveTab('insights')">Insights</button>
+    </div>
+
+    <p *ngIf="loadingTabs.has(activeTab)" class="tab-content search-hint" role="status">Loading this section…</p>
+    <div *ngIf="failedTabs.has(activeTab)" class="tab-content">
+      <p class="search-hint" role="alert">This section is temporarily unavailable.</p>
+      <button type="button" class="state-action" (click)="setActiveTab(activeTab)">Try again</button>
     </div>
 
     <div class="tab-content" *ngIf="activeTab === 'summary'">
@@ -139,7 +143,8 @@
         </div>
         <div class="right-column">
           <div id="company-chart">
-            <p *ngIf="!chartOptions.series?.length" class="search-hint">No hourly prices are available for this symbol.</p>
+            <p *ngIf="hourlyLoading" class="search-hint" role="status">Loading hourly prices…</p>
+            <p *ngIf="!hourlyLoading && !chartOptions.series?.length" class="search-hint">No hourly prices are available for this symbol.</p>
             <highcharts-chart
               *ngIf="chartOptions.series?.length"
               [Highcharts]="Highcharts"
@@ -150,7 +155,7 @@
         </div>
       </div>
     </div>
-    <div class="tab-content" *ngIf="activeTab === 'news'">
+    <div class="tab-content" *ngIf="activeTab === 'news' && !loadingTabs.has('news') && !failedTabs.has('news')">
       <p *ngIf="!topNews.length" class="search-hint">No recent articles are available for this symbol.</p>
       <div class="news-grid" *ngIf="topNews.length">
         <button type="button" *ngFor="let newsItem of topNews" class="news-card" (click)="openNews(newsDialog, newsItem)">
@@ -180,16 +185,17 @@
       </ng-container>
     </ng-template>
 
-    <div class="tab-content" *ngIf="activeTab === 'charts'">
+    <div class="tab-content" *ngIf="activeTab === 'charts' && !loadingTabs.has('charts') && !failedTabs.has('charts')">
       <p *ngIf="!bigChartOptions.series?.length" class="search-hint">Historical chart data is unavailable for this symbol.</p>
       <highcharts-chart
         *ngIf="bigChartOptions.series?.length"
         [Highcharts]="Highcharts"
+        [constructorType]="'stockChart'"
         [options]="bigChartOptions"
         style="width: 100%; height: 600px; display: block;">
       </highcharts-chart>
     </div>
-    <div class="tab-content" *ngIf="activeTab === 'insights'">
+    <div class="tab-content" *ngIf="activeTab === 'insights' && !loadingTabs.has('insights') && !failedTabs.has('insights')">
       <p *ngIf="!sentiments" class="search-hint">Insider data is unavailable for this symbol.</p>
       <div class="insights-sentiments" *ngIf="sentiments">
         <div class="insights-sentiments-table">

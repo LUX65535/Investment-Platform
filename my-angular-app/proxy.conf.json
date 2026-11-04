@@ -1,5 +1,5 @@
 {
-  "/api": {
+  "^/(?:api(?:/|$)|company_[A-Za-z_]+/?$|Autocomplete_Search/?$)": {
     "target": "http://localhost:3000",
     "secure": false,
     "changeOrigin": true,

@@ -2,12 +2,13 @@ import { Component, DestroyRef, OnInit, TemplateRef, ViewChild, inject } from '@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
-import { catchError, finalize, forkJoin, map, of, switchMap } from 'rxjs';
+import { catchError, finalize, forkJoin, from, map, mergeMap, of, Subscription, switchMap, tap } from 'rxjs';
 import { PortfolioService, Stock } from '../../services/portfolio.service';
 
 interface Holding extends Omit<Stock, 'price' | 'change'> {
   price: number | null;
   change: number | null;
+  quotePending?: boolean;
 }
 
 @Component({
@@ -18,10 +19,13 @@ interface Holding extends Omit<Stock, 'price' | 'change'> {
 export class PortfolioComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   private tradeRef?: NgbModalRef;
+  private portfolioRequest?: Subscription;
 
   @ViewChild('tradeDialog', { static: true }) private tradeDialog!: TemplateRef<unknown>;
   portfolio: Holding[] = [];
   cashBalance: number | null = null;
+  walletInitialized: boolean | null = null;
+  holdingsCurrent = false;
   isLoading = false;
   isInitializing = false;
   loadError = '';
@@ -29,6 +33,7 @@ export class PortfolioComponent implements OnInit {
   actionError = '';
   activeTrade?: { holding: Holding; side: 'buy' | 'sell'; price: number };
   tradeError = '';
+  tradeNeedsRefresh = false;
   submittingTrade = false;
   quantity: number | null = 1;
 
@@ -60,7 +65,7 @@ export class PortfolioComponent implements OnInit {
 
   get canSubmitTrade(): boolean {
     const trade = this.activeTrade;
-    if (!trade || !this.validQuantity || this.submittingTrade || this.quantity === null) return false;
+    if (!trade || !this.validQuantity || this.submittingTrade || this.tradeNeedsRefresh || this.quantity === null) return false;
     return trade.side === 'sell'
       ? this.quantity <= trade.holding.quantity
       : this.cashBalance !== null && this.estimatedTotal <= this.cashBalance;
@@ -68,11 +73,34 @@ export class PortfolioComponent implements OnInit {
 
   loadPortfolio(): void {
     if (this.isLoading) return;
+    this.portfolioRequest?.unsubscribe();
     this.isLoading = true;
+    this.holdingsCurrent = false;
     this.loadError = '';
 
-    const holdings = this.portfolioService.getStocks().pipe(
-      switchMap(stocks => stocks.length ? forkJoin(stocks.map(stock =>
+    this.portfolioRequest = forkJoin({
+      holdings: this.portfolioService.getStocks().pipe(catchError(() => of(null))),
+      wallet: this.portfolioService.getBalance().pipe(catchError(() => of(null))),
+    }).pipe(
+      tap(({ holdings, wallet }) => {
+        if (holdings) {
+          this.portfolio = holdings.map(stock => ({ ...stock, price: null, change: null, quotePending: true }));
+        } else {
+          this.portfolio = this.portfolio.map(stock => ({ ...stock, quotePending: false }));
+        }
+        this.holdingsCurrent = holdings !== null;
+        this.cashBalance = wallet?.balance ?? null;
+        this.walletInitialized = wallet ? (wallet.initialized ?? (wallet.balance > 0 || !!holdings?.length)) : null;
+        if (!holdings || !wallet) {
+          this.loadError = !holdings && !wallet
+            ? 'We couldn’t load your holdings or wallet. Try refreshing.'
+            : !holdings
+              ? 'We couldn’t refresh your holdings.'
+              : 'We couldn’t load your wallet balance.';
+        }
+        this.isLoading = false;
+      }),
+      switchMap(({ holdings }) => from(holdings ?? []).pipe(mergeMap(stock =>
         this.http.get<{ c: number; dp: number }>('/company_quote', { params: { symbol: stock.ticker } }).pipe(
           catchError(() => of(null)),
           map((quote): Holding => ({
@@ -80,32 +108,16 @@ export class PortfolioComponent implements OnInit {
             price: quote && Number.isFinite(quote.c) && quote.c > 0 ? quote.c : null,
             change: quote && quote.c > 0 && Number.isFinite(quote.dp) ? quote.dp : null,
           })),
-        ),
-      )) : of([])),
-      catchError(() => of(null)),
-    );
-
-    forkJoin({
-      holdings,
-      wallet: this.portfolioService.getBalance().pipe(catchError(() => of(null))),
-    }).pipe(
+        ), 3))),
       takeUntilDestroyed(this.destroyRef),
       finalize(() => this.isLoading = false),
-    ).subscribe(({ holdings, wallet }) => {
-      if (holdings) this.portfolio = holdings;
-      this.cashBalance = wallet?.balance ?? null;
-      if (!holdings || !wallet) {
-        this.loadError = !holdings && !wallet
-          ? 'We couldn’t load your holdings or wallet. Try refreshing.'
-          : !holdings
-            ? 'We couldn’t refresh your holdings.'
-            : 'We couldn’t load your wallet balance.';
-      }
+    ).subscribe(enriched => {
+      this.portfolio = this.portfolio.map(stock => stock.ticker === enriched.ticker ? enriched : stock);
     });
   }
 
   onInitializeWallet(): void {
-    if (this.isInitializing || this.isLoading) return;
+    if (this.isInitializing || this.isLoading || this.walletInitialized !== false) return;
     this.isInitializing = true;
     this.actionError = '';
     this.statusMessage = '';
@@ -122,10 +134,11 @@ export class PortfolioComponent implements OnInit {
   }
 
   openTrade(holding: Holding, side: 'buy' | 'sell'): void {
-    if (this.tradeRef || holding.price === null || this.isLoading) return;
+    if (this.tradeRef || holding.price === null || this.isLoading || !this.holdingsCurrent || !this.walletInitialized) return;
     this.actionError = '';
     this.statusMessage = '';
     this.tradeError = '';
+    this.tradeNeedsRefresh = false;
     this.quantity = 1;
     this.activeTrade = { holding, side, price: holding.price };
     this.tradeRef = this.modal.open(this.tradeDialog, {
@@ -163,9 +176,13 @@ export class PortfolioComponent implements OnInit {
         this.loadPortfolio();
       },
       error: (error: HttpErrorResponse) => {
-        this.tradeError = error.status >= 400 && error.status < 500 && typeof error.error?.message === 'string'
-          ? error.error.message
-          : 'We couldn’t confirm this trade. Refresh your portfolio before trying again.';
+        if (error.status === 0 || error.status >= 500) {
+          this.tradeNeedsRefresh = true;
+          this.tradeError = 'We couldn’t confirm this trade. Close this dialog and check your refreshed holdings before trying again.';
+          this.loadPortfolio();
+        } else {
+          this.tradeError = typeof error.error?.message === 'string' ? error.error.message : 'The trade was rejected. Please try again.';
+        }
       },
     });
   }

@@ -33,14 +33,14 @@ export class PortfolioService {
       })
     );
   }
-  getBalance(): Observable<{ balance: number }> {
-    return this.http.get<{ balance: number }>('/api/balance');
+  getBalance(): Observable<{ balance: number; initialized?: boolean }> {
+    return this.http.get<{ balance: number; initialized?: boolean }>('/api/balance');
   }
   initializeWallet(): Observable<{ message: string }> {
     return this.http.post<{ message: string }>('/api/initWallet', {});
   }
-  checkStock(ticker: string): Observable<any> {
-    return this.http.get(`/api/stocks/${ticker}`);
+  checkStock(ticker: string): Observable<{ quantity: number }> {
+    return this.http.get<{ quantity: number }>(`/api/stocks/${encodeURIComponent(ticker)}`);
   }
 
   buyStock(ticker: string, quantity: number, buyPrice: number): Observable<Object> {

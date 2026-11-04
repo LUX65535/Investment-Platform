@@ -28,14 +28,14 @@
       <div class="price-change-container">
         <ng-container *ngIf="item.quote as quote; else unavailableQuote">
           <span class="watchlist-price">{{ quote.c | currency:'USD' }}</span>
-          <span class="watchlist-percentage"
+          <span *ngIf="quote.d !== null && quote.dp !== null" class="watchlist-percentage"
                 [class.positive]="quote.dp > 0" [class.negative]="quote.dp < 0">
             {{ quote.dp > 0 ? '+' : '' }}{{ quote.d | number:'1.2-2' }}
             ({{ quote.dp > 0 ? '+' : '' }}{{ quote.dp | number:'1.2-2' }}%)
           </span>
         </ng-container>
         <ng-template #unavailableQuote>
-          <span class="watchlist-unavailable">Quote unavailable</span>
+          <span class="watchlist-unavailable">{{ item.quotePending ? 'Loading quote…' : 'Quote unavailable' }}</span>
         </ng-template>
       </div>
       <button type="button" class="close-btn"

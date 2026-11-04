@@ -1,18 +1,19 @@
 import { Component, DestroyRef, OnInit, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { catchError, finalize, forkJoin, map, of, switchMap } from 'rxjs';
+import { catchError, finalize, forkJoin, from, map, mergeMap, of, switchMap, tap } from 'rxjs';
 
 interface Quote {
   c: number;
-  d: number;
-  dp: number;
+  d: number | null;
+  dp: number | null;
 }
 
 interface WatchlistItem {
   ticker: string;
   name?: string;
   quote?: Quote;
+  quotePending?: boolean;
 }
 
 @Component({
@@ -25,6 +26,7 @@ export class WatchlistComponent implements OnInit {
   readonly removing = new Set<string>();
   watchlist: WatchlistItem[] = [];
   loading = false;
+  private enriching = false;
   loadError = '';
   actionError = '';
   actionStatus = '';
@@ -36,11 +38,16 @@ export class WatchlistComponent implements OnInit {
   }
 
   loadWatchlist(): void {
-    if (this.loading || this.removing.size) return;
+    if (this.loading || this.enriching || this.removing.size) return;
     this.loading = true;
     this.loadError = '';
     this.http.get<WatchlistItem[]>('/api/watchlist').pipe(
-      switchMap(items => items.length ? forkJoin(items.map(({ ticker }) => {
+      tap(items => {
+        this.watchlist = items.map(({ ticker }) => ({ ticker, quotePending: true }));
+        this.loading = false;
+        this.enriching = items.length > 0;
+      }),
+      switchMap(items => from(items).pipe(mergeMap(({ ticker }) => {
         const params = { symbol: ticker };
         return forkJoin({
           profile: this.http.get<{ name?: string }>('/company_profile', { params }).pipe(
@@ -52,13 +59,20 @@ export class WatchlistComponent implements OnInit {
         }).pipe(map(({ profile, quote }): WatchlistItem => ({
           ticker,
           name: profile?.name,
-          quote: quote && Number.isFinite(quote.c) && quote.c > 0 ? quote : undefined,
+          quote: quote && Number.isFinite(quote.c) && quote.c > 0 ? {
+            c: quote.c,
+            d: Number.isFinite(quote.d) ? quote.d : null,
+            dp: Number.isFinite(quote.dp) ? quote.dp : null,
+          } : undefined,
         })));
-      })) : of([])),
+      }, 3))),
       takeUntilDestroyed(this.destroyRef),
-      finalize(() => this.loading = false),
+      finalize(() => {
+        this.loading = false;
+        this.enriching = false;
+      }),
     ).subscribe({
-      next: items => this.watchlist = items,
+      next: enriched => this.watchlist = this.watchlist.map(item => item.ticker === enriched.ticker ? enriched : item),
       error: () => this.loadError = 'We couldn’t load your watchlist. Try again in a moment.',
     });
   }

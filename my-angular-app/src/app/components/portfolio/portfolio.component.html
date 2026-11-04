@@ -25,7 +25,7 @@
     <div class="portfolio-toolbar">
       <button type="button" class="state-action" [disabled]="isLoading || isInitializing"
               (click)="loadPortfolio()">Refresh</button>
-      <button *ngIf="cashBalance === 0" type="button" class="btn-primary-lg"
+      <button *ngIf="walletInitialized === false" type="button" class="btn-primary-lg"
               [disabled]="isLoading || isInitializing" (click)="onInitializeWallet()">
         {{ isInitializing ? 'Initializing…' : 'Initialize demo wallet' }}
       </button>
@@ -77,7 +77,7 @@
         </div>
         <div class="stock-card__row">
           <span>Latest price</span>
-          <strong>{{ stock.price === null ? 'Unavailable' : (stock.price | currency:'USD') }}</strong>
+          <strong>{{ stock.quotePending ? 'Loading…' : (stock.price === null ? 'Unavailable' : (stock.price | currency:'USD')) }}</strong>
         </div>
         <div class="stock-card__row">
           <span>Market value</span>
@@ -94,10 +94,10 @@
 
       <footer class="stock-card__actions">
         <button type="button" class="btn-icon success" [attr.aria-label]="'Buy ' + stock.ticker"
-                [disabled]="isLoading || isInitializing || stock.price === null || cashBalance === null || cashBalance <= 0"
+                [disabled]="isLoading || isInitializing || !holdingsCurrent || !walletInitialized || stock.price === null || cashBalance === null || cashBalance <= 0"
                 (click)="openTrade(stock, 'buy')">Buy</button>
         <button type="button" class="btn-icon danger" [attr.aria-label]="'Sell ' + stock.ticker"
-                [disabled]="isLoading || isInitializing || stock.price === null || stock.quantity <= 0"
+                [disabled]="isLoading || isInitializing || !holdingsCurrent || !walletInitialized || stock.price === null || stock.quantity <= 0"
                 (click)="openTrade(stock, 'sell')">Sell</button>
       </footer>
     </article>
@@ -123,17 +123,17 @@
       <label for="portfolio-trade-quantity" class="form-label">Shares</label>
       <input id="portfolio-trade-quantity" name="quantity" type="number" min="1" step="1"
              required ngbAutofocus class="form-control" [(ngModel)]="quantity"
-             [disabled]="submittingTrade" aria-describedby="portfolio-trade-estimate">
+             [readonly]="submittingTrade" aria-describedby="portfolio-trade-estimate">
       <p id="portfolio-trade-estimate" class="form-text">The final price uses the latest quote at execution.</p>
       <p *ngIf="!validQuantity" class="text-danger">Enter a positive whole number.</p>
-      <p *ngIf="validQuantity && !submittingTrade && !canSubmitTrade" class="text-danger">
+      <p *ngIf="validQuantity && !submittingTrade && !tradeNeedsRefresh && !canSubmitTrade" class="text-danger">
         {{ trade.side === 'buy' ? 'The estimated cost exceeds your available cash.' : 'You don’t own that many shares.' }}
       </p>
       <p *ngIf="tradeError" class="state-message state-message--error" role="alert">{{ tradeError }}</p>
     </div>
     <div class="modal-footer">
       <button type="button" class="state-action" [disabled]="submittingTrade" (click)="dialog.dismiss()">Cancel</button>
-      <button type="submit" class="btn btn-primary" [disabled]="!canSubmitTrade">
+      <button type="submit" class="btn btn-primary" [attr.aria-disabled]="!canSubmitTrade">
         {{ submittingTrade ? 'Submitting…' : (trade.side === 'buy' ? 'Place buy order' : 'Place sell order') }}
       </button>
     </div>

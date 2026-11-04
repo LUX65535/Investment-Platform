@@ -14,6 +14,10 @@ export class AppComponent implements OnInit {
   constructor(private stockService: StockService, private router: Router) {}
   isCollapsed = true;
 
+  get skipLink(): string {
+    return this.router.url.split('#', 1)[0] + '#workspace';
+  }
+
   get embeddedResearch(): boolean {
     return this.router.isActive('/research-embed', {
       paths: 'exact',
@@ -24,7 +28,6 @@ export class AppComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    console.log('Before Added to watchlist')
     this.stockService.lastSearch$.subscribe(ticker => {
       if (ticker) {
         this.router.navigateByUrl(`/search-details/${ticker}`);
