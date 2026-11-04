@@ -1,0 +1,76 @@
+<header class="research-heading">
+  <div>
+    <p class="page-eyebrow">Investment Platform</p>
+    <h1>Market research</h1>
+  </div>
+  <span class="preview-badge">Read-only preview</span>
+</header>
+
+<div class="research-tools">
+  <form class="ticker-form" (ngSubmit)="selectTicker(tickerInput)" role="search">
+    <label for="research-ticker">U.S. stock symbol</label>
+    <div class="ticker-field">
+      <input id="research-ticker" name="ticker" [(ngModel)]="tickerInput"
+             maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false"
+             placeholder="e.g. AAPL" [attr.aria-invalid]="inputError ? 'true' : null"
+             [attr.aria-describedby]="inputError ? 'ticker-error' : null">
+      <button type="submit">Look up</button>
+    </div>
+    <p *ngIf="inputError" id="ticker-error" class="ticker-error" role="alert">{{ inputError }}</p>
+  </form>
+  <div class="example-tickers" role="group" aria-label="Example stock symbols">
+    <button *ngFor="let example of exampleTickers" type="button" class="state-action"
+            [attr.aria-pressed]="ticker === example" (click)="selectTicker(example)">{{ example }}</button>
+  </div>
+</div>
+
+<section class="quote-panel" aria-labelledby="quote-title">
+  <div class="quote-heading">
+    <div>
+      <p class="page-eyebrow">Latest quote</p>
+      <h2 id="quote-title">{{ ticker }}</h2>
+    </div>
+    <button type="button" class="state-action" [disabled]="quoteLoading || historyLoading"
+            (click)="refresh()">Refresh</button>
+  </div>
+  <div aria-live="polite">
+    <p *ngIf="quoteLoading" class="status-copy">Loading quote…</p>
+    <ng-container *ngIf="quote as latestQuote">
+      <div class="quote-values">
+        <strong class="quote-price">{{ latestQuote.c | currency:'USD' }}</strong>
+        <span *ngIf="latestQuote.d !== null && latestQuote.dp !== null" class="daily-change"
+              [class.gain]="latestQuote.dp > 0" [class.loss]="latestQuote.dp < 0">
+          {{ latestQuote.d > 0 ? '+' : '' }}{{ latestQuote.d | number:'1.2-2' }}
+          ({{ latestQuote.dp > 0 ? '+' : '' }}{{ latestQuote.dp | number:'1.2-2' }}%)
+        </span>
+      </div>
+      <p class="status-copy">Quote as of {{ quoteTime }}</p>
+    </ng-container>
+    <p *ngIf="!quoteLoading && !quote" class="status-copy">No recent quote is available for {{ ticker }}. Try another symbol or refresh.</p>
+  </div>
+</section>
+
+<section class="chart-panel" aria-labelledby="history-title">
+  <div class="chart-heading">
+    <div>
+      <p class="page-eyebrow">Price history</p>
+      <h2 id="history-title">Daily closes</h2>
+    </div>
+    <div *ngIf="history.length > 1" class="chart-ranges" role="group" aria-label="Chart time range">
+      <button *ngFor="let range of ranges" type="button"
+              [attr.aria-pressed]="activeRange === range" (click)="setRange(range)">{{ range.label }}</button>
+    </div>
+  </div>
+  <p *ngIf="historyLoading" class="chart-status" role="status">Loading price history…</p>
+  <p *ngIf="!historyLoading && history.length < 2" class="chart-status" role="status">
+    Not enough historical prices are available for {{ ticker }}.
+  </p>
+  <ng-container *ngIf="!historyLoading && history.length > 1">
+    <p *ngIf="chartPoints < 2" class="chart-status" role="status">Try a wider range to see more trading days.</p>
+    <highcharts-chart *ngIf="chartPoints > 1" [Highcharts]="highcharts" [options]="chartOptions"
+                      class="price-chart" [attr.aria-label]="ticker + ' daily closing prices, ' + activeRange.label">
+    </highcharts-chart>
+  </ng-container>
+</section>
+
+<footer class="data-note">U.S. market data from Finnhub and Polygon. Quotes may be delayed.</footer>

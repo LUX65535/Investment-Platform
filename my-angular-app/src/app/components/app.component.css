@@ -138,6 +138,11 @@
   outline: none;
 }
 
+.embed-container {
+  max-width: 62rem;
+  padding: clamp(.9rem, 3vw, 1.75rem);
+}
+
 .app-footer {
   border-top: 1px solid var(--line);
   background: var(--surface);

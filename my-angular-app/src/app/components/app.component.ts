@@ -13,6 +13,16 @@ export class AppComponent implements OnInit {
 
   constructor(private stockService: StockService, private router: Router) {}
   isCollapsed = true;
+
+  get embeddedResearch(): boolean {
+    return this.router.isActive('/research-embed', {
+      paths: 'exact',
+      queryParams: 'ignored',
+      matrixParams: 'ignored',
+      fragment: 'ignored',
+    });
+  }
+
   ngOnInit(): void {
     console.log('Before Added to watchlist')
     this.stockService.lastSearch$.subscribe(ticker => {

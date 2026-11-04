@@ -1,6 +1,6 @@
 <a class="skip-link" href="#workspace">Skip to content</a>
 
-<header class="app-header">
+<header *ngIf="!embeddedResearch" class="app-header">
   <div class="shell-width header-inner">
     <a class="brand" routerLink="/search-details" aria-label="Investment Platform home">
       <span class="brand-mark" aria-hidden="true">
@@ -38,11 +38,11 @@
   </div>
 </header>
 
-<main id="workspace" class="shell-width content-container" tabindex="-1">
+<main id="workspace" class="shell-width content-container" [class.embed-container]="embeddedResearch" tabindex="-1">
   <router-outlet></router-outlet>
 </main>
 
-<footer class="app-footer">
+<footer *ngIf="!embeddedResearch" class="app-footer">
   <div class="shell-width footer-inner">
     <span>Investment Platform</span>
     <span>Market data by <a href="https://finnhub.io" target="_blank" rel="noopener noreferrer">Finnhub</a></span>

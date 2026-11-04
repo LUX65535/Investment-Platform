@@ -1,0 +1,216 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.research-heading,
+.research-tools,
+.quote-heading,
+.chart-heading,
+.quote-values {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .65rem 1rem;
+}
+
+.research-heading {
+  margin-bottom: 1rem;
+}
+
+.research-heading h1 {
+  margin: 0;
+  font-size: clamp(1.65rem, 5vw, 2.25rem);
+  font-weight: 740;
+  letter-spacing: -.045em;
+}
+
+.preview-badge {
+  padding: .2rem .6rem;
+  border: 1px solid #c8d6f5;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: .72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.research-tools {
+  align-items: flex-end;
+  margin-bottom: 1rem;
+}
+
+.ticker-form {
+  width: min(100%, 25rem);
+}
+
+.ticker-form label {
+  display: block;
+  margin-bottom: .3rem;
+  color: var(--muted);
+  font-size: .78rem;
+  font-weight: 700;
+}
+
+.ticker-field {
+  display: flex;
+  gap: .5rem;
+}
+
+.ticker-field input {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: .45rem .65rem;
+  border: 1px solid #aebbda;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.ticker-field button {
+  padding: .35rem .7rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: .85rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ticker-field button:hover {
+  background: var(--accent-hover);
+}
+
+.ticker-error {
+  margin: .4rem 0 0;
+  color: var(--negative);
+  font-size: .82rem;
+}
+
+.example-tickers,
+.chart-ranges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+}
+
+.example-tickers button[aria-pressed='true'] {
+  border-color: #9cb1ef;
+  background: var(--accent-soft);
+}
+
+.quote-panel,
+.chart-panel {
+  min-width: 0;
+  padding: clamp(.8rem, 3vw, 1.2rem);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.quote-panel {
+  margin-bottom: .75rem;
+}
+
+.quote-heading .page-eyebrow,
+.chart-heading .page-eyebrow {
+  margin-bottom: .25rem;
+}
+
+.quote-heading h2,
+.chart-heading h2 {
+  margin: 0;
+  font-size: 1.18rem;
+  font-weight: 730;
+  letter-spacing: -.025em;
+}
+
+.quote-values {
+  justify-content: flex-start;
+  margin-top: .45rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.quote-price {
+  font-size: clamp(1.85rem, 5vw, 2.6rem);
+  font-weight: 750;
+  letter-spacing: -.05em;
+  line-height: 1.1;
+}
+
+.daily-change {
+  padding: .2rem .5rem;
+  border-radius: 7px;
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-size: .82rem;
+  font-weight: 700;
+}
+
+.daily-change.gain {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+.daily-change.loss {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.status-copy,
+.data-note {
+  margin: .45rem 0 0;
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+.chart-ranges {
+  padding: .15rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.chart-ranges button {
+  min-width: 2.15rem;
+  min-height: 2rem;
+  padding: .25rem .3rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+.chart-ranges button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chart-status {
+  display: grid;
+  min-height: 13rem;
+  place-items: center;
+  margin: .65rem 0 0;
+  color: var(--muted);
+  font-size: .88rem;
+  text-align: center;
+}
+
+.price-chart {
+  display: block;
+  width: 100%;
+  height: clamp(13rem, 31vw, 19rem);
+  margin-top: .35rem;
+}
+
+.data-note {
+  margin-top: .65rem;
+}
