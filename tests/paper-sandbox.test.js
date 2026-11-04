@@ -200,6 +200,10 @@ test('concurrent prepared portfolio requests create one usable ledger with closi
   assert.ok(setup.every(result => result.cache === 'private, no-store'));
   const saved = await collection.findOne({ _id: first.id });
   assert.equal(saved.revision, 3, 'Wallet initialization, watchlist add and one prepared portfolio update.');
+  assert.equal(saved.preparedCloseSnapshot.throughDate, '2026-12-01');
+  assert.deepEqual(saved.preparedCloseSnapshot.series.map(({ ticker, bars }) => [ticker, bars]), [
+    ['SPY', historicalBars('SPY')], ['AAPL', historicalBars('AAPL')], ['MSFT', historicalBars('MSFT')],
+  ]);
   assert.deepEqual((await first.request('watchlist')).body, [{ ticker: 'TSLA' }]);
   assert.equal((await first.request('balance')).body.balance, 9412);
   const receipts = (await first.request('orders')).body;
@@ -211,7 +215,10 @@ test('concurrent prepared portfolio requests create one usable ledger with closi
   assert.deepEqual((await first.request('orders/' + receipts[0].orderId)).body, receipts[0]);
   assert.equal((await first.request('stocks/AAPL')).body.totalCost, 7900);
 
+  const setupMarketCalls = marketCalls.length;
   const history = (await first.request('portfolio/history')).body;
+  assert.equal(marketCalls.length, setupMarketCalls, 'Prepared history uses the same verified closes without another fetch.');
+  assert.equal(history.preparedCloseSnapshot, undefined);
   assert.equal(history.prepared, true);
   assert.equal(history.canPrepare, undefined);
   assert.equal(history.status, 'ok');

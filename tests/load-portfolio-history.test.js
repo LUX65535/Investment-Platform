@@ -52,3 +52,58 @@ test('history preserves an available NAV when SPY fails and reports a total outa
   assert.equal(outage.status, 'temporarily_unavailable');
   assert.deepEqual(outage.points, []);
 });
+
+const bar = (date, c) => ({ t: Date.parse(date + 'T05:00:00Z'), c });
+const preparedCloseSnapshot = {
+  windowStartDate: '2026-10-05',
+  throughDate: '2026-11-03',
+  series: [
+    { ticker: 'SPY', bars: [bar('2026-11-03', 600)] },
+    { ticker: 'AAPL', bars: [bar('2026-11-03', 110)] },
+  ],
+};
+
+test('prepared history survives a cold instance and only requests any added symbol in the same window', async () => {
+  const requested = [];
+  const read = async (ticker, fromDate, throughDate) => {
+    requested.push([ticker, fromDate, throughDate]);
+    return [bar('2026-11-03', 125)];
+  };
+  const prepared = { ...accountWithPositions(['AAPL']), preparedCloseSnapshot };
+  const first = await loadPortfolioHistory(prepared, startingCashCents, read, asOf);
+  assert.equal(first.status, 'ok');
+  assert.deepEqual(first.points, [{ date: '2026-11-03', nav: 25010, spyClose: 600 }]);
+  assert.deepEqual(requested, []);
+
+  const withNewHolding = { ...accountWithPositions(['AAPL', 'MSFT']), preparedCloseSnapshot };
+  const afterBuying = await loadPortfolioHistory(withNewHolding, startingCashCents, read, asOf.getTime());
+  assert.equal(afterBuying.status, 'ok');
+  assert.deepEqual(afterBuying.points, [{ date: '2026-11-03', nav: 25035, spyClose: 600 }]);
+  assert.deepEqual(requested, [['MSFT', '2026-10-05', '2026-11-03']]);
+});
+
+test('prepared history keeps verified closes during an outage and merges newer closing data by date', async () => {
+  const prepared = { ...accountWithPositions(['AAPL']), preparedCloseSnapshot };
+  const after = new Date('2026-11-06T16:00:00Z');
+  const outage = await loadPortfolioHistory(prepared, startingCashCents, () => {
+    throw new Error('Provider unavailable');
+  }, after);
+  assert.equal(outage.status, 'partial');
+  assert.match(outage.message, /Some historical prices could not load/);
+  assert.deepEqual(outage.points, [
+    { date: '2026-11-03', nav: 25010, spyClose: 600 },
+    { date: '2026-11-04', nav: null, spyClose: null },
+    { date: '2026-11-05', nav: null, spyClose: null },
+  ]);
+
+  const refreshed = await loadPortfolioHistory(prepared, startingCashCents, async ticker => {
+    if (ticker === 'SPY') return [bar('2026-11-05', 612), bar('2026-11-04', 607)];
+    return [bar('2026-11-05', 120), bar('2026-11-04', 114)];
+  }, after);
+  assert.equal(refreshed.status, 'ok');
+  assert.deepEqual(refreshed.points, [
+    { date: '2026-11-03', nav: 25010, spyClose: 600 },
+    { date: '2026-11-04', nav: 25014, spyClose: 607 },
+    { date: '2026-11-05', nav: 25020, spyClose: 612 },
+  ]);
+});

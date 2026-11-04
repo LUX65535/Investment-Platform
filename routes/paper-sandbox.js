@@ -376,7 +376,11 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, g
         ? existingStart : plan.walletInitializedAt;
       return {
         body: { message: 'Your prepared portfolio is ready.' },
-        patch: { ...wallet, walletInitializedAt, preparedPortfolioCreatedAt: new Date() },
+        patch: {
+          ...wallet, walletInitializedAt,
+          preparedPortfolioCreatedAt: new Date(),
+          preparedCloseSnapshot: plan.closeSnapshot,
+        },
       };
     }, initial));
   }));
