@@ -93,7 +93,7 @@
           {{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})
         </span>
       </div>
-      <p>Latest quote · {{ quote.t * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC</p>
+      <p>Quote from Finnhub · {{ quote.t * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC</p>
     </div>
     <ng-template #quoteUnavailable>
       <p class="security-quote quote-note" role="status">{{ quoteLoading ? 'Loading latest quote…' : 'Latest quote unavailable. Historical prices and company details may still be available.' }}</p>
@@ -126,23 +126,40 @@
     </div>
 
     <div class="overview-grid" *ngIf="activeTab === 'summary'">
-      <section class="data-panel chart-panel" aria-labelledby="intraday-title">
+      <section class="data-panel chart-panel" aria-labelledby="overview-chart-title">
         <div class="panel-heading">
           <div>
-            <h2 id="intraday-title">Intraday price</h2>
-            <p>Hourly closes<ng-container *ngIf="lastHourlyPoint as point"> · through {{ point | date:'MMM d, h:mm a':'+0000' }} UTC</ng-container></p>
+            <h2 id="overview-chart-title">Price performance</h2>
+            <p>{{ overviewRange === 'Hourly' ? 'Hourly' : 'Daily' }} closes from Polygon</p>
+          </div>
+          <div *ngIf="overviewReturn !== null" class="text-end" role="status">
+            <span class="quote-movement" [class.quote-up]="overviewReturn > 0" [class.quote-down]="overviewReturn < 0">
+              {{ overviewReturn > 0 ? '+' : '' }}{{ overviewReturn | number:'1.2-2' }}%
+            </span>
+            <p>Price change over this period</p>
           </div>
         </div>
+        <div class="d-flex flex-wrap gap-1 mb-2" role="group" aria-label="Price performance period">
+          <button *ngFor="let range of overviewRanges" type="button" class="state-action"
+                  [attr.aria-pressed]="overviewRange === range"
+                  (click)="selectOverviewRange(range)">{{ range }}</button>
+        </div>
+        <p *ngIf="overviewStart !== null && overviewEnd !== null" class="panel-note mb-2">
+          <ng-container *ngIf="overviewRange === 'Hourly'">Bar timestamps · </ng-container>
+          {{ overviewStart | date:(overviewRange === 'Hourly' ? 'MMM d, HH:mm' : 'MMM d, yyyy'):'+0000' }} to
+          {{ overviewEnd | date:(overviewRange === 'Hourly' ? 'MMM d, HH:mm' : 'MMM d, yyyy'):'+0000' }} UTC
+        </p>
+        <p *ngIf="hourlyLagsQuote" class="panel-note mb-2">The hourly series ends before the latest quote.</p>
         <div id="company-chart">
-          <div *ngIf="hourlyLoading || quoteLoading" class="state-panel chart-state" role="status"><p>Loading hourly prices…</p></div>
-          <div *ngIf="!hourlyLoading && !quoteLoading && !chartOptions.series?.length" class="state-panel chart-state">
-            <p>{{ hourlyFailed ? 'Hourly prices could not load.' : 'No hourly prices are available for this symbol.' }}</p>
-            <button *ngIf="hourlyFailed" type="button" class="state-action" (click)="retryHourly()">Retry hourly prices</button>
+          <div *ngIf="overviewLoading" class="state-panel chart-state" role="status"><p>Loading prices…</p></div>
+          <div *ngIf="!overviewLoading && !chartOptions.series?.length" class="state-panel chart-state">
+            <p>{{ overviewFailed ? 'Prices could not load for this period.' : 'There are not enough prices to chart this period.' }}</p>
+            <button *ngIf="overviewFailed" type="button" class="state-action" (click)="loadOverview()">Retry prices</button>
           </div>
           <highcharts-chart *ngIf="chartOptions.series?.length" [Highcharts]="Highcharts"
                             [options]="chartOptions" class="chart chart--intraday"></highcharts-chart>
         </div>
-        <button type="button" class="state-action" (click)="openHistory()">Price history</button>
+        <button type="button" class="state-action" (click)="openHistory()">Open advanced chart</button>
       </section>
 
       <aside class="overview-sidebar" aria-label="Market statistics and company profile">

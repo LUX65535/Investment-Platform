@@ -140,6 +140,11 @@ button:disabled {
   background: var(--accent-soft);
 }
 
+.state-action[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .state-action:disabled {
   color: var(--muted);
 }

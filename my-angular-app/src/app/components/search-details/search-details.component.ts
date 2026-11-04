@@ -3,14 +3,12 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import {Observable, of, Subscription, interval, forkJoin} from 'rxjs';
-import { catchError, debounceTime, distinctUntilChanged, finalize, map, switchMap, takeUntil, tap } from 'rxjs/operators';
-import {Router} from '@angular/router';
+import { catchError, debounceTime, distinctUntilChanged, filter, finalize, map, shareReplay, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
+import { ActivatedRoute, NavigationEnd, Router } from '@angular/router';
 import {FormControl} from "@angular/forms";
 import * as Highcharts from 'highcharts/highstock';
 import HC_accessibility from 'highcharts/modules/accessibility';
 HC_accessibility(Highcharts);
-import { ActivatedRoute } from '@angular/router';
-import { format, subDays, subMonths } from 'date-fns';
 import volumeByPrice from 'highcharts/indicators/volume-by-price';
 import indicators from 'highcharts/indicators/indicators';
 indicators(Highcharts);
@@ -111,6 +109,16 @@ export interface Earning {
 type DetailTab = 'summary' | 'news' | 'charts' | 'insights';
 const historyRanges = ['1M', '3M', '6M', 'YTD', '1Y', 'All'] as const;
 type HistoryRange = typeof historyRanges[number];
+const overviewRanges = ['Hourly', '1M', '3M', '1Y'] as const;
+type OverviewRange = typeof overviewRanges[number];
+
+function utcDayMonthsBefore(end: number, months: number): number {
+  const date = new Date(end);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth() - months;
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return Date.UTC(year, month, Math.min(date.getUTCDate(), daysInMonth));
+}
 
 @Component({
   selector: 'app-search-details',
@@ -130,7 +138,17 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   watchlistUnavailable = false;
   hourlyLoading = false;
   hourlyFailed = false;
-  lastHourlyPoint: number | null = null;
+  readonly overviewRanges = overviewRanges;
+  overviewRange: OverviewRange = '1M';
+  overviewStart: number | null = null;
+  overviewEnd: number | null = null;
+  overviewReturn: number | null = null;
+  private hourlyBars: AggregateBarResponse[] | null = null;
+  private overviewDailyBars: AggregateBarResponse[] | null = null;
+  private overviewDailyLoading = false;
+  private overviewDailyFailed = false;
+  private dailyRequest?: Observable<{ results: AggregateBarResponse[] }>;
+  private requestedTicker: string | null = null;
   readonly loadingTabs = new Set<DetailTab>();
   readonly failedTabs = new Set<DetailTab>();
   private readonly loadedTabs = new Set<DetailTab>();
@@ -212,6 +230,19 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     return !this.searchResults && !this.DetailIsLoading;
   }
 
+  get overviewLoading(): boolean {
+    return this.overviewRange === 'Hourly' ? this.hourlyLoading || this.quoteLoading : this.overviewDailyLoading;
+  }
+
+  get overviewFailed(): boolean {
+    return this.overviewRange === 'Hourly' ? this.hourlyFailed : this.overviewDailyFailed;
+  }
+
+  get hourlyLagsQuote(): boolean {
+    return this.overviewRange === 'Hourly' && this.overviewEnd !== null && !!this.currentStock
+      && this.currentStock.t * 1000 - this.overviewEnd > 4 * 60 * 60 * 1000;
+  }
+
   constructor(
     private http: HttpClient,
     private route: ActivatedRoute,
@@ -222,15 +253,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.setupSearch();
-    this.route.paramMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(params => {
-      const ticker = params.get('ticker');
-      if (ticker) {
-        this.loadSearch(ticker);
-      } else {
-        this.resetSearch();
-        this.tickerFormControl.setValue('');
-      }
-    });
+    this.router.events.pipe(
+      filter(event => event instanceof NavigationEnd),
+      startWith(null),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(() => this.syncResearchView());
     this.setupAutoUpdate();
   }
 
@@ -555,7 +582,10 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     return this.http.get<Trend[]>(url);
   }
   getBigChartData(ticker: string): Observable<{ results: AggregateBarResponse[] }> {
-    return this.http.get<{ results: AggregateBarResponse[] }>('/company_data', { params: { symbol: ticker } });
+    return this.dailyRequest ??= this.http.get<{ results?: AggregateBarResponse[] }>('/company_data', { params: { symbol: ticker } }).pipe(
+      map(response => ({ results: this.validCloses(response?.results) })),
+      shareReplay({ bufferSize: 1, refCount: true }),
+    );
   }
   createBigChart(data: { results: AggregateBarResponse[] }, ticker: string): Highcharts.Options {
     const bars = data.results.filter(bar => bar && [bar.t, bar.o, bar.h, bar.l, bar.c, bar.v].every(Number.isFinite))
@@ -589,7 +619,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       },
       xAxis: {
         type: 'datetime',
-        min: this.historyRangeStart('1M'),
+        min: this.historyRangeStart(this.historyRange ?? '1M'),
         max: this.historyEnd,
         events: { afterSetExtremes: event => { if (event.trigger === 'navigator') this.historyRange = null; } },
         dateTimeLabelFormats: {
@@ -707,34 +737,57 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const months = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12 };
     const start = range === 'All' ? this.historyStart
       : range === 'YTD' ? Date.UTC(end.getUTCFullYear(), 0, 1)
-      : subMonths(end, months[range]).getTime();
+      : utcDayMonthsBefore(this.historyEnd, months[range]);
     return Math.max(this.historyStart, start);
   }
 
   selectHistoryRange(range: HistoryRange): void {
-    if (this.historyEnd === null) return;
+    this.updateHistoryRange(range);
+    this.updateViewQuery();
+  }
+
+  private updateHistoryRange(range: HistoryRange): void {
     this.historyRange = range;
+    if (this.historyEnd === null) return;
     this.bigChartOptions = {
       ...this.bigChartOptions,
       xAxis: { ...this.bigChartOptions.xAxis, min: this.historyRangeStart(range), max: this.historyEnd },
     };
   }
 
-  getHistoricalData(ticker: string, quote: QuoteResponse): Observable<AggregateBarResponse[]> {
-    const latest = new Date(quote.t * 1000);
-    const from = format(subDays(latest, 1), 'yyyy-MM-dd');
-    const to = format(latest, 'yyyy-MM-dd');
+  getHistoricalData(ticker: string, quote: QuoteResponse | null): Observable<AggregateBarResponse[]> {
+    const latest = quote ? quote.t * 1000 : Date.now();
+    const from = new Date(latest - (quote ? 1 : 4) * 86_400_000).toISOString().slice(0, 10);
+    const to = new Date(latest).toISOString().slice(0, 10);
     return this.http.get<{ results?: AggregateBarResponse[] }>('/company_OneDay_data', {
       params: { symbol: ticker, from, to }
-    }).pipe(map(response => Array.isArray(response?.results)
-      ? response.results.filter(point => Number.isFinite(point?.t) && Number.isFinite(point.c))
-      : []));
+    }).pipe(map(response => this.validCloses(response?.results)));
   }
 
-  createChart(data: AggregateBarResponse[]): void {
-    const seriesData = data.map(point => [point.t, point.c]).sort((a, b) => a[0] - b[0]);
+  private validCloses(data: unknown): AggregateBarResponse[] {
+    if (!Array.isArray(data)) return [];
+    return data.filter(bar => Number.isFinite(bar?.t) && Number.isFinite(bar.c) && bar.c > 0)
+      .sort((a, b) => a.t - b.t);
+  }
+
+  private renderOverview(): void {
+    const range = this.overviewRange;
+    const points = range === 'Hourly' ? this.hourlyBars : this.overviewDailyBars;
+    const end = points?.at(-1);
+    const months = { '1M': 1, '3M': 3, '1Y': 12 };
+    const from = end && range !== 'Hourly' ? utcDayMonthsBefore(end.t, months[range]) : 0;
+    const visible = points?.filter(point => point.t >= from) ?? [];
+    const start = visible[0];
+    this.overviewStart = start?.t ?? null;
+    this.overviewEnd = end?.t ?? null;
+    this.overviewReturn = start && end && visible.length > 1 ? (end.c / start.c - 1) * 100 : null;
+    if (visible.length < 2) {
+      this.chartOptions = {};
+      return;
+    }
+
+    const seriesData = visible.map(point => [point.t, point.c]);
     const ticker = this.lastSuccessfulSearch ?? '';
-    this.lastHourlyPoint = seriesData.at(-1)?.[0] ?? null;
 
     this.chartOptions = {
       title: { text: '' },
@@ -768,8 +821,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         animation: false,
         backgroundColor: 'transparent',
         style: { fontFamily: 'inherit' },
-        events: { load() { this.container.querySelector('svg')?.setAttribute('aria-label', `${ticker} hourly closing price chart`); } },
       },
+      accessibility: { description: `${ticker} ${range === 'Hourly' ? 'hourly' : 'daily'} closing prices from Polygon.` },
       exporting: {
         enabled: false,
       },
@@ -813,7 +866,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       if (update?.quote && update.context === this.searchSubscription) {
         const hadQuote = !!this.currentStock;
         this.currentStock = update.quote;
-        if (!hadQuote) this.loadHourly(update.ticker);
+        if (!hadQuote && this.activeTab === 'summary' && this.overviewRange === 'Hourly') this.loadOverview();
       }
     });
   }
@@ -856,6 +909,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }
     if (this.route.snapshot.paramMap.get('ticker') === ticker) {
       this.loadSearch(ticker);
+      this.syncResearchView();
     } else {
       void this.router.navigate(['/search-details', ticker]);
     }
@@ -878,7 +932,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.companyPeers = [];
     this.hourlyLoading = false;
     this.hourlyFailed = false;
-    this.lastHourlyPoint = null;
+    this.hourlyBars = null;
+    this.overviewDailyBars = null;
+    this.overviewDailyLoading = false;
+    this.overviewDailyFailed = false;
+    this.overviewStart = null;
+    this.overviewEnd = null;
+    this.overviewReturn = null;
+    this.dailyRequest = undefined;
     this.topNews = [];
     this.visibleNewsCount = 12;
     this.earnings = [];
@@ -922,6 +983,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         this.lastSuccessfulSearch = ticker;
         this.searchResults = profile;
         this.loadSummary(ticker);
+        this.loadActiveView();
         this.checkWatchlistStatus();
         this.refreshHolding(ticker);
       },
@@ -933,10 +995,13 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }));
     this.searchSubscription.add(this.getLatestQuote(ticker).pipe(
       catchError(() => of(null)),
-      finalize(() => this.quoteLoading = false),
+      finalize(() => {
+        this.quoteLoading = false;
+        if (!this.searchSubscription.closed && this.lastSuccessfulSearch === ticker
+          && this.activeTab === 'summary' && this.overviewRange === 'Hourly') this.loadOverview();
+      }),
     ).subscribe(quote => {
       this.currentStock = quote;
-      if (quote && this.lastSuccessfulSearch === ticker) this.loadHourly(ticker);
     }));
   }
 
@@ -945,23 +1010,89 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       next: peers => this.companyPeers = Array.isArray(peers) ? peers : [],
       error: () => this.companyPeers = [],
     }));
-    this.loadHourly(ticker);
   }
 
   private loadHourly(ticker: string): void {
-    if (!this.currentStock || this.hourlyLoading) return;
+    if (this.quoteLoading || this.hourlyLoading || this.hourlyBars) return;
     this.hourlyLoading = true;
     this.hourlyFailed = false;
     this.searchSubscription.add(this.getHistoricalData(ticker, this.currentStock).pipe(
       finalize(() => this.hourlyLoading = false),
     ).subscribe({
-      next: hourly => { if (hourly.length) this.createChart(hourly); },
+      next: hourly => {
+        this.hourlyBars = hourly;
+        if (this.overviewRange === 'Hourly') this.renderOverview();
+      },
       error: () => this.hourlyFailed = true,
     }));
   }
 
-  retryHourly(): void {
-    if (this.lastSuccessfulSearch) this.loadHourly(this.lastSuccessfulSearch);
+  loadOverview(): void {
+    const ticker = this.lastSuccessfulSearch;
+    if (!ticker) return;
+    if (this.overviewRange === 'Hourly') {
+      this.loadHourly(ticker);
+      return;
+    }
+    if (this.overviewDailyLoading || this.overviewDailyBars) return;
+    this.overviewDailyFailed = false;
+    this.overviewDailyLoading = true;
+    this.searchSubscription.add(this.getBigChartData(ticker).pipe(
+      finalize(() => this.overviewDailyLoading = false),
+    ).subscribe({
+      next: ({ results }) => {
+        this.overviewDailyBars = results;
+        if (this.overviewRange !== 'Hourly') this.renderOverview();
+      },
+      error: () => this.overviewDailyFailed = true,
+    }));
+  }
+
+  selectOverviewRange(range: OverviewRange): void {
+    if (this.overviewRange === range) return;
+    this.overviewRange = range;
+    this.renderOverview();
+    this.loadOverview();
+    this.updateViewQuery();
+  }
+
+  private syncResearchView(): void {
+    const ticker = this.route.snapshot.paramMap.get('ticker');
+    if (ticker !== this.requestedTicker) {
+      this.requestedTicker = ticker;
+      if (ticker) this.loadSearch(ticker);
+      else {
+        this.resetSearch();
+        this.tickerFormControl.setValue('');
+      }
+    }
+
+    const query = this.route.snapshot.queryParamMap;
+    const tab = this.detailTabs.find(item => item.id === query.get('view'))?.id ?? 'summary';
+    const range = overviewRanges.find(item => item.toLowerCase() === query.get('range')) ?? '1M';
+    const history = historyRanges.find(item => item.toLowerCase() === query.get('history')) ?? '1M';
+    const viewChanged = tab !== this.activeTab || range !== this.overviewRange;
+    this.activeTab = tab;
+    if (range !== this.overviewRange) {
+      this.overviewRange = range;
+      this.renderOverview();
+    }
+    if (history !== this.historyRange) this.updateHistoryRange(history);
+    if (viewChanged) this.loadActiveView();
+  }
+
+  private updateViewQuery(): void {
+    const history = this.historyRange?.toLowerCase() ?? this.route.snapshot.queryParamMap.get('history');
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: {
+        view: this.activeTab === 'summary' ? null : this.activeTab,
+        range: this.overviewRange === '1M' ? null : this.overviewRange.toLowerCase(),
+        history: history === '1m' ? null : history,
+      },
+      queryParamsHandling: 'merge',
+      preserveFragment: true,
+    });
   }
 
   handleTabKey(event: KeyboardEvent, index: number): void {
@@ -983,9 +1114,20 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   setActiveTab(tabName: DetailTab): void {
+    const changed = this.activeTab !== tabName;
     this.activeTab = tabName;
+    this.loadActiveView();
+    if (changed) this.updateViewQuery();
+  }
+
+  private loadActiveView(): void {
+    const tabName = this.activeTab;
+    if (tabName === 'summary') {
+      this.loadOverview();
+      return;
+    }
     const ticker = this.lastSuccessfulSearch;
-    if (!ticker || tabName === 'summary' || this.loadingTabs.has(tabName) || this.loadedTabs.has(tabName)) return;
+    if (!ticker || this.loadingTabs.has(tabName) || this.loadedTabs.has(tabName)) return;
 
     this.loadingTabs.add(tabName);
     this.failedTabs.delete(tabName);
