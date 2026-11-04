@@ -1,7 +1,6 @@
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
-const { marketDate } = require('../lib/portfolio-equity-history');
 const { test } = require('node:test');
 const axios = require('axios');
 const { MongoClient } = require('mongodb');
@@ -35,10 +34,7 @@ test('market reads expire, back off on provider limits, and leave paper orders r
       return collection;
     },
   }));
-  const clock = Date.now;
-  const clockStart = clock();
-  let clockOffset = 0;
-  t.mock.method(Date, 'now', () => clockStart + clockOffset);
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-04T17:00:00Z') });
   let quoteStatus = 404;
   let quoteCalls = 0;
   let applePrice = 100;
@@ -63,7 +59,7 @@ test('market reads expire, back off on provider limits, and leave paper orders r
         response: { status: quoteStatus, headers: { 'retry-after': upstreamRetryAfter } },
       });
     }
-    return { data: { c: params.symbol === 'MSFT' ? 125 : applePrice, t: Math.floor(clock() / 1000) } };
+    return { data: { c: params.symbol === 'MSFT' ? 125 : applePrice, t: Math.floor(Date.now() / 1000) } };
   });
   const server = require('../app').listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -149,14 +145,14 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   assert.equal((await request('/api/orders')).body.length, 1);
 
   quoteStatus = 200;
-  clockOffset += 6_000;
+  t.mock.timers.tick(6_000);
   const stillCached = await request('/company_quote?symbol=AAPL');
   assert.equal(stillCached.body.c, 100);
   assert.match(stillCached.cache, /s-maxage=[1-4]$/);
   assert.equal((await request('/company_quote?symbol=TSLA')).status, 200);
   assert.equal(quoteCalls - beforeReads, 5, 'A new provider request resumes after cooldown.');
 
-  clockOffset += 5_000;
+  t.mock.timers.tick(5_000);
   applePrice = 110;
   assert.equal((await request('/company_quote?symbol=AAPL')).body.c, 110);
   assert.equal(quoteCalls - beforeReads, 6, 'Expired quote reads fetch a new response.');
@@ -169,12 +165,7 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   assert.equal(timed.status, 503);
   assert.ok(Number(timed.retryAfter) >= 8 && Number(timed.retryAfter) <= 10);
 
-  const dates = [];
-  const marketDay = Date.parse(marketDate(new Date()) + 'T00:00:00Z');
-  for (let offset = 1; dates.length < 2; offset++) {
-    const date = new Date(marketDay - offset * 86_400_000);
-    if (![0, 6].includes(date.getUTCDay())) dates.unshift(date.toISOString().slice(0, 10));
-  }
+  const dates = ['2026-11-02', '2026-11-03'];
   historicalCloses = dates.map((date, i) => ({ t: Date.parse(date + 'T05:00:00Z'), c: 500 + i * 10 }));
   [...records.values()][0].walletInitializedAt = new Date(dates[0] + 'T14:00:00Z');
 
