@@ -58,7 +58,8 @@ test('cash and shares replay in order using actual receipt totals and historical
     ['MSFT', [bar('2026-11-02T05:00:00Z', 510), bar('2026-11-03T05:00:00Z', 520)]],
   ]);
   assert.deepEqual(equityHistoryRequirements({ receipts, asOf }), {
-    fromDate: '2026-10-30', throughDate: '2026-11-03', tickers: ['AAPL', 'MSFT'], invalidLedger: false,
+    fromDate: '2026-10-30', windowStartDate: '2026-10-05', throughDate: '2026-11-03',
+    tickers: ['AAPL', 'MSFT'], invalidLedger: false,
   });
   const expectedAccount = { cashCents: 2_375_000, positions: [{ ticker: 'MSFT', quantity: 3 }] };
   assert.deepEqual(history({ receipts, benchmarkBars, barsByTicker, expectedAccount }), {
@@ -95,8 +96,25 @@ test('missing or conflicting held closes leave gaps and no future price is subst
       { date: '2026-10-29', nav: 25015, spyClose: 560 },
       { date: '2026-10-30', nav: null, spyClose: 561 },
       { date: '2026-11-02', nav: null, spyClose: 568 },
+      { date: '2026-11-03', nav: null, spyClose: null },
     ],
-    missingSessions: 2, missingBenchmarkSessions: 0, invalidLedger: false,
+    missingSessions: 3, missingBenchmarkSessions: 1, invalidLedger: false,
+  });
+});
+
+test('a complete data gap on a scheduled session stays visible without adding closed days', () => {
+  const receipts = [fill('buy', 'AAPL', 1, 10_000, '2026-04-01T14:00:00Z')];
+  const benchmarkBars = [
+    bar('2026-04-01T04:00:00Z', 550), bar('2026-04-03T04:00:00Z', 551), bar('2026-04-06T04:00:00Z', 560),
+  ];
+  const barsByTicker = new Map([['AAPL', [bar('2026-04-01T04:00:00Z', 110), bar('2026-04-06T04:00:00Z', 115)]]]);
+  assert.deepEqual(history({ receipts, benchmarkBars, barsByTicker, asOf: new Date('2026-04-07T20:00:00Z') }), {
+    points: [
+      { date: '2026-04-01', nav: 25010, spyClose: 550 },
+      { date: '2026-04-02', nav: null, spyClose: null },
+      { date: '2026-04-06', nav: 25015, spyClose: 560 },
+    ],
+    missingSessions: 1, missingBenchmarkSessions: 1, invalidLedger: false,
   });
 });
 
@@ -115,15 +133,15 @@ test('fills at a verified early close take effect at the next completed mark', (
 
 test('an unverified short-day candidate omits an ambiguous afternoon mark', () => {
   const receipts = [
-    fill('buy', 'AAPL', 2, 20_000, '2028-11-24T17:00:00Z'),
-    fill('sell', 'AAPL', 2, 24_000, '2028-11-24T19:00:00Z'),
+    fill('buy', 'AAPL', 2, 20_000, '2029-11-23T17:00:00Z'),
+    fill('sell', 'AAPL', 2, 24_000, '2029-11-23T19:00:00Z'),
   ];
-  const benchmarkBars = [bar('2028-11-24T05:00:00Z', 580), bar('2028-11-27T05:00:00Z', 583)];
-  const barsByTicker = new Map([['AAPL', [bar('2028-11-24T05:00:00Z', 110)]]]);
-  assert.deepEqual(history({ receipts, benchmarkBars, barsByTicker, asOf: new Date('2028-11-28T20:00:00Z') }), {
+  const benchmarkBars = [bar('2029-11-23T05:00:00Z', 580), bar('2029-11-26T05:00:00Z', 583)];
+  const barsByTicker = new Map([['AAPL', [bar('2029-11-23T05:00:00Z', 110)]]]);
+  assert.deepEqual(history({ receipts, benchmarkBars, barsByTicker, asOf: new Date('2029-11-27T20:00:00Z') }), {
     points: [
-      { date: '2028-11-24', nav: null, spyClose: 580 },
-      { date: '2028-11-27', nav: 25040, spyClose: 583 },
+      { date: '2029-11-23', nav: null, spyClose: 580 },
+      { date: '2029-11-26', nav: 25040, spyClose: 583 },
     ],
     missingSessions: 1, missingBenchmarkSessions: 0, invalidLedger: false,
   });
@@ -170,10 +188,14 @@ test('history requests and marks cover at most 30 days without truncating earlie
     ['AAPL', [bar('2026-11-16T05:00:00Z', 105), bar('2026-12-14T05:00:00Z', 120)]],
   ]);
   assert.deepEqual(equityHistoryRequirements({ receipts, asOf }), {
-    fromDate: '2026-11-15', throughDate: '2026-12-14', tickers: ['AAPL'], invalidLedger: false,
+    fromDate: '2026-11-15', windowStartDate: '2026-11-15', throughDate: '2026-12-14',
+    tickers: ['AAPL'], invalidLedger: false,
   });
-  assert.deepEqual(history({ receipts, benchmarkBars, barsByTicker, asOf }).points, [
+  const result = history({ receipts, benchmarkBars, barsByTicker, asOf });
+  assert.deepEqual(result.points.filter(point => point.nav !== null), [
     { date: '2026-11-16', nav: 25150, spyClose: 570 },
     { date: '2026-12-14', nav: 25300, spyClose: 577 },
   ]);
+  assert.equal(result.points.length, 20);
+  assert.equal(result.missingSessions, 18);
 });

@@ -13,9 +13,13 @@ test('market reads expire, back off on provider limits, and leave paper orders r
     MONGO_URI: 'mongodb://127.0.0.1:27017', MONGO_DB_NAME: 'Assignment3_demo',
   });
   const records = new Map();
+  t.mock.method(MongoClient.prototype, 'connect', async function () { return this; });
   const collection = {
     async createIndex() {},
-    async findOne({ _id }) { return structuredClone(records.get(_id)) ?? null; },
+    async findOne({ _id, expiresAt }) {
+      const record = records.get(_id);
+      return record && record.expiresAt > expiresAt.$gt ? structuredClone(record) : null;
+    },
     async insertOne(document) { records.set(document._id, structuredClone(document)); },
     async updateOne({ _id, revision }, { $set, $inc }) {
       const record = records.get(_id);
@@ -66,8 +70,7 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   t.after(() => new Promise(resolve => server.close(resolve)));
 
   let cookie = 'investment_paper_sample_v1=' + 'a'.repeat(43);
-  async function request(path, body) {
-    const headers = {};
+  async function request(path, body, headers = {}) {
     if (cookie) headers.Cookie = cookie;
     if (body) headers['Content-Type'] = 'application/json';
     const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, {
@@ -187,6 +190,20 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   cookie = 'investment_paper_v1=' + 'b'.repeat(43);
   assert.equal((await request('/api/portfolio/history')).status, 428);
   assert.equal(chartCalls, historyCalls, 'Another browser cannot trigger the first account history reads.');
+  assert.equal((await request('/api/paper/session')).status, 200);
+  assert.equal((await request('/api/initWallet', {})).status, 200);
+  [...records.values()][1].walletInitializedAt = new Date(dates[1] + 'T14:00:00Z');
+  const newerAccount = await request('/api/portfolio/history');
+  assert.equal(newerAccount.cache, 'private, no-store');
+  assert.deepEqual(newerAccount.body.points, accountHistory.body.points.slice(1));
+  assert.equal(chartCalls, historyCalls, 'The same public bars serve accounts opened on different dates.');
+
+  const crossSite = await request('/api/portfolio/history', undefined, { 'sec-fetch-site': 'cross-site' });
+  assert.equal(crossSite.status, 403);
+  assert.equal(crossSite.cache, 'private, no-store');
+  [...records.values()][1].expiresAt = new Date(Date.now() - 60_000);
+  assert.equal((await request('/api/portfolio/history')).status, 428);
+  assert.equal(chartCalls, historyCalls, 'Cross-site and expired sessions cannot reach the market provider.');
 });
 
 test('production market endpoints fail closed without provider credentials', async t => {
@@ -212,4 +229,36 @@ test('production market endpoints fail closed without provider credentials', asy
   assert.equal(retiredMode.status, 404);
   await retiredMode.text();
   assert.equal(upstream.mock.callCount(), 0);
+});
+
+test('a failed initial Mongo connection is retried and shared by concurrent requests', async t => {
+  Object.assign(process.env, {
+    VERCEL: '1', VERCEL_ENV: 'production',
+    MONGO_URI: 'mongodb://127.0.0.1:27017', MONGO_DB_NAME: 'Assignment3_demo',
+  });
+  let attempts = 0;
+  t.mock.method(MongoClient.prototype, 'connect', async function () {
+    if (++attempts === 1) throw Object.assign(new Error('Connection refused'), { name: 'MongoServerSelectionError' });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    return this;
+  });
+  t.mock.method(MongoClient.prototype, 'db', () => ({ collection: () => ({}) }));
+  delete require.cache[require.resolve('../app')];
+  const server = require('../app').listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const history = `http://127.0.0.1:${server.address().port}/api/portfolio/history`;
+
+  const first = await fetch(history);
+  assert.equal(first.status, 503);
+  assert.equal(first.headers.get('cache-control'), 'private, no-store');
+  await first.text();
+
+  const statuses = await Promise.all(Array.from({ length: 6 }, async () => {
+    const response = await fetch(history);
+    await response.text();
+    return response.status;
+  }));
+  assert.deepEqual(statuses, Array(6).fill(428));
+  assert.equal(attempts, 2);
 });

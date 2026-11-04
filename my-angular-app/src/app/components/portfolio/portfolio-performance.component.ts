@@ -78,12 +78,12 @@ function plotScale(values: number[], compared: boolean): { low: number; high: nu
   return { low: Math.floor(low / step) * step, high: Math.ceil(high / step) * step, step };
 }
 
-function makeChart(rows: ClosingPoint[]): PerformanceChart | null {
+function makeChart(rows: ClosingPoint[], allowComparison: boolean): PerformanceChart | null {
   const lastValuation = rows.filter(row => row.nav !== null).at(-1);
   if (!lastValuation) return null;
 
-  const baseline = rows.find((row): row is ClosingPoint & { nav: number; spyClose: number } =>
-    row.nav !== null && row.nav > 0 && row.spyClose !== null);
+  const baseline = allowComparison ? rows.find((row): row is ClosingPoint & { nav: number; spyClose: number } =>
+    row.nav !== null && row.nav > 0 && row.spyClose !== null) : undefined;
   const compared = baseline !== undefined && rows.some(row => row.time > baseline.time && row.nav !== null && row.spyClose !== null);
   const chartRows = compared ? rows.filter(row => row.time >= baseline.time) : rows;
   const returns = chartRows.map(row => ({
@@ -127,6 +127,9 @@ export class PortfolioPerformanceComponent {
   readonly width = width;
   readonly height = height;
   chart: PerformanceChart | null = null;
+  private comparisonChart: PerformanceChart | null = null;
+  private accountValueChart: PerformanceChart | null = null;
+  private preferComparison = true;
   pointIndex = 0;
   @Input() loading = false;
   @Input() failed = false;
@@ -136,8 +139,16 @@ export class PortfolioPerformanceComponent {
   @Output() retry = new EventEmitter<void>();
 
   @Input() set points(value: readonly PortfolioPerformancePoint[]) {
-    this.chart = makeChart(validRows(value));
+    const rows = validRows(value);
+    const chart = makeChart(rows, true);
+    this.comparisonChart = chart?.compared ? chart : null;
+    this.accountValueChart = this.comparisonChart ? makeChart(rows, false) : chart;
+    this.chart = (this.preferComparison ? this.comparisonChart : null) ?? this.accountValueChart;
     this.pointIndex = this.chart ? this.chart.points.length - 1 : 0;
+  }
+
+  get canCompare(): boolean {
+    return this.comparisonChart !== null;
   }
 
   get selectedPoint(): PlotPoint | undefined {
@@ -150,7 +161,23 @@ export class PortfolioPerformanceComponent {
     const amount = point.nav === null ? 'unavailable' : dollarFormat.format(point.nav);
     const dateAndAmount = `${dateFormat.format(point.time)}, account value ${amount}`;
     if (!this.chart?.compared) return dateAndAmount;
-    return `${dateAndAmount}, portfolio return ${this.returnLabel(point.navReturn)}, SPY return ${this.returnLabel(point.spyReturn)}`;
+    const navReturn = point.navReturn === null ? 'unavailable' : this.returnLabel(point.navReturn);
+    const spyReturn = point.spyReturn === null ? 'unavailable' : this.returnLabel(point.spyReturn);
+    return `${dateAndAmount}, portfolio return ${navReturn}, SPY return ${spyReturn}`;
+  }
+
+  selectChart(compared: boolean): void {
+    const nextChart = compared ? this.comparisonChart : this.accountValueChart;
+    if (!nextChart || this.chart === nextChart) return;
+    const selectedDate = this.selectedPoint?.date;
+    this.preferComparison = compared;
+    this.chart = nextChart;
+    this.pointIndex = Math.max(0, nextChart.points.findIndex(point => point.date === selectedDate));
+  }
+
+  retryHistory(heading: HTMLHeadingElement, event: Event): void {
+    if (heading.ownerDocument.activeElement === event.currentTarget) heading.focus({ preventScroll: true });
+    this.retry.emit();
   }
 
   returnLabel(value: number | null): string {

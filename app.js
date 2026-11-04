@@ -32,8 +32,7 @@ const polygon = {
   retryAt: 0,
 };
 const browserFiles = path.join(__dirname, 'my-angular-app/dist/my-angular-app/browser');
-let client;
-let database;
+let databaseConnection;
 
 app.set('query parser', 'simple');
 app.use(express.json());
@@ -225,7 +224,7 @@ app.get('/company_OneDay_data', (req, res) => {
   return sendChartData(res, symbol, 'hour', from, to);
 });
 
-app.use('/api', (req, res, next) => {
+app.use('/api', async (req, res, next) => {
   res.set('Cache-Control', 'private, no-store');
   const isPreview = process.env.VERCEL_ENV === 'preview';
   const requiresDatabaseName = isPreview || process.env.VERCEL === '1';
@@ -235,18 +234,28 @@ app.use('/api', (req, res, next) => {
   }
 
   try {
-    client ??= new MongoClient(uri, {
-      serverSelectionTimeoutMS: 8000,
-      serverApi: {
-        version: ServerApiVersion.v1,
-        strict: true,
-        deprecationErrors: true,
-      },
-    });
-    res.locals.db = database ??= client.db(databaseName);
+    if (!databaseConnection) {
+      const client = new MongoClient(uri, {
+        serverSelectionTimeoutMS: 8000,
+        serverApi: {
+          version: ServerApiVersion.v1,
+          strict: true,
+          deprecationErrors: true,
+        },
+      });
+      databaseConnection = client.connect().then(() => client.db(databaseName)).catch(error => {
+        databaseConnection = undefined;
+        throw error;
+      });
+    }
   } catch (error) {
     console.error('Invalid MongoDB configuration', error.name);
     return res.status(503).json({ message: 'Database is unavailable' });
+  }
+  try {
+    res.locals.db = await databaseConnection;
+  } catch (error) {
+    return sendDatabaseError(res, error);
   }
   return next();
 });

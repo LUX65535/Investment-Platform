@@ -1,7 +1,7 @@
 <section class="performance-panel" aria-labelledby="portfolio-performance-title" [attr.aria-busy]="loading">
   <header class="performance-header">
     <div>
-      <h2 id="portfolio-performance-title">Portfolio performance</h2>
+      <h2 id="portfolio-performance-title" #performanceHeading tabindex="-1">Portfolio performance</h2>
       <p>End-of-day paper account value</p>
     </div>
     <div class="latest-valuation" *ngIf="!loading && !failed && chart as series">
@@ -13,19 +13,25 @@
   <p *ngIf="loading" class="performance-state" role="status">Loading portfolio history…</p>
   <div *ngIf="!loading && failed" class="performance-state performance-state--error">
     <p role="alert">{{ message || 'Portfolio history could not be loaded.' }}</p>
-    <button type="button" class="state-action" (click)="retry.emit()">Retry history</button>
+    <button type="button" class="state-action" (click)="retryHistory(performanceHeading, $event)">Retry history</button>
   </div>
   <p *ngIf="!loading && !failed && !chart" class="performance-state" role="status">
     {{ message || 'Portfolio history will appear when there is an available closing valuation for your paper account.' }}
   </p>
 
   <ng-container *ngIf="!loading && !failed && chart as series">
-    <p class="performance-basis" *ngIf="series.compared; else dollarBasis">
-      Price return since the shared close on <time [attr.datetime]="series.first.date">{{ series.first.time | date:'MMM d, yyyy':'+0000' }}</time>
-    </p>
-    <ng-template #dollarBasis>
-      <p class="performance-basis">Account value in USD. The SPY comparison needs two shared closing dates.</p>
-    </ng-template>
+    <div class="performance-basis">
+      <p *ngIf="series.compared; else dollarBasis">
+        Price return since the shared close on <time [attr.datetime]="series.first.date">{{ series.first.time | date:'MMM d, yyyy':'+0000' }}</time>
+      </p>
+      <ng-template #dollarBasis>
+        <p>Closing account value in USD.<ng-container *ngIf="!canCompare"> The SPY comparison needs two shared closing dates.</ng-container></p>
+      </ng-template>
+      <div *ngIf="canCompare" class="performance-modes" role="group" aria-label="Performance chart view">
+        <button type="button" [attr.aria-pressed]="series.compared" (click)="selectChart(true)">Compare with SPY</button>
+        <button type="button" [attr.aria-pressed]="!series.compared" (click)="selectChart(false)">Account value</button>
+      </div>
+    </div>
     <figure class="performance-figure" [class.performance-figure--comparison]="series.compared" *ngIf="selectedPoint as point">
       <div class="chart-toolbar">
         <ul class="chart-legend" aria-label="Chart series">

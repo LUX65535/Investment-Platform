@@ -12,7 +12,8 @@
 
     "build": "npm ci --prefix my-angular-app && npm run build --prefix my-angular-app -- --configuration production",
     "server_old": "nodemon --ext js,json --watch . --watch my-angular-app/dist/my-angular-app/browser --signal SIGTERM ./bin/www",
-    "client_old:watch": "npm --prefix my-angular-app run watch"
+    "client_old:watch": "npm --prefix my-angular-app run watch",
+    "test": "node --test"
   },
   "dependencies": {
     "axios": "^1.21.0",

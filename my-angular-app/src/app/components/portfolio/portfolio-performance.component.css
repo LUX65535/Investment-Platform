@@ -10,6 +10,7 @@
 }
 
 .performance-header,
+.performance-basis,
 .chart-toolbar,
 .performance-footer {
   display: flex;
@@ -38,6 +39,21 @@
 .performance-state--error { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; }
 .performance-state--error p { margin: 0; color: var(--negative); }
 .performance-basis { padding-bottom: .25rem; font-size: .82rem; }
+.performance-basis p { margin: 0; }
+.performance-modes { display: flex; flex-wrap: wrap; gap: .3rem; }
+.performance-modes button {
+  min-height: 2.75rem;
+  padding-inline: .65rem;
+  border: 1px solid transparent;
+  border-radius: .45rem;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: .78rem;
+  font-weight: 650;
+}
+.performance-modes button:hover { color: var(--brand); border-color: var(--line); }
+.performance-modes button[aria-pressed='true'] { color: var(--accent-hover); border-color: var(--line); }
+.performance-modes button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .performance-figure { --axis: 5.15rem; margin: 0; padding: 0 var(--inset) .7rem; }
 .performance-figure--comparison { --axis: 3.2rem; }
