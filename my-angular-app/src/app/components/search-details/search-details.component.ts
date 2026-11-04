@@ -1,9 +1,9 @@
 import { Component, DestroyRef, ElementRef, inject, OnDestroy, OnInit, TemplateRef } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { CommonModule, DOCUMENT } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef, NgbModule } from '@ng-bootstrap/ng-bootstrap';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { EMPTY, Observable, Subject, of, Subscription, interval, forkJoin, merge, timer } from 'rxjs';
+import { EMPTY, Observable, Subject, of, Subscription, exhaustMap, forkJoin, merge, timer } from 'rxjs';
 import { catchError, filter, finalize, map, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
 import { ActivatedRoute, NavigationEnd, Router, RouterModule } from '@angular/router';
 import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
@@ -11,29 +11,16 @@ import { MatAutocompleteModule, MatAutocompleteTrigger } from '@angular/material
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { HighchartsChartModule } from 'highcharts-angular';
-import * as Highcharts from 'highcharts/highstock';
-import HC_accessibility from 'highcharts/modules/accessibility';
+import type * as Highcharts from 'highcharts/highstock';
 import { ResearchLandingComponent } from '../research-landing/research-landing.component';
 import { ResearchQuickSwitchComponent } from './research-quick-switch.component';
 import { ResearchRecentsService } from '../../services/research-recents.service';
-HC_accessibility(Highcharts);
-import volumeByPrice from 'highcharts/indicators/volume-by-price';
-import indicators from 'highcharts/indicators/indicators';
-indicators(Highcharts);
-volumeByPrice(Highcharts);
 import { estimateOrderCents, paperOrderConfirmation, PendingOrderError, PendingPaperOrder, PortfolioService, ReferenceQuoteRequired } from '../../services/portfolio.service';
 import { MarketBar as AggregateBarResponse, MarketHistoryService, alignedPriceReturns, utcDayMonthsBefore, validClosingBars } from '../../services/market-history.service';
+import { MarketQuote, MarketQuoteService, QuoteSnapshot, quoteRefreshMs } from '../../services/market-quote.service';
+import { activeRefreshes, dailyRefreshes } from '../../services/market-refresh';
 
-export interface QuoteResponse {
-  c: number;
-  d: number;
-  dp: number;
-  h: number;
-  l: number;
-  o: number;
-  pc: number;
-  t: number;
-}
+type QuoteResponse = MarketQuote;
 
 export interface StockResult {
   displaySymbol: string;
@@ -141,7 +128,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   DetailIsLoading = false;
   quoteLoading = false;
   quoteRefreshFailed = false;
-  private nextQuoteRefresh = 0;
+  private readonly marketQuotes = inject(MarketQuoteService);
+  private readonly document = inject(DOCUMENT);
   searchError = '';
   suggestionsError = false;
   watchlistPending = false;
@@ -192,7 +180,10 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   currentStock: QuoteResponse | null = null;
   companyPeers: string[] = [];
 
-  Highcharts: typeof Highcharts = Highcharts;
+  chartRuntime?: typeof Highcharts;
+  chartRuntimeUnavailable = false;
+  private chartRuntimeRequested = false;
+  private destroyed = false;
   chartOptions: Highcharts.Options = {};
   trendChartOptions: Highcharts.Options = {};
   earningChartOptions: Highcharts.Options = {};
@@ -203,6 +194,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
 
   topNews: TopNews[] = [];
+  alternateNews?: TopNews;
   visibleNewsCount = 12;
   selectedNewsItem: TopNews | null = null;
 
@@ -522,16 +514,27 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
           seenHeadlines.add(key);
           return true;
         }).slice(0, 40);
-        const imageCounts = new Map<string, number>();
-        for (const article of latest) {
-          if (article.image) imageCounts.set(article.image, (imageCounts.get(article.image) ?? 0) + 1);
-        }
+        const seenImages = new Set<string>();
         return latest.map(article => {
-          if ((imageCounts.get(article.image) ?? 0) > 1) article.image = '';
+          if (!article.image) return article;
+          const image = new URL(article.image);
+          const key = image.origin + image.pathname;
+          const isYahooBranding = image.hostname === 's.yimg.com' && image.pathname.startsWith('/rz/stage/p/');
+          if (isYahooBranding || seenImages.has(key)) article.image = '';
+          else seenImages.add(key);
           return article;
         });
       })
     );
+  }
+
+  private setNews(articles: TopNews[]): void {
+    const lead = articles[0];
+    this.alternateNews = lead && !lead.image ? articles.find((article, index) =>
+      index > 0 && article.relevance > 0 && article.image && article.source !== lead.source &&
+      article.datetime >= lead.datetime - 36 * 60 * 60
+    ) : undefined;
+    this.topNews = this.alternateNews ? articles.filter(article => article !== this.alternateNews) : articles;
   }
 
   private newsText(value: unknown): string {
@@ -956,7 +959,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       },
       tooltip: { shared: true, valueSuffix: '%', valueDecimals: 2 },
       plotOptions: { series: { animation: false, marker: { enabled: false } } },
-      legend: { enabled: true },
+      legend: { enabled: false },
       accessibility: { description: `${ticker} and ${symbol} price returns on matching trading days, rebased to zero.` },
       exporting: { enabled: false },
       series: [
@@ -967,6 +970,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
     this.searchSubscription.unsubscribe();
     this.tradeModal?.close();
     this.newsModal?.close();
@@ -974,22 +978,18 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   setupAutoUpdate(): void {
-    interval(30000).pipe(
-      switchMap(() => {
+    activeRefreshes(this.document, quoteRefreshMs).pipe(
+      exhaustMap(() => {
         const ticker = this.lastSuccessfulSearch;
-        if (!ticker || document.hidden || Date.now() < this.nextQuoteRefresh) return of(null);
+        if (!ticker || this.quoteLoading || this.tradeModal || this.tradePending) return EMPTY;
         const context = this.searchSubscription;
-        return this.getLatestQuote(ticker).pipe(
-          map(quote => ({ quote, context, retryAfter: 0 })),
-          catchError((error: HttpErrorResponse) => of({ quote: null, context, retryAfter: Number(error.headers?.get('Retry-After')) || 0 }))
-        );
+        return this.getLatestQuote(ticker).pipe(map(snapshot => ({ ...snapshot, context })));
       }),
       takeUntilDestroyed(this.destroyRef)
     ).subscribe(update => {
-      if (update?.context === this.searchSubscription) {
-        this.nextQuoteRefresh = Date.now() + Math.max(0, Math.min(update.retryAfter, 300)) * 1000;
-        this.quoteRefreshFailed = !update.quote || Boolean(this.currentStock && update.quote.t < this.currentStock.t);
-        if (!update.quote || this.quoteRefreshFailed) return;
+      if (update.context === this.searchSubscription) {
+        this.quoteRefreshFailed = update.previous || !update.quote;
+        if (!update.quote) return;
         const previousQuote = this.currentStock;
         this.currentStock = update.quote;
         const nextDay = !previousQuote || Math.floor(previousQuote.t / 86_400) !== Math.floor(update.quote.t / 86_400);
@@ -999,6 +999,9 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
           this.loadOverview();
         }
       }
+    });
+    dailyRefreshes(this.document).pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      if (!this.tradeModal && !this.tradePending && this.activeTab === 'summary' && this.overviewRange !== 'Hourly') this.loadOverview(true);
     });
   }
 
@@ -1130,7 +1133,6 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.DetailIsLoading = false;
     this.quoteLoading = false;
     this.quoteRefreshFailed = false;
-    this.nextQuoteRefresh = 0;
     this.searchError = '';
     this.searchResults = null;
     this.companyLogoReady = false;
@@ -1152,6 +1154,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.overviewEnd = null;
     this.overviewReturn = null;
     this.topNews = [];
+    this.alternateNews = undefined;
     this.visibleNewsCount = 12;
     this.earnings = [];
     this.recommendations = [];
@@ -1213,14 +1216,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       }
     }));
     this.searchSubscription.add(this.getLatestQuote(ticker).pipe(
-      catchError(() => of(null)),
       finalize(() => {
         this.quoteLoading = false;
         if (!this.searchSubscription.closed && this.lastSuccessfulSearch === ticker
           && this.activeTab === 'summary' && this.overviewRange === 'Hourly') this.loadOverview();
       }),
-    ).subscribe(quote => {
+    ).subscribe(({ quote, previous }) => {
       this.currentStock = quote;
+      this.quoteRefreshFailed = previous;
     }));
   }
 
@@ -1253,21 +1256,25 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }));
   }
 
-  loadOverview(): void {
+  loadOverview(refresh = false): void {
     const ticker = this.lastSuccessfulSearch;
     if (!ticker) return;
     if (this.overviewRange === 'Hourly') {
       this.loadHourly(ticker);
       return;
     }
-    this.loadBenchmark();
-    if (this.overviewDailyLoading || this.overviewDailyBars) return;
+    this.loadBenchmark(refresh);
+    if (this.overviewDailyLoading || (this.overviewDailyBars && !refresh)) return;
     this.overviewDailyFailed = false;
     this.overviewDailyLoading = true;
     this.searchSubscription.add(this.getBigChartData(ticker).pipe(
       finalize(() => this.overviewDailyLoading = false),
     ).subscribe({
       next: ({ results }) => {
+        if (!results.length && this.overviewDailyBars?.length) {
+          this.overviewDailyFailed = true;
+          return;
+        }
         this.overviewDailyBars = results;
         if (this.overviewRange !== 'Hourly') this.renderOverview();
       },
@@ -1331,9 +1338,9 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.benchmarkUnavailable = '';
   }
 
-  loadBenchmark(): void {
+  loadBenchmark(refresh = false): void {
     const symbol = this.comparisonTicker;
-    if (!symbol || this.benchmarkLoading || this.benchmarkBars || this.benchmarkUnavailable
+    if (!symbol || this.benchmarkLoading || (this.benchmarkBars && !refresh) || this.benchmarkUnavailable
       || !this.lastSuccessfulSearch || this.overviewRange === 'Hourly') return;
     if (!this.canCompare || symbol === this.searchResults?.ticker) {
       this.benchmarkUnavailable = 'Comparison requires two different securities quoted in USD.';
@@ -1355,6 +1362,10 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       finalize(() => this.benchmarkLoading = false),
     ).subscribe({
       next: ({ results }) => {
+        if (!results.length && this.benchmarkBars?.length) {
+          this.benchmarkFailed = true;
+          return;
+        }
         this.benchmarkBars = results;
         this.renderOverview();
       },
@@ -1395,6 +1406,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       ? symbol : null;
     const viewChanged = tab !== this.activeTab || range !== this.overviewRange || comparison !== this.comparisonTicker;
     this.activeTab = tab;
+    if (ticker && tickerPattern.test(ticker.trim().toUpperCase()) && tab !== 'news') this.loadChartRuntime();
     if (range !== this.overviewRange || comparison !== this.comparisonTicker) {
       this.overviewRange = range;
       this.setComparison(comparison);
@@ -1446,6 +1458,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
   private loadActiveView(): void {
     const tabName = this.activeTab;
+    if (this.lastSuccessfulSearch && tabName !== 'news') this.loadChartRuntime();
     if (tabName === 'summary') {
       this.loadOverview();
       return;
@@ -1458,7 +1471,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     let request: Observable<unknown>;
     switch (tabName) {
       case 'news':
-        request = this.getTopNews(ticker).pipe(tap(news => this.topNews = news));
+        request = this.getTopNews(ticker).pipe(tap(news => this.setNews(news)));
         break;
       case 'charts':
         request = this.getBigChartData(ticker).pipe(tap(daily => {
@@ -1488,6 +1501,20 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }));
   }
 
+  private loadChartRuntime(): void {
+    if (this.chartRuntimeRequested) return;
+    this.chartRuntimeRequested = true;
+    void import('./research-chart-runtime').then(
+      ({ Highcharts: runtime }) => { if (!this.destroyed) this.chartRuntime = runtime; },
+      () => { if (!this.destroyed) this.chartRuntimeUnavailable = true; },
+    );
+  }
+
+  retryChartRuntime(): void {
+    // A reload lets the browser retry a module URL after a network failure.
+    this.host.nativeElement.ownerDocument.defaultView?.location.reload();
+  }
+
   clearSearch(): void {
     this.tickerFormControl.setValue('');
     this.searchError = '';
@@ -1506,11 +1533,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }));
   }
 
-  getLatestQuote(ticker: string): Observable<QuoteResponse | null> {
-    return this.http.get<QuoteResponse>('/company_quote', { params: { symbol: ticker } }).pipe(
-      map(quote => quote && Number.isFinite(quote.c) && quote.c > 0
-        && Number.isSafeInteger(quote.t) && quote.t > 0 && quote.t <= Math.floor(Date.now() / 1000) + 60 ? quote : null),
-    );
+  getLatestQuote(ticker: string): Observable<QuoteSnapshot> {
+    return this.marketQuotes.read(ticker);
   }
 
   getCompanyPeers(ticker: string): Observable<string[]> {
@@ -1559,16 +1583,16 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   getChangeColor(stock: QuoteResponse): string {
-    return stock.dp > 0 ? '#2254dc' : stock.dp < 0 ? '#b4233c' : '#293950';
+    return (stock.dp ?? 0) > 0 ? '#2254dc' : (stock.dp ?? 0) < 0 ? '#b4233c' : '#293950';
   }
 
   formatChangeValue(quote: QuoteResponse | null): string {
-    if (!quote || !Number.isFinite(quote.d)) return '—';
+    if (quote?.d == null || !Number.isFinite(quote.d)) return '—';
     return `${quote.d >= 0 ? '+' : ''}${quote.d.toFixed(2)}`;
   }
 
   formatChangePercent(quote: QuoteResponse | null): string {
-    if (!quote || !Number.isFinite(quote.dp)) return '—';
+    if (quote?.dp == null || !Number.isFinite(quote.dp)) return '—';
     return `${quote.dp.toFixed(2)}%`;
   }
 

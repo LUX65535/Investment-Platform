@@ -65,6 +65,11 @@
 }
 
 .search-form--landing { width: 100%; }
+.search-form--landing .search-field { border-radius: 5px; }
+.search-form--landing .search-icon { display: none; }
+.search-form--landing .search-field input { padding-inline-start: .65rem; }
+.search-form--landing .submit-search { background: var(--brand); }
+.search-form--landing .submit-search:hover { background: var(--accent-hover); }
 
 .search-field {
   display: flex;
@@ -170,8 +175,12 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(13rem, .7fr) auto;
   align-items: center;
-  gap: .55rem .95rem;
-  padding: .62rem .85rem;
+  gap: .7rem clamp(.95rem, 3vw, 2.1rem);
+  padding: .85rem 0 1rem;
+  border: 0;
+  border-block-end: 1px solid var(--blue-rule);
+  border-radius: 0;
+  background: transparent;
 }
 
 .security-identity {
@@ -187,13 +196,13 @@
 
 .security-mark {
   display: grid;
-  width: 2.65rem;
+  width: 3rem;
   aspect-ratio: 1;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid #c8d7f2;
   border-radius: .48rem;
-  background: var(--surface-subtle);
+  background: var(--blue-tint);
   color: var(--accent-hover);
   font-size: .9rem;
   font-weight: 750;
@@ -224,9 +233,6 @@
 }
 
 .security-ticker {
-  padding: .18rem .4rem;
-  border-radius: 4px;
-  background: var(--accent-soft);
   color: var(--accent-hover);
   font-weight: 750;
   letter-spacing: .035em;
@@ -242,9 +248,9 @@
 
 .security-identity h1 {
   margin: 0;
-  font-size: clamp(1.35rem, 3vw, 1.8rem);
-  font-weight: 680;
-  letter-spacing: -.045em;
+  font-size: 1.25rem;
+  font-weight: 710;
+  letter-spacing: -.02em;
   line-height: 1.15;
   overflow-wrap: anywhere;
 }
@@ -305,10 +311,10 @@
 }
 
 .quote-price {
-  font-size: clamp(1.65rem, 4vw, 2.3rem);
+  font-size: 1.25rem;
   font-weight: 685;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -.055em;
+  letter-spacing: -.015em;
   line-height: 1.08;
 }
 
@@ -352,7 +358,7 @@
 .detail-tabs {
   display: flex;
   gap: clamp(.45rem, 2vw, 1.3rem);
-  margin: .25rem 0 .55rem;
+  margin: .25rem 0 .82rem;
   border-bottom: 1px solid var(--line);
 }
 
@@ -396,8 +402,8 @@
 }
 
 .overview-sidebar .facts-panel + .facts-panel { border-top: 1px solid var(--line); }
-.overview-chart-panel { border-top: 2px solid var(--accent); }
 .overview-chart-panel .panel-heading { margin-bottom: .5rem; }
+.overview-chart-panel .panel-heading h2 { font-size: 1.1rem; }
 
 .panel-heading {
   display: flex;
@@ -464,7 +470,7 @@
   min-width: 0;
 }
 
-.chart--intraday { height: clamp(18rem, 34vw, 28rem); }
+.chart--intraday { height: clamp(16.5rem, 27vw, 24rem); }
 .chart--history { height: clamp(24rem, 47vw, 34rem); }
 .chart--insight { height: 19rem; }
 

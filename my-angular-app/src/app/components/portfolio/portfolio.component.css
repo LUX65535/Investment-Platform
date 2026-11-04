@@ -1,85 +1,32 @@
 :host {
-  --desk-ink: #17283b;
-  --desk-muted: #586678;
-  --desk-line: #dde3e9;
-  --desk-accent: #1849a9;
-  --inset: clamp(.8rem, 2vw, 1.35rem);
+  --desk-ink: #152636;
+  --desk-muted: #4e5f71;
+  --desk-line: var(--line);
+  --desk-accent: #1649a6;
+  --inset: clamp(.8rem, 2vw, 1.5rem);
   display: block;
   min-width: 0;
   color: var(--desk-ink);
 }
 
-.portfolio-heading, .panel-header, .account-foot, .wallet-setup {
+.panel-header, .wallet-setup {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: .45rem 1rem;
+  gap: .25rem 1rem;
 }
 
-.portfolio-heading { align-items: end; margin-bottom: .65rem; }
-.portfolio-heading h1 {
-  margin: 0;
-  font: 500 clamp(2.15rem, 4vw, 3.35rem)/1 Georgia, 'Times New Roman', serif;
-  letter-spacing: -.045em;
-}
-.account-type {
-  margin: 0 0 .42rem;
-  color: var(--desk-muted);
-  font-size: .68rem;
-  font-weight: 700;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-}
-.portfolio-toolbar, .holding-actions, .portfolio-sections { display: flex; gap: .5rem; }
-.portfolio-toolbar svg { width: 1rem; height: 1rem; }
-.portfolio-sections { gap: 1.2rem; }
-.portfolio-sections a {
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  color: var(--desk-muted);
-  font-size: .79rem;
-  font-weight: 650;
-  text-decoration: none;
-}
-
-.portfolio-sheet {
+.portfolio-sheet { display: grid; gap: .85rem; min-width: 0; }
+.portfolio-ledger { display: grid; gap: .85rem; min-width: 0; }
+.positions-panel, .orders-panel, .allocation-panel {
   min-width: 0;
   border: 1px solid var(--desk-line);
-  border-radius: .4rem;
+  border-radius: .65rem;
   background: #fff;
 }
-.portfolio-overview, .portfolio-analysis, .positions-panel { border-bottom: 1px solid var(--desk-line); }
-.portfolio-metrics { display: grid; grid-template-columns: 1.45fr repeat(3, 1fr); margin: 0; }
-.portfolio-metric { min-width: 0; padding: .7rem var(--inset); }
-.portfolio-metric + .portfolio-metric { border-left: 1px solid var(--desk-line); }
-.portfolio-metric dt, .metric-source {
-  color: var(--desk-muted);
-  font-size: .73rem;
-  font-weight: 550;
-  line-height: 1.3;
-}
-.portfolio-metric dd {
-  margin: .2rem 0 0;
-  font-size: clamp(.96rem, 1.65vw, 1.36rem);
-  font-weight: 670;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.15;
-  overflow-wrap: anywhere;
-}
-.primary-metric dd { font-size: clamp(1.45rem, 2.45vw, 2.18rem); letter-spacing: -.035em; }
-.metric-source { display: block; margin-top: .16rem; letter-spacing: normal; }
-.account-foot {
-  padding: .27rem var(--inset);
-  border-top: 1px solid var(--desk-line);
-  color: var(--desk-muted);
-  font-size: .71rem;
-}
-.prepared-account-label { color: var(--desk-ink); font-weight: 610; }
 
-.portfolio-analysis { display: grid; min-width: 0; }
-.allocation-panel { min-width: 0; padding: .25rem 0 .7rem; border-top: 1px solid var(--desk-line); }
+.allocation-panel { padding: .25rem 0 .55rem; }
 .allocation-body, .allocation-message { padding: .25rem var(--inset) .45rem; }
 .allocation-message { margin: 0; color: var(--desk-muted); font-size: .8rem; }
 .allocation-bar { display: flex; height: .34rem; margin: .15rem 0 .65rem; overflow: hidden; background: #eff2f6; }
@@ -105,7 +52,7 @@
 .allocation-more summary { cursor: pointer; color: var(--desk-accent); font-size: .78rem; }
 
 .panel-header { padding: .68rem var(--inset); }
-.panel-header h2, .wallet-setup h2, .portfolio-empty h3 { margin: 0; font-size: 1.08rem; font-weight: 670; line-height: 1.3; }
+.panel-header h2, .wallet-setup h2, .portfolio-empty h3 { margin: 0; font-size: 1.25rem; font-weight: 700; line-height: 1.25; letter-spacing: -.025em; }
 .panel-header p, .wallet-setup p, .portfolio-empty p { margin: .12rem 0 0; color: var(--desk-muted); font-size: .78rem; }
 .panel-context, .panel-footer { color: var(--desk-muted); font-size: .75rem; }
 .panel-footer, .order-empty { margin: 0; padding: .5rem var(--inset); border-top: 1px solid var(--desk-line); }
@@ -120,7 +67,7 @@
 }
 .portfolio-empty { padding: .75rem var(--inset); border-top: 1px solid var(--desk-line); }
 
-.positions-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.positions-table { width: 100%; border-collapse: collapse; font-size: .88rem; }
 :is(.positions-table, .allocation-list, .order-list) { font-variant-numeric: tabular-nums; }
 .positions-table :is(th, td) {
   padding: .26rem .65rem;
@@ -130,7 +77,7 @@
 }
 .positions-table :is(th, td):first-child { padding-left: var(--inset); text-align: left; }
 .positions-table :is(th, td):last-child { padding-right: var(--inset); }
-.positions-table thead, .order-columns { background: #f7f9fb; color: var(--desk-muted); font-size: .72rem; }
+.positions-table thead, .order-columns { background: var(--surface-subtle); color: var(--desk-muted); font-size: .72rem; }
 .positions-table thead button {
   min-height: 32px;
   padding: 0;
@@ -152,7 +99,7 @@
 .negative { color: #a12b3e; }
 .holding-trades { position: relative; white-space: nowrap; }
 .holding-actions, .holding-detail { display: inline-flex; vertical-align: middle; }
-.holding-actions { justify-content: flex-end; gap: .25rem; }
+.holding-actions { display: inline-flex; justify-content: flex-end; gap: .25rem; }
 .holding-action, .holding-detail summary {
   min-width: 44px;
   min-height: 44px;
@@ -164,7 +111,8 @@
   font-size: .76rem;
   font-weight: 650;
 }
-.holding-action:hover:not(:disabled), .holding-detail summary:hover { background: #edf2fa; }
+.holding-action { background: #eef3fa; }
+.holding-action:hover:not(:disabled), .holding-detail summary:hover { background: #e1eafa; }
 .holding-action:disabled { color: var(--desk-muted); }
 .holding-detail summary { display: flex; align-items: center; cursor: pointer; }
 .holding-detail summary::-webkit-details-marker { display: none; }
@@ -204,18 +152,18 @@
 .receipt-body p { margin: 0 0 .4rem; }
 .receipt-body dl { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; margin: 0; }
 .receipt-body dd, .pending-order p { margin: 0; }
-.receipt-body code { overflow-wrap: anywhere; }
+.receipt-body code { color: inherit; overflow-wrap: anywhere; }
 .pending-order { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .45rem; }
 .pending-order p, .order-empty { color: var(--desk-muted); font-size: .8rem; }
 
-.modal-header .btn-close { box-sizing: border-box; width: 44px; min-height: 44px; }
-.quantity-field { display: flex; gap: .5rem; }
-.quantity-field input { min-width: 0; }
-.quantity-field .state-action { flex-shrink: 0; }
-
 @media (min-width: 960px) {
-  .portfolio-analysis--with-allocation { grid-template-columns: minmax(0, 1fr) minmax(13rem, 24%); }
-  .allocation-panel { border-top: 0; border-left: 1px solid var(--desk-line); }
+  .allocation-panel { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; padding: 0; }
+  .allocation-body { display: grid; grid-template-columns: minmax(7rem, .45fr) minmax(0, 1fr); gap: .7rem; align-items: center; }
+  .allocation-bar { margin: 0; }
+  .allocation-list { display: flex; flex-wrap: wrap; gap: 0 1rem; }
+  .allocation-list li { grid-template-columns: auto 1fr auto; border: 0; }
+  .allocation-amount { display: none; }
+  .allocation-more { grid-column: 2; }
 }
 
 @media (max-width: 959px) {
@@ -234,19 +182,7 @@
   .mobile-sort button[aria-pressed='true'] { color: var(--desk-accent); font-weight: 700; }
 }
 
-@media (max-width: 560px) {
-  .portfolio-toolbar .state-action { padding-inline: .55rem; }
-  .portfolio-toolbar button span { display: none; }
-  .portfolio-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .portfolio-metric { padding: .48rem var(--inset); }
-  .portfolio-metric:nth-child(3) { border-left: 0; }
-  .portfolio-metric:nth-child(n+3) { border-top: 1px solid var(--desk-line); }
-  .metric-source { display: none; }
-  .account-foot { gap: .12rem .55rem; }
-}
-
 @media (max-width: 720px) {
-  .portfolio-sections { order: 3; flex-basis: 100%; }
   .order-columns { display: none; }
   .order-receipt summary { grid-template-columns: minmax(0, 1fr) auto auto; gap: .2rem .4rem; }
   .receipt-symbol { grid-area: 1 / 1; }

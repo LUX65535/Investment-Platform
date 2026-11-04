@@ -1,12 +1,17 @@
 import { TestBed } from '@angular/core/testing';
+import { ElementRef } from '@angular/core';
 import { PortfolioComponent } from './portfolio.component';
+import { MarketQuoteService } from '../../services/market-quote.service';
 
 describe('Portfolio position ledger', () => {
   let component: PortfolioComponent;
 
   beforeEach(() => {
-    TestBed.configureTestingModule({});
-    component = TestBed.runInInjectionContext(() => new PortfolioComponent(null!, null!, null!));
+    TestBed.configureTestingModule({ providers: [
+      { provide: ElementRef, useValue: new ElementRef(document.createElement('div')) },
+      { provide: MarketQuoteService, useValue: {} },
+    ] });
+    component = TestBed.runInInjectionContext(() => new PortfolioComponent(null!, null!));
     component.holdingsCurrent = true;
     component.cashBalance = 500;
     component.portfolio = [

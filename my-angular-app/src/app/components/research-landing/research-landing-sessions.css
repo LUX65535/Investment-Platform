@@ -1,0 +1,87 @@
+.recent-sessions {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.sessions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .5rem;
+  padding: .65rem 1rem;
+}
+
+.sessions-header h2 { margin: 0; color: var(--ink); font-size: .98rem; font-weight: 670; }
+.sessions-header p, .sessions-header > span, .sessions-source { margin: 0; color: var(--muted); font-size: .76rem; }
+
+.session-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--ink);
+  font-size: .81rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-table :is(th, td) {
+  padding: .43rem 1rem;
+  border-block-start: 1px solid var(--line);
+  text-align: end;
+  white-space: nowrap;
+}
+
+.session-table tr > :first-child { text-align: start; }
+
+.session-table thead th {
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 650;
+}
+
+.session-table tbody th, .session-close { font-weight: 650; }
+.session-table .latest-session { background: var(--workspace); }
+.session-change { font-weight: 620; }
+.session-change .change-up { color: var(--positive); }
+.session-change .change-down { color: var(--negative); }
+.session-label { display: none; }
+
+.sessions-source { padding: .5rem 1rem; border-block-start: 1px solid var(--line); }
+
+@media (max-width: 670px) {
+  .sessions-header, .sessions-source { padding-inline: .8rem; }
+
+  .session-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .session-table tbody { display: block; }
+  .session-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .24rem .35rem;
+    padding: .58rem .8rem;
+    border-block-start: 1px solid var(--line);
+  }
+
+  .session-table tbody :is(th, td) {
+    padding: 0;
+    border: 0;
+    text-align: start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .session-table tbody th { grid-area: 1 / 1 / auto / 3; align-self: center; }
+  .session-table .session-close { grid-area: 1 / 3; }
+  .session-table .session-change { grid-area: 1 / 4; }
+  .session-label { display: block; color: var(--muted); font-size: .73rem; font-weight: 500; }
+}

@@ -1,7 +1,5 @@
 import { NgModule } from '@angular/core';
 import { RouterModule, Routes } from '@angular/router';
-import { WatchlistComponent } from './components/watchlist/watchlist.component';
-import { PortfolioComponent } from './components/portfolio/portfolio.component';
 
 const loadResearch = () => import('./components/search-details/search-details.component')
   .then(module => module.SearchDetailsComponent);
@@ -15,9 +13,29 @@ const routes: Routes = [
     loadComponent: () => import('./components/research-embed/research-embed.component')
       .then(module => module.ResearchEmbedComponent),
   },
-  { path: 'watchlist', title: 'Watchlist | Investment Platform', component: WatchlistComponent },
-  { path: 'portfolio', title: 'Portfolio | Investment Platform', component: PortfolioComponent },
-  { path: '', redirectTo: '/search-details', pathMatch: 'full' }
+  {
+    path: 'screener',
+    title: 'Market screener | Investment Platform',
+    loadComponent: () => import('./components/market-screener/market-screener.component')
+      .then(module => module.MarketScreenerComponent),
+  },
+  {
+    path: 'watchlist',
+    title: 'Watchlist | Investment Platform',
+    loadComponent: () => import('./components/watchlist/watchlist.component').then(module => module.WatchlistComponent),
+  },
+  {
+    path: 'portfolio',
+    title: 'Portfolio | Investment Platform',
+    loadComponent: () => import('./components/portfolio/portfolio.component').then(module => module.PortfolioComponent),
+  },
+  {
+    path: '',
+    pathMatch: 'full',
+    title: 'Market overview | Investment Platform',
+    loadComponent: () => import('./components/investment-home/investment-home.component')
+      .then(module => module.InvestmentHomeComponent),
+  }
 ];
 
 @NgModule({

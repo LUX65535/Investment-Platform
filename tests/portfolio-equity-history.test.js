@@ -68,8 +68,72 @@ test('cash and shares replay in order using actual receipt totals and historical
       { date: '2026-11-02', nav: 25255, spyClose: null },
       { date: '2026-11-03', nav: 25310, spyClose: 568 },
     ],
+    attribution: [
+      { date: '2026-10-30', contributions: [] },
+      { date: '2026-11-02', contributions: [{ ticker: 'AAPL', cents: 12_500 }, { ticker: 'MSFT', cents: 3_000 }] },
+      { date: '2026-11-03', contributions: [{ ticker: 'AAPL', cents: 15_000 }, { ticker: 'MSFT', cents: 6_000 }] },
+    ],
     missingSessions: 0, missingBenchmarkSessions: 1, invalidLedger: false,
   });
+});
+
+test('close-to-close contributions reconcile for any two marks, including fully sold and newly bought symbols', () => {
+  const receipts = [
+    fill('buy', 'AAPL', 1, 10_000, '2026-10-29T15:00:00Z'),
+    fill('buy', 'MSFT', 1, 10_000, '2026-10-29T15:01:00Z'),
+    fill('buy', 'NVDA', 1, 5_000, '2026-10-30T15:00:00Z'),
+    fill('sell', 'AAPL', 1, 12_000, '2026-10-30T20:00:00Z'),
+    fill('buy', 'AMD', 1, 2_000, '2026-11-03T16:00:00Z'),
+    fill('sell', 'AMD', 1, 2_300, '2026-11-03T17:00:00Z'),
+    fill('buy', 'MSFT', 1, 8_000, '2026-11-04T17:00:00Z'),
+  ];
+  const dates = ['2026-10-29T04:00:00Z', '2026-10-30T04:00:00Z', '2026-11-02T05:00:00Z', '2026-11-03T05:00:00Z'];
+  const barsByTicker = new Map([
+    ['AAPL', [bar(dates[0], 100), bar(dates[1], 110)]],
+    ['MSFT', dates.map((date, index) => bar(date, [100, 99, 90, 90][index]))],
+    ['NVDA', dates.slice(1).map((date, index) => bar(date, [55, 55, 57][index]))],
+  ]);
+  const result = history({
+    receipts,
+    startingCashCents: 100_000,
+    benchmarkBars: dates.map(date => bar(date, 560)),
+    barsByTicker,
+    expectedAccount: { cashCents: 79_300, positions: [{ ticker: 'MSFT', quantity: 2 }, { ticker: 'NVDA', quantity: 1 }] },
+  });
+
+  assert.deepEqual(result.points.map(point => point.nav), [1000, 1014, 1015, 1020]);
+  const contributions = result.attribution.map(point => Object.fromEntries(point.contributions.map(({ ticker, cents }) => [ticker, cents])));
+  assert.deepEqual(contributions, [
+    {},
+    { AAPL: 1000, MSFT: -100, NVDA: 500 },
+    { AAPL: 2000, MSFT: -1000, NVDA: 500 },
+    { AAPL: 2000, AMD: 300, MSFT: -1000, NVDA: 700 },
+  ]);
+  for (let start = 0; start < contributions.length; start++) {
+    for (let end = start + 1; end < contributions.length; end++) {
+      const symbols = new Set([...Object.keys(contributions[start]), ...Object.keys(contributions[end])]);
+      const sum = [...symbols].reduce((cents, ticker) => cents + (contributions[end][ticker] ?? 0) - (contributions[start][ticker] ?? 0), 0);
+      assert.equal(sum, Math.round(result.points[end].nav * 100) - Math.round(result.points[start].nav * 100));
+    }
+  }
+});
+
+test('fractional close marks allocate the same cent rounding as the aggregate NAV', () => {
+  const receipts = [
+    fill('buy', 'AAPL', 1, 1, '2026-11-02T16:00:00Z'),
+    fill('buy', 'MSFT', 1, 1, '2026-11-02T16:01:00Z'),
+  ];
+  const first = '2026-11-02T05:00:00Z';
+  const last = '2026-11-03T05:00:00Z';
+  const result = history({ receipts, barsByTicker: new Map([
+    ['AAPL', [bar(first, .0051), bar(last, .0051)]],
+    ['MSFT', [bar(first, .0051), bar(last, .0101)]],
+  ]) });
+  assert.deepEqual(result.points.map(point => point.nav), [24999.99, 25000]);
+  assert.deepEqual(result.attribution, [
+    { date: '2026-11-02', contributions: [] },
+    { date: '2026-11-03', contributions: [{ ticker: 'MSFT', cents: 1 }] },
+  ]);
 });
 
 test('missing or conflicting held closes leave gaps and no future price is substituted', () => {
@@ -98,6 +162,7 @@ test('missing or conflicting held closes leave gaps and no future price is subst
       { date: '2026-11-02', nav: null, spyClose: 568 },
       { date: '2026-11-03', nav: null, spyClose: null },
     ],
+    attribution: [{ date: '2026-10-29', contributions: [] }],
     missingSessions: 3, missingBenchmarkSessions: 1, invalidLedger: false,
   });
 });
@@ -113,6 +178,10 @@ test('a complete data gap on a scheduled session stays visible without adding cl
       { date: '2026-04-01', nav: 25010, spyClose: 550 },
       { date: '2026-04-02', nav: null, spyClose: null },
       { date: '2026-04-06', nav: 25015, spyClose: 560 },
+    ],
+    attribution: [
+      { date: '2026-04-01', contributions: [] },
+      { date: '2026-04-06', contributions: [{ ticker: 'AAPL', cents: 500 }] },
     ],
     missingSessions: 1, missingBenchmarkSessions: 1, invalidLedger: false,
   });
@@ -143,6 +212,7 @@ test('an unverified short-day candidate omits an ambiguous afternoon mark', () =
       { date: '2029-11-23', nav: null, spyClose: 580 },
       { date: '2029-11-26', nav: 25040, spyClose: 583 },
     ],
+    attribution: [{ date: '2029-11-26', contributions: [] }],
     missingSessions: 1, missingBenchmarkSessions: 0, invalidLedger: false,
   });
 });
@@ -166,7 +236,7 @@ test('same-time fills preserve ledger order and reconciliation includes current-
 test('malformed filled receipts or an inconsistent account never produce points', () => {
   const malformed = fill('buy', 'AAPL', 1, undefined, '2026-11-03T16:00:00Z');
   assert.deepEqual(history({ receipts: [malformed] }), {
-    points: [], missingSessions: 0, missingBenchmarkSessions: 0, invalidLedger: true,
+    points: [], attribution: [], missingSessions: 0, missingBenchmarkSessions: 0, invalidLedger: true,
   });
   assert.equal(history({ expectedAccount: { cashCents: 0, positions: [] } }).invalidLedger, true);
 });

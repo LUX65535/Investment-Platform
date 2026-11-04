@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { Component, EventEmitter, Input, Output } from '@angular/core';
-import { PortfolioPerformancePoint } from '../../services/portfolio.service';
+import { PortfolioAttributionPoint, PortfolioPerformancePoint } from '../../services/portfolio.service';
 
 interface ClosingPoint extends PortfolioPerformancePoint {
   time: number;
@@ -24,12 +24,20 @@ interface PerformanceChart {
   points: PlotPoint[];
   first: PlotPoint;
   firstValuation: ClosingPoint;
+  lastClosing: PlotPoint;
   dateTicks: PlotPoint[];
   compared: boolean;
   nav: Series;
   spy: Series;
   ticks: { value: number; y: number }[];
   gaps: PlotPoint[];
+}
+
+interface ClosingReview {
+  first: ClosingPoint;
+  last: ClosingPoint;
+  change: string;
+  benchmark: string | null;
 }
 
 const width = 640;
@@ -46,6 +54,7 @@ const dollarFormat = new Intl.NumberFormat('en-US', { style: 'currency', currenc
 const signedDollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', signDisplay: 'exceptZero' });
 const percentFormat = new Intl.NumberFormat('en-US', { style: 'percent', signDisplay: 'exceptZero', maximumFractionDigits: 2 });
 const pointFormat = new Intl.NumberFormat('en-US', { signDisplay: 'exceptZero', maximumFractionDigits: 2 });
+const absolutePoints = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
 
 function validRows(points: readonly PortfolioPerformancePoint[]): ClosingPoint[] {
   const byDate = new Map<string, ClosingPoint>();
@@ -128,6 +137,7 @@ function makeChart(rows: ClosingPoint[], allowComparison: boolean): PerformanceC
     navY: plotY(compared ? row.navReturn : row.nav),
     spyY: plotY(row.spyReturn),
   }));
+  const lastClosing = points.filter(point => point.nav !== null && (!compared || point.spyReturn !== null)).at(-1)!;
   const ticks = Array.from({ length: Math.round((high - low) / step) + 1 }, (_, index) => {
     const value = Number((low + index * step).toPrecision(10));
     return { value, y: y(value) };
@@ -139,7 +149,7 @@ function makeChart(rows: ClosingPoint[], allowComparison: boolean): PerformanceC
   }).filter((point, index, candidates) => index === 0 || point !== candidates[index - 1]);
 
   return {
-    points, first: points[0], firstValuation, dateTicks, compared,
+    points, first: points[0], firstValuation, lastClosing, dateTicks, compared,
     nav: lineSeries(points, 'navY'), spy: lineSeries(points, 'spyY'), ticks,
     gaps: points.filter(point => point.navY === null || compared && point.spyY === null),
   };
@@ -169,6 +179,7 @@ export class PortfolioPerformanceComponent {
   @Input() message = '';
   @Input() missingSessions = 0;
   @Input() missingBenchmarkSessions = 0;
+  @Input() attribution: readonly PortfolioAttributionPoint[] = [];
   @Output() retry = new EventEmitter<void>();
 
   @Input() set points(value: readonly PortfolioPerformancePoint[]) {
@@ -184,7 +195,7 @@ export class PortfolioPerformanceComponent {
     this.comparisonChart = chart?.compared ? chart : null;
     this.accountValueChart = this.comparisonChart ? makeChart(this.windowRows, false) : chart;
     this.chart = (this.preferComparison ? this.comparisonChart : null) ?? this.accountValueChart;
-    this.pointIndex = this.chart ? this.chart.points.length - 1 : 0;
+    this.pointIndex = this.chart ? this.chart.points.indexOf(this.chart.lastClosing) : 0;
   }
 
   get hasHistory(): boolean {
@@ -201,6 +212,54 @@ export class PortfolioPerformanceComponent {
 
   get selectedPoint(): PlotPoint | undefined {
     return this.chart?.points[this.pointIndex];
+  }
+
+  get closingReview(): ClosingReview | null {
+    const chart = this.chart;
+    if (!chart) return null;
+    const first = chart.compared ? chart.first : chart.firstValuation;
+    const last = chart.lastClosing;
+    if (first.nav === null || last.nav === null) return null;
+
+    const change = last.nav - first.nav;
+    let benchmark: string | null = null;
+    if (last.navReturn !== null && last.spyReturn !== null) {
+      const gap = (last.navReturn - last.spyReturn) * 100;
+      const amount = absolutePoints.format(Math.abs(gap));
+      benchmark = amount === '0' ? 'was level with SPY' : `finished ${amount} pp ${gap > 0 ? 'ahead of' : 'behind'} SPY`;
+    }
+    return {
+      first, last, benchmark,
+      change: first.date === last.date ? `closed at ${dollarFormat.format(last.nav)}`
+        : change === 0 ? 'held its value' : `moved ${change > 0 ? 'up' : 'down'} ${dollarFormat.format(Math.abs(change))}`,
+    };
+  }
+
+  get attributionReview(): { entries: { ticker: string; amount: string; width: number; negative: boolean }[]; total: string } | null {
+    const review = this.closingReview;
+    if (!review || review.first.date === review.last.date) return null;
+    const start = this.attribution.find(point => point.date === review.first.date);
+    const end = this.attribution.find(point => point.date === review.last.date);
+    if (!start || !end) return null;
+
+    const starting = new Map(start.contributions.map(({ ticker, cents }) => [ticker, cents]));
+    const ending = new Map(end.contributions.map(({ ticker, cents }) => [ticker, cents]));
+    const moves = [...new Set([...starting.keys(), ...ending.keys()])]
+      .map(ticker => ({ ticker, cents: (ending.get(ticker) ?? 0) - (starting.get(ticker) ?? 0) }))
+      .filter(move => move.cents !== 0)
+      .sort((a, b) => Math.abs(b.cents) - Math.abs(a.cents) || a.ticker.localeCompare(b.ticker));
+    const total = moves.reduce((sum, move) => sum + move.cents, 0);
+    const entries = moves.slice(0, 4);
+    if (moves.length > entries.length) {
+      entries.push({ ticker: 'Other holdings', cents: moves.slice(entries.length).reduce((sum, move) => sum + move.cents, 0) });
+    }
+    const scale = Math.max(1, ...entries.map(entry => Math.abs(entry.cents)));
+    return {
+      entries: entries.map(({ ticker, cents }) => ({
+        ticker, amount: signedDollars.format(cents / 100), width: Math.abs(cents) / scale * 100, negative: cents < 0,
+      })),
+      total: signedDollars.format(total / 100),
+    };
   }
 
   get selectedDifference(): string {
@@ -247,6 +306,11 @@ export class PortfolioPerformanceComponent {
     if (this.range === range) return;
     this.range = range;
     this.rebuildChart();
+  }
+
+  showAttribution(region: HTMLElement): void {
+    region.scrollIntoView({ block: 'start' });
+    region.focus({ preventScroll: true });
   }
 
   retryHistory(heading: HTMLHeadingElement, event: Event): void {

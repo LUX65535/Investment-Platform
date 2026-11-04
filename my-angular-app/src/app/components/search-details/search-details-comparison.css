@@ -59,6 +59,23 @@
   overflow-wrap: anywhere;
 }
 
+.benchmark-context {
+  margin-block: .6rem .5rem;
+  padding-block: .48rem .1rem;
+  border-block-start: 1px solid var(--line);
+}
+
+.benchmark-context .benchmark-summary { color: var(--ink); }
+.benchmark-key i {
+  display: inline-block;
+  width: .86rem;
+  margin-inline-end: .25rem;
+  border-block-start: 2px solid #245adb;
+  vertical-align: .22em;
+}
+
+.benchmark-key--reference i { border-color: #75649f; border-block-start-style: dashed; }
+
 @media (max-width: 530px) {
   .comparison-actions .benchmark-toggle {
     min-width: 2.75rem;

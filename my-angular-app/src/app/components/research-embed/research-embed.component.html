@@ -27,17 +27,11 @@
   <section class="quote-panel" aria-labelledby="quote-title">
     <div class="quote-heading">
       <div>
-        <p class="quote-label">Latest quote · USD</p>
+        <p class="quote-label">{{ quotePrevious ? 'Last available quote' : 'Latest quote' }} · USD</p>
         <h2 id="quote-title">{{ ticker }}</h2>
       </div>
-      <button type="button" class="state-action refresh-button" [attr.aria-disabled]="quoteLoading || historyLoading"
-              (click)="refresh()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M20 7v5h-5M4 17v-5h5m10.6 0a7.6 7.6 0 0 0-13-5.4L4 9m16 6-2.6 2.4a7.6 7.6 0 0 1-13-5.4"/>
-        </svg>
-        <span>Refresh</span>
-      </button>
+      <button *ngIf="quoteFailed || quotePrevious" type="button" class="state-action" [disabled]="quoteLoading"
+              (click)="retryQuote()">Retry quote</button>
     </div>
     <div aria-live="polite">
       <p *ngIf="quoteLoading" class="status-copy">{{ quote ? 'Refreshing quote…' : 'Loading quote…' }}</p>
@@ -53,7 +47,7 @@
         <p class="status-copy">Quote as of <time [attr.datetime]="quoteIsoTime">{{ quoteTime }}</time></p>
       </ng-container>
       <p *ngIf="!quoteLoading && !quote" class="status-copy" [class.failure-copy]="quoteFailed">
-        {{ quoteFailed ? 'Couldn’t load the quote. Refresh to try again.' : 'No recent quote is available for ' + ticker + '. Try another symbol.' }}
+        {{ quoteFailed ? 'Couldn’t load the latest quote.' : 'No recent quote is available for ' + ticker + '.' }}
       </p>
     </div>
   </section>
@@ -80,10 +74,15 @@
     <div *ngIf="!historyLoading && history.length < 2" class="chart-status" role="status">
       <div>
         <strong>{{ historyFailed ? 'Price history couldn’t load' : 'No chart available' }}</strong>
-        <p>{{ historyFailed ? 'Refresh to try again.' : 'There are too few closing prices for ' + ticker + '.' }}</p>
+        <p *ngIf="!historyFailed">There are too few closing prices for {{ ticker }}.</p>
+        <button *ngIf="historyFailed" type="button" class="state-action" (click)="retryHistory()">Retry price history</button>
       </div>
     </div>
     <ng-container *ngIf="history.length > 1">
+      <p *ngIf="historyFailed && !historyLoading" class="chart-status" role="status">
+        Showing the last available closing prices.
+        <button type="button" class="state-action" (click)="retryHistory()">Retry price history</button>
+      </p>
       <p *ngIf="chartPoints < 2" class="chart-status" role="status">Choose a longer range to see more closing prices.</p>
       <highcharts-chart *ngIf="chartPoints > 1" [Highcharts]="highcharts" [options]="chartOptions" class="price-chart">
       </highcharts-chart>

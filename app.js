@@ -6,6 +6,7 @@ const { subDays, format } = require('date-fns');
 const { MongoClient, ServerApiVersion } = require('mongodb');
 const path = require('node:path');
 const createPaperRouter = require('./routes/paper-sandbox');
+const { createMarketScreener, describeMarketOverview } = require('./lib/market-screener');
 
 const app = express();
 const uri = process.env.MONGO_URI;
@@ -129,8 +130,8 @@ function getCachedMarketRead(key) {
   removeMarketRead(key);
 }
 
-async function readMarketData(provider, endpoint, params, ttl = endpoint === '/quote' ? 10_000 : 30_000) {
-  const key = marketRequestKey(provider, endpoint, params);
+async function readMarketData(provider, endpoint, params, ttl = endpoint === '/quote' ? 10_000 : 30_000, cacheScope = '') {
+  const key = marketRequestKey(provider, endpoint, params) + cacheScope;
   const cached = getCachedMarketRead(key);
   if (cached) return cached;
 
@@ -151,9 +152,9 @@ async function readMarketData(provider, endpoint, params, ttl = endpoint === '/q
   return entry;
 }
 
-async function sendMarketData(res, provider, endpoint, params) {
+async function sendMarketData(res, provider, endpoint, params, ttl) {
   try {
-    const { body, expiresAt } = await readMarketData(provider, endpoint, params);
+    const { body, expiresAt } = await readMarketData(provider, endpoint, params, ttl);
     const sharedCacheSeconds = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
     res.set('Cache-Control', `public, max-age=0, s-maxage=${sharedCacheSeconds}`);
     res.set('Content-Type', 'application/json; charset=utf-8').send(body);
@@ -200,10 +201,11 @@ app.get('/Autocomplete_Search', (req, res) => {
 
 function sendChartData(res, symbol, timespan, from, to) {
   const ticker = encodeURIComponent(symbol);
+  const ttl = timespan === 'day' ? 5 * 60_000 : undefined;
   return sendMarketData(res, polygon, `/aggs/ticker/${ticker}/range/1/${timespan}/${from}/${to}`, {
     adjusted: true,
     sort: 'asc',
-  });
+  }, ttl);
 }
 
 app.get('/company_data', (req, res) => {
@@ -223,6 +225,33 @@ app.get('/company_OneDay_data', (req, res) => {
     return res.status(400).json({ error: 'Enter a valid stock symbol and a date range of at most 31 days.' });
   }
   return sendChartData(res, symbol, 'hour', from, to);
+});
+
+const marketScreener = createMarketScreener(async (date, marketDay) => {
+  const { body } = await readMarketData(polygon, `/aggs/grouped/locale/us/market/stocks/${date}`, {
+    adjusted: true,
+    include_otc: false,
+  }, 5 * 60_000, marketDay);
+  return JSON.parse(body);
+});
+
+app.get(['/api/market-screener', '/api/market-overview'], async (req, res) => {
+  const overview = req.path.toLowerCase().startsWith('/api/market-overview');
+  if (Object.keys(req.query).length) {
+    const name = overview ? 'overview' : 'screener';
+    return res.set('Cache-Control', 'no-store').status(400).json({ error: `The market ${name} takes no query parameters.` });
+  }
+  try {
+    const snapshot = await marketScreener.read();
+    const body = Buffer.from(JSON.stringify(overview ? describeMarketOverview(snapshot) : snapshot));
+    if (body.length > maxMarketResponseBytes) throw new Error('Market snapshot response exceeds the size limit');
+    const sharedCacheSeconds = snapshot.stale ? 0 : snapshot.previousUnavailable ? 30 : 300;
+    res.set('Cache-Control', `public, max-age=0, s-maxage=${sharedCacheSeconds}`);
+    return res.set('Content-Type', 'application/json; charset=utf-8').send(body);
+  } catch (error) {
+    res.set('Cache-Control', 'no-store');
+    return sendMarketError(res, error);
+  }
 });
 
 app.use('/api', async (req, res, next) => {

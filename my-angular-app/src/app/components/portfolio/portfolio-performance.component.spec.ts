@@ -22,7 +22,7 @@ describe('PortfolioPerformanceComponent', () => {
     expect(range.max).toBe('1');
     const [compare, dollars] = Array.from(element.querySelectorAll<HTMLButtonElement>('.performance-modes button'));
     expect(compare.getAttribute('aria-pressed')).toBe('true');
-    expect(element.querySelector('.performance-basis time')?.getAttribute('datetime')).toBe('2026-01-06');
+    expect(element.querySelector('.review-window time')?.getAttribute('datetime')).toBe('2026-01-06');
 
     dollars.click();
     fixture.detectChanges();
@@ -99,7 +99,7 @@ describe('PortfolioPerformanceComponent', () => {
 
     const element: HTMLElement = fixture.nativeElement;
     const [week, twoWeeks, month] = Array.from(element.querySelectorAll<HTMLButtonElement>('.performance-ranges button'));
-    const baselineDate = () => element.querySelector('.performance-basis time')?.getAttribute('datetime');
+    const baselineDate = () => element.querySelector('.review-window time')?.getAttribute('datetime');
     expect(month.getAttribute('aria-pressed')).toBe('true');
     expect(baselineDate()).toBe('2026-01-08');
     expect(Array.from(element.querySelectorAll('.chart-dates time')).some(tick => tick.getAttribute('datetime') === '2026-01-30')).toBeTrue();
@@ -136,5 +136,40 @@ describe('PortfolioPerformanceComponent', () => {
     month.click();
     fixture.detectChanges();
     expect(element.querySelector('svg')?.getAttribute('aria-label')).toBe('Portfolio closing value in U.S. dollars');
+  });
+
+  it('uses common closing endpoints for the narrative and position contributions', () => {
+    fixture.componentRef.setInput('points', [
+      { date: '2026-01-05', nav: 10000, spyClose: 100 },
+      { date: '2026-01-06', nav: 10120, spyClose: 100.5 },
+      { date: '2026-01-07', nav: 10400, spyClose: 101 },
+      { date: '2026-01-08', nav: 10420, spyClose: null },
+    ]);
+    fixture.componentRef.setInput('attribution', [
+      { date: '2026-01-05', contributions: [{ ticker: 'MSFT', cents: 2500 }] },
+      { date: '2026-01-07', contributions: [{ ticker: 'AAPL', cents: 50000 }, { ticker: 'MSFT', cents: -7500 }] },
+    ]);
+    fixture.detectChanges();
+
+    const element: HTMLElement = fixture.nativeElement;
+    const summary = () => element.querySelector('.review-summary')?.textContent;
+    expect(summary()).toContain('moved up $400.00 and finished 3 pp ahead of SPY');
+    expect(Array.from(element.querySelectorAll<HTMLTimeElement>('.review-window time')).map(time => time.dateTime))
+      .toEqual(['2026-01-05', '2026-01-07']);
+    expect(element.querySelector<HTMLTimeElement>('.chart-readout time')?.dateTime).toBe('2026-01-07');
+    expect(Array.from(element.querySelectorAll('.attribution-list strong')).map(amount => amount.textContent))
+      .toEqual(['+$500.00', '-$100.00']);
+    expect(element.querySelector('.attribution-total strong')?.textContent).toBe('+$400.00');
+    const contributor = element.querySelector<HTMLButtonElement>('.mobile-contributor')!;
+    expect(contributor.querySelector('strong')?.textContent).toBe('AAPL +$500.00');
+    contributor.click();
+    expect(document.activeElement).toBe(element.querySelector('.attribution'));
+
+    element.querySelector<HTMLButtonElement>('[aria-label="Account value"]')!.click();
+    fixture.detectChanges();
+    expect(summary()).toContain('moved up $420.00');
+    expect(element.querySelector('.attribution-state')?.textContent).toContain('unavailable for these closes');
+    expect(element.querySelector('.attribution-total')).toBeNull();
+    expect(element.querySelector('.mobile-contributor')).toBeNull();
   });
 });

@@ -1,17 +1,20 @@
 :root {
   color-scheme: light;
-  --canvas: #f2f5fb;
+  --canvas: #eaf1f8;
+  --workspace: #f6f9fc;
   --surface: #fff;
-  --surface-subtle: #f4f7fd;
+  --surface-subtle: #eff4fa;
   --ink: #152641;
-  --muted: #50627e;
-  --line: #d8e2f1;
+  --muted: #455a74;
+  --line: #d5e0ed;
+  --blue-tint: #e7f0fb;
+  --blue-rule: #a2b8d4;
   --accent: #2254dc;
   --brand: #172f56;
   --accent-hover: #163eaf;
   --accent-soft: #e9efff;
-  --positive: #2254dc;
-  --positive-soft: #e9efff;
+  --positive: #176146;
+  --positive-soft: #edf5ef;
   --negative: #a1324b;
   --negative-soft: #fbeef1;
   --radius: 10px;
@@ -223,7 +226,7 @@ button:disabled {
 }
 
 .confirmation-alert.alert-success {
-  border-color: #bfcef2;
+  border-color: #bdd9c9;
   background: var(--positive-soft);
   color: var(--positive);
 }
@@ -364,6 +367,32 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: 0 22px 72px rgba(6, 21, 49, .28);
+}
+
+.portfolio-trade-backdrop.show { opacity: .12; }
+
+.modal.portfolio-trade-window[role="dialog"] {
+  padding: 0;
+  background: #14294724;
+}
+
+.modal.portfolio-trade-window[role="dialog"] .modal-dialog {
+  width: min(28rem, calc(100% - 2rem));
+  margin: clamp(1rem, 8vh, 5rem) clamp(1rem, 3vw, 3rem) 1rem auto;
+}
+
+.modal.portfolio-trade-window[role="dialog"] .modal-content {
+  border-radius: .75rem;
+  box-shadow: 0 16px 54px #081e3c3d;
+}
+
+@media (max-width: 600px) {
+  .modal.portfolio-trade-window.show[role="dialog"] { display: flex !important; align-items: safe end; }
+  .modal.portfolio-trade-window[role="dialog"] .modal-dialog { width: 100%; margin: auto 0 0; }
+  .modal.portfolio-trade-window[role="dialog"] .modal-content {
+    border-radius: .85rem .85rem 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
 }
 
 .trade-summary {

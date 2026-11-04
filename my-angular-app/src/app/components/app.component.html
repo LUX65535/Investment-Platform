@@ -2,22 +2,36 @@
 
 <header *ngIf="!embeddedResearch" class="app-header">
   <div class="shell-width header-inner">
-    <a class="brand" routerLink="/search-details" aria-label="Investment Platform home">
+    <a class="brand" routerLink="/" aria-label="Investment Platform home">
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none">
-          <path d="M4 17l5-5 4 3 7-8m-4 0h4v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M5 5v14h14M8 15l4-4 3 2 4-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="19" cy="7" r="1.5" fill="currentColor"/>
         </svg>
       </span>
       <span class="brand-name">Investment Platform</span>
     </a>
 
     <nav class="app-nav" aria-label="Primary">
+      <a routerLink="/" routerLinkActive="active" ariaCurrentWhenActive="page"
+         [routerLinkActiveOptions]="{ paths: 'exact', queryParams: 'ignored', matrixParams: 'ignored', fragment: 'ignored' }">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1v-9Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+        <span>Home</span>
+      </a>
       <a routerLink="/search-details" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="10.5" cy="10.5" r="5.5" stroke="currentColor" stroke-width="1.7"/>
           <path d="m15 15 4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
         </svg>
         <span>Research</span>
+      </a>
+      <a routerLink="/screener" routerLinkActive="active" ariaCurrentWhenActive="page">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4.5 6h15M7.5 11h9M10 16h4M12 16v3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <span>Screener</span>
       </a>
       <a routerLink="/watchlist" routerLinkActive="active" ariaCurrentWhenActive="page">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -34,7 +48,7 @@
       </a>
     </nav>
 
-    <span class="mode-badge"><span aria-hidden="true"></span>Paper trading</span>
+    <span class="mode-badge">Paper trading</span>
   </div>
 </header>
 
@@ -44,7 +58,8 @@
 
 <footer *ngIf="!embeddedResearch" class="app-footer">
   <div class="shell-width footer-inner">
-    <span>Investment Platform <span class="footer-mode">· Simulated orders</span></span>
-    <span>Quotes and news by <a href="https://finnhub.io" target="_blank" rel="noopener noreferrer">Finnhub</a> · Chart data by Massive (Polygon)</span>
+    <span><strong>Investment Platform</strong> <span class="footer-mode">&nbsp;· Simulated orders</span></span>
+    <span>Quotes and news by <a href="https://finnhub.io" target="_blank" rel="noopener noreferrer">Finnhub</a>
+      · Chart data by <a href="https://massive.com" target="_blank" rel="noopener noreferrer">Massive (Polygon)</a></span>
   </div>
 </footer>

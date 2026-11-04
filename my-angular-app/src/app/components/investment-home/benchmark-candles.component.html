@@ -1,0 +1,119 @@
+<section class="candle-workspace" aria-label="SPY daily chart">
+  @if (plot(); as plot) {
+    <div class="candle-toolbar">
+      <div class="series-labels">
+        <span class="series-title">Daily prices</span>
+        <span class="series-unit">USD</span>
+      </div>
+      <div class="chart-range" role="group" aria-label="Chart date range">
+        <button type="button" (click)="setRange(1)" [attr.aria-pressed]="months() === 1" aria-label="1 month">1M</button>
+        <button type="button" (click)="setRange(3)" [attr.aria-pressed]="months() === 3" aria-label="3 months">3M</button>
+      </div>
+    </div>
+
+    <p class="visually-hidden" id="spy-candles-help">
+      Use the left or right arrow to move one reported session. Home and End select the first or latest session.
+    </p>
+    <div class="candle-plot">
+      <div class="plot-canvas"
+           [attr.role]="plot.marks.length > 1 ? 'slider' : 'img'"
+           [attr.tabindex]="plot.marks.length > 1 ? 0 : null"
+           [attr.aria-label]="plot.marks.length > 1 ? 'SPY trading session' : selectedDescription()"
+           [attr.aria-describedby]="plot.marks.length > 1 ? 'spy-candles-help' : null"
+           [attr.aria-valuemin]="plot.marks.length > 1 ? 1 : null"
+           [attr.aria-valuemax]="plot.marks.length > 1 ? plot.marks.length : null"
+           [attr.aria-valuenow]="plot.marks.length > 1 ? selectedIndex() + 1 : null"
+           [attr.aria-valuetext]="plot.marks.length > 1 ? selectedDescription() : null"
+           (pointerdown)="chooseSession($event)" (pointermove)="chooseSession($event)"
+           (keydown)="navigate($event)">
+        <svg [attr.viewBox]="viewBox" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+          @for (tick of plot.priceTicks; track tick.value) {
+            <line class="plot-grid" x1="0" x2="900" [attr.y1]="tick.y" [attr.y2]="tick.y" vector-effect="non-scaling-stroke"/>
+          }
+          <line class="volume-rule" x1="0" x2="900" y1="182" y2="182" vector-effect="non-scaling-stroke"/>
+          <line class="plot-grid" x1="0" x2="900" [attr.y1]="volumeBottom" [attr.y2]="volumeBottom" vector-effect="non-scaling-stroke"/>
+          @if (plot.marks[selectedIndex()]; as marker) {
+            <line class="selected-guide" [attr.x1]="marker.x" [attr.x2]="marker.x" y1="0"
+                  [attr.y2]="volumeBottom" vector-effect="non-scaling-stroke"/>
+          }
+          @for (mark of plot.marks; track mark.session.date; let index = $index) {
+            <g [class.selected-mark]="index === selectedIndex()">
+              @if (mark.candle; as candle) {
+                <g class="candlestick" [class.up]="candle.direction === 'up'" [class.down]="candle.direction === 'down'">
+                  <line [attr.x1]="mark.x" [attr.x2]="mark.x" [attr.y1]="candle.high" [attr.y2]="candle.low"
+                        vector-effect="non-scaling-stroke"/>
+                  <rect [attr.x]="mark.x - plot.width / 2" [attr.y]="candle.top" [attr.width]="plot.width" [attr.height]="candle.height"/>
+                </g>
+              } @else {
+                <rect class="close-only-mark" [attr.x]="mark.x - plot.width / 3" [attr.y]="mark.closeY - 1"
+                      [attr.width]="plot.width * 2 / 3" height="2"/>
+              }
+              @if (mark.session.volume !== null) {
+                <rect class="volume-mark" [attr.x]="mark.x - plot.width / 2" [attr.y]="volumeBottom - mark.volume"
+                      [attr.width]="plot.width" [attr.height]="mark.volume"/>
+              }
+            </g>
+          }
+        </svg>
+      </div>
+      <div class="plot-axis" aria-hidden="true">
+        @for (tick of plot.priceTicks; track tick.value) {
+          <span [style.top.%]="tick.y / plotHeight * 100">{{ tick.value | currency:'USD':'symbol':'1.0-2' }}</span>
+        }
+        @if (plot.hasVolume) {
+          @if (plot.volumeHigh > 0) {
+            <span [style.top.%]="volumeTop / plotHeight * 100">{{ compactVolume(plot.volumeHigh) }}</span>
+          }
+          <span [style.top.%]="volumeBottom / plotHeight * 100">0</span>
+        } @else {
+          <span [style.top.%]="volumeTop / plotHeight * 100">—</span>
+        }
+      </div>
+    </div>
+
+    <div class="session-axis" aria-hidden="true">
+      <span>{{ plot.firstDate | date:'MMM d':'UTC' }}</span>
+      <span>{{ plot.middleDate | date:'MMM d':'UTC' }}</span>
+      <span>{{ plot.firstDate !== plot.lastDate ? (plot.lastDate | date:'MMM d':'UTC') : '' }}</span>
+    </div>
+
+    <div class="chart-caption">
+      <span class="volume-label">Volume <span>· shares</span></span>
+      <span>{{ plot.marks.length }} {{ plot.marks.length === 1 ? 'session' : 'sessions' }}</span>
+      @if (plot.closeOnly) { <span>Short blue marks show close only</span> }
+      @if (!plot.hasVolume) { <span>Volume unavailable in this range</span> }
+      @if (partialRange()) { <span>Limited history for this range</span> }
+    </div>
+
+    @if (selected(); as session) {
+      <div class="selected-session">
+        <div class="selected-date">
+          <span>Selected session</span>
+          <time [attr.datetime]="session.date | date:'yyyy-MM-dd':'UTC'">{{ session.date | date:'MMM d, yyyy':'UTC' }}</time>
+        </div>
+        <dl class="selected-fields">
+          @for (field of selectedValues(); track field.label) {
+            <div>
+              <dt>{{ field.label }}</dt>
+              <dd>
+                @if (field.value !== null) { {{ field.value | currency:'USD' }} }
+                @else { <span aria-label="Unavailable">—</span> }
+              </dd>
+            </div>
+          }
+          <div>
+            <dt>Volume</dt>
+            <dd>
+              @if (session.volume !== null) {
+                <span [attr.title]="fullVolume(session.volume) + ' shares'" aria-hidden="true">{{ compactVolume(session.volume) }}</span>
+                <span class="visually-hidden">{{ fullVolume(session.volume) }} shares</span>
+              } @else { <span aria-label="Unavailable">—</span> }
+            </dd>
+          </div>
+        </dl>
+      </div>
+    }
+  } @else {
+    <p class="chart-unavailable" role="status">There are no daily sessions to plot.</p>
+  }
+</section>

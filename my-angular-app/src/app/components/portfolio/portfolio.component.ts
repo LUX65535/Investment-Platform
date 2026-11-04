@@ -1,11 +1,19 @@
-import { Component, DestroyRef, OnInit, TemplateRef, ViewChild, inject } from '@angular/core';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { CommonModule, DOCUMENT } from '@angular/common';
+import { Component, DestroyRef, ElementRef, Injector, OnInit, TemplateRef, ViewChild, afterNextRender, inject } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
+import { FormsModule } from '@angular/forms';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { RouterLink } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
-import { catchError, finalize, forkJoin, from, map, mergeMap, of, Subscription, switchMap, tap } from 'rxjs';
+import { catchError, finalize, forkJoin, from, map, mergeMap, of, Subscription, switchMap, take, tap } from 'rxjs';
 import {
   PaperOrderReceipt, PendingOrderError, PendingPaperOrder, PortfolioPerformance, PortfolioService, ReferenceQuoteRequired, Stock, estimateOrderCents, paperOrderConfirmation,
 } from '../../services/portfolio.service';
+
+import { PortfolioPerformanceComponent } from './portfolio-performance.component';
+import { MarketQuoteService, listQuoteRefreshMs, quoteBatchLimit } from '../../services/market-quote.service';
+import { activeRefreshes, inViewport, visibleQuoteSymbols } from '../../services/market-refresh';
 
 const allocationQuoteLifetimeMs = 7 * 24 * 60 * 60_000;
 
@@ -21,19 +29,27 @@ interface Holding extends Omit<Stock, 'price' | 'change'> {
   change: number | null;
   quotePending?: boolean;
   quotedAt?: number;
+  previousQuote?: boolean;
 }
 
 type PositionSort = 'ticker' | 'quantity' | 'price' | 'dayChange' | 'marketValue' | 'weight' | 'unrealized';
 
 @Component({
   selector: 'app-portfolio',
+  standalone: true,
+  imports: [CommonModule, FormsModule, MatProgressSpinnerModule, RouterLink, PortfolioPerformanceComponent],
   templateUrl: './portfolio.component.html',
-  styleUrls: ['./portfolio.component.css'],
+  styleUrls: ['./portfolio.component.css', './portfolio-account.css', './portfolio-trade.css'],
 })
 export class PortfolioComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
+  private readonly document = inject(DOCUMENT);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
+  private readonly marketQuotes = inject(MarketQuoteService);
   private tradeRef?: NgbModalRef;
   private portfolioRequest?: Subscription;
+  private quoteRefreshRequest?: Subscription;
   private receiptRequest?: Subscription;
   private performanceRequest?: Subscription;
   private pendingTrade?: PendingPaperOrder;
@@ -51,6 +67,8 @@ export class PortfolioComponent implements OnInit {
   statusMessage = '';
   actionError = '';
   activeTrade?: { holding: Holding; side: 'buy' | 'sell'; price: number };
+  tradeStage: 'draft' | 'review' | 'receipt' = 'draft';
+  tradeReceipt?: PaperOrderReceipt;
   tradeError = '';
   tradeReference?: ReferenceQuoteRequired;
   referenceAcknowledged = false;
@@ -68,7 +86,6 @@ export class PortfolioComponent implements OnInit {
 
   constructor(
     private portfolioService: PortfolioService,
-    private http: HttpClient,
     private modal: NgbModal,
   ) {
     this.destroyRef.onDestroy(() => this.tradeRef?.close());
@@ -76,6 +93,8 @@ export class PortfolioComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadPortfolio();
+    activeRefreshes(this.document, listQuoteRefreshMs).pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.refreshVisibleQuotes());
   }
 
   get marketValue(): number | null {
@@ -146,9 +165,9 @@ export class PortfolioComponent implements OnInit {
 
   get allocation(): { entries: AllocationEntry[]; message?: string } {
     const unavailable = (message: string) => ({ entries: [], message });
-    if (this.isLoading || this.quotesPending) return unavailable('Calculating allocation…');
+    if (this.isLoading || (this.quotesPending && this.accountValue === null)) return unavailable('Calculating allocation…');
     if (this.walletInitialized === false) return unavailable('Initialize your paper wallet to see allocation.');
-    if (!this.holdingsCurrent || this.cashBalance === null) return unavailable('Refresh to load your cash and holdings.');
+    if (!this.holdingsCurrent || this.cashBalance === null) return unavailable('Cash or holdings could not be loaded.');
 
     const equity = this.accountValue;
     if (equity === null) {
@@ -158,7 +177,7 @@ export class PortfolioComponent implements OnInit {
       const oldestQuote = this.oldestQuote;
       if (oldestQuote === null) return unavailable('Allocation needs a quote time for every holding.');
       if (Date.now() - oldestQuote > allocationQuoteLifetimeMs) {
-        return unavailable('A holding quote is more than seven days old. Refresh for a newer valuation.');
+        return unavailable('A holding quote is more than seven days old. Allocation will update with a newer quote.');
       }
     }
     if (!Number.isFinite(equity) || equity <= 0 || this.cashBalance < 0) {
@@ -202,18 +221,26 @@ export class PortfolioComponent implements OnInit {
     return Boolean(this.pendingTrade);
   }
 
+  get tradeQuote(): { price: number; quotedAt?: string | number } | undefined {
+    return this.tradeReference?.quote ?? this.pendingTrade?.referenceQuote ?? (this.activeTrade && {
+      price: this.activeTrade.price,
+      quotedAt: this.activeTrade.holding.quotedAt,
+    });
+  }
+
   get quantityLimit(): number {
     const trade = this.activeTrade;
     if (!trade) return 0;
 
     const selling = trade.side === 'sell';
     const maxCents = selling ? Number.MAX_SAFE_INTEGER : Math.round((this.cashBalance ?? 0) * 100);
+    const price = this.tradeQuote?.price ?? trade.price;
     // Round the full order the same way as execution, including prices below one cent.
     let lower = 0;
     let upper = selling ? trade.holding.quantity : Number.MAX_SAFE_INTEGER;
     while (lower < upper) {
       const middle = lower + Math.ceil((upper - lower) / 2);
-      if (estimateOrderCents(this.tradeReference?.quote.price ?? trade.price, middle) <= maxCents) lower = middle;
+      if (estimateOrderCents(price, middle) <= maxCents) lower = middle;
       else upper = middle - 1;
     }
     return lower;
@@ -221,7 +248,7 @@ export class PortfolioComponent implements OnInit {
 
   get estimatedTotal(): number | null {
     if (!this.validQuantity || !this.activeTrade || this.quantity === null) return null;
-    const cents = estimateOrderCents(this.tradeReference?.quote.price ?? this.activeTrade.price, this.quantity);
+    const cents = estimateOrderCents(this.tradeQuote?.price ?? this.activeTrade.price, this.quantity);
     return Number.isSafeInteger(cents) ? cents / 100 : null;
   }
 
@@ -248,16 +275,18 @@ export class PortfolioComponent implements OnInit {
 
   get canSubmitTrade(): boolean {
     const trade = this.activeTrade;
-    if (!trade || !this.validQuantity || this.submittingTrade || this.checkingOrderId || this.quantity === null) return false;
+    if (!trade || this.tradeStage === 'receipt' || !this.validQuantity || this.submittingTrade || this.checkingOrderId) return false;
     if (this.tradeReference && !this.referenceAcknowledged) return false;
     return Boolean(this.pendingTrade) || !this.quantityError;
   }
 
   loadPortfolio(force = false): void {
-    if (this.isLoading && !force) return;
-    this.loadReceipts();
-    this.loadPerformance();
+    if (!force && (this.isLoading || (this.portfolioRequest && !this.portfolioRequest.closed))) return;
+    this.quoteRefreshRequest?.unsubscribe();
+    this.loadReceipts(force);
+    this.loadPerformance(force);
     this.portfolioRequest?.unsubscribe();
+    const previous = new Map(this.portfolio.map(holding => [holding.ticker, holding]));
     this.isLoading = true;
     this.holdingsCurrent = false;
     this.loadError = '';
@@ -268,7 +297,11 @@ export class PortfolioComponent implements OnInit {
     }).pipe(
       tap(({ holdings, wallet }) => {
         if (holdings) {
-          this.portfolio = holdings.map(stock => ({ ...stock, price: null, change: null, quotePending: true }));
+          this.portfolio = holdings.map(stock => {
+            const known = previous.get(stock.ticker);
+            return { ...stock, price: known?.price ?? null, change: known?.change ?? null,
+              quotedAt: known?.quotedAt, previousQuote: known?.previousQuote, quotePending: true };
+          });
         } else {
           this.portfolio = this.portfolio.map(stock => ({ ...stock, quotePending: false }));
         }
@@ -277,29 +310,64 @@ export class PortfolioComponent implements OnInit {
         this.walletInitialized = wallet ? (wallet.initialized ?? (wallet.balance > 0 || !!holdings?.length)) : null;
         if (!holdings || !wallet) {
           this.loadError = !holdings && !wallet
-            ? 'We couldn’t load your holdings or wallet. Try refreshing.'
+            ? 'We couldn’t load your holdings or wallet.'
             : !holdings
-              ? 'We couldn’t refresh your holdings.'
+              ? 'We couldn’t load your latest holdings.'
               : 'We couldn’t load your wallet balance.';
         }
         this.isLoading = false;
       }),
-      switchMap(({ holdings }) => from(holdings ?? []).pipe(mergeMap(stock =>
-        this.http.get<{ c: number; dp: number; t?: number }>('/company_quote', { params: { symbol: stock.ticker } }).pipe(
-          catchError(() => of(null)),
-          map((quote): Holding => ({
-            ...stock,
-            price: quote && Number.isFinite(quote.c) && quote.c > 0 ? quote.c : null,
-            change: quote && quote.c > 0 && Number.isFinite(quote.dp) ? quote.dp : null,
-            quotedAt: quote?.t && Number.isSafeInteger(quote.t) && quote.t > 0 && quote.t <= Date.now() / 1000 + 60
-              ? quote.t * 1000 : undefined,
-          })),
-        ), 3))),
+      switchMap(({ holdings }) => from(holdings ? this.portfolio : []).pipe(mergeMap(stock => this.enrichQuote(stock), 3))),
       takeUntilDestroyed(this.destroyRef),
       finalize(() => this.isLoading = false),
     ).subscribe(enriched => {
       this.portfolio = this.portfolio.map(stock => stock.ticker === enriched.ticker ? enriched : stock);
     });
+  }
+
+  get previousQuoteCount(): number {
+    return this.portfolio.filter(stock => stock.previousQuote).length;
+  }
+
+  get quoteRecoveryNeeded(): boolean {
+    return this.holdingsCurrent && !this.quotesPending && this.portfolio.some(stock => stock.price === null || stock.previousQuote);
+  }
+
+  refreshVisibleQuotes(retry = false): void {
+    if (!this.holdingsCurrent || this.isLoading || this.isInitializing || this.tradeRef || this.checkingOrderId
+      || this.quotesPending || this.document.hidden || this.document.defaultView?.navigator.onLine === false) return;
+
+    const host = this.host.nativeElement;
+    const visible = new Set(visibleQuoteSymbols(host, quoteBatchLimit));
+    const targets = this.portfolio.filter(stock => retry ? stock.price === null || stock.previousQuote : visible.has(stock.ticker))
+      .slice(0, quoteBatchLimit);
+    const account = host.querySelector('#account-title');
+    if (!retry && account && inViewport(account) && targets.length < quoteBatchLimit) {
+      const oldest = this.portfolio.filter(stock => !visible.has(stock.ticker))
+        .sort((first, second) => (first.quotedAt ?? 0) - (second.quotedAt ?? 0));
+      targets.push(...oldest.slice(0, quoteBatchLimit - targets.length));
+    }
+    if (!targets.length) return;
+    const requested = new Set(targets.map(stock => stock.ticker));
+    this.portfolio = this.portfolio.map(stock => requested.has(stock.ticker) ? { ...stock, quotePending: true } : stock);
+    this.quoteRefreshRequest = from(targets).pipe(
+      mergeMap(stock => this.enrichQuote(stock), 3),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(updated => this.portfolio = this.portfolio.map(stock => stock.ticker === updated.ticker ? updated : stock));
+  }
+
+  private enrichQuote(stock: Holding) {
+    return this.marketQuotes.read(stock.ticker).pipe(map(({ quote, previous }): Holding => {
+      const usePrevious = stock.price !== null && (!quote || (stock.quotedAt !== undefined && quote.t * 1000 < stock.quotedAt));
+      return {
+        ...stock,
+        price: usePrevious ? stock.price : quote?.c ?? null,
+        change: usePrevious ? stock.change : quote && Number.isFinite(quote.dp) ? quote.dp : null,
+        quotedAt: usePrevious ? stock.quotedAt : quote ? quote.t * 1000 : undefined,
+        previousQuote: previous || usePrevious,
+        quotePending: false,
+      };
+    }));
   }
 
   onInitializeWallet(): void {
@@ -319,6 +387,11 @@ export class PortfolioComponent implements OnInit {
     });
   }
 
+  jumpToHeading(heading: HTMLElement): void {
+    heading.focus({ preventScroll: true });
+    heading.scrollIntoView({ block: 'start' });
+  }
+
   canOpenTrade(holding: Holding, side: 'buy' | 'sell'): boolean {
     if (this.checkingOrderId || this.isLoading || this.isInitializing || !this.holdingsCurrent || !this.walletInitialized || holding.price === null) return false;
     const cents = estimateOrderCents(holding.price, 1);
@@ -334,20 +407,33 @@ export class PortfolioComponent implements OnInit {
     this.statusMessage = '';
     const pending = this.portfolioService.getPendingOrder(side, holding.ticker);
     this.pendingTrade = pending;
+    this.tradeStage = pending ? 'review' : 'draft';
+    this.tradeReceipt = undefined;
     this.tradeReference = undefined;
     this.referenceAcknowledged = false;
     this.tradeError = pending ? 'This order is awaiting confirmation. Retry with the original order ID.' : '';
     this.quantity = pending?.quantity ?? 1;
     this.activeTrade = { holding, side, price: holding.price };
     this.tradeRef = this.modal.open(this.tradeDialog, {
-      centered: true,
-      windowClass: 'trade-window',
+      windowClass: 'portfolio-trade-window',
+      backdropClass: 'portfolio-trade-backdrop',
       ariaLabelledBy: 'portfolio-trade-title',
       beforeDismiss: () => !this.submittingTrade,
+    });
+    this.tradeRef.hidden.pipe(take(1), takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      afterNextRender(() => {
+        // The modal normally returns focus to its trigger, which a complete sale can remove.
+        setTimeout(() => {
+          if (this.document.activeElement === this.document.body) {
+            this.document.getElementById('positions-title')?.focus();
+          }
+        });
+      }, { injector: this.injector });
     });
     const clearTrade = () => {
       this.tradeRef = undefined;
       this.activeTrade = undefined;
+      this.tradeReceipt = undefined;
     };
     this.tradeRef.result.then(clearTrade, clearTrade);
   }
@@ -356,6 +442,13 @@ export class PortfolioComponent implements OnInit {
     const trade = this.activeTrade;
     const quantity = this.quantity;
     if (!trade || quantity === null || !this.canSubmitTrade) return;
+
+    if (this.tradeStage === 'draft') {
+      this.tradeStage = 'review';
+      this.tradeError = '';
+      this.focusTradeHeading();
+      return;
+    }
 
     this.submittingTrade = true;
     this.tradeError = '';
@@ -371,8 +464,9 @@ export class PortfolioComponent implements OnInit {
       finalize(() => this.submittingTrade = false),
     ).subscribe({
       next: receipt => {
-        this.statusMessage = paperOrderConfirmation(receipt);
-        this.tradeRef?.close();
+        this.tradeReceipt = receipt;
+        this.tradeStage = 'receipt';
+        this.focusTradeHeading();
         this.loadPortfolio(true);
       },
       error: (error: unknown) => {
@@ -385,12 +479,51 @@ export class PortfolioComponent implements OnInit {
           this.tradeError = error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
             ? error.error.message : 'The order could not be sent. Please try again.';
         }
+        if (this.tradeReference || this.pendingTrade) this.focusTradeHeading();
         if (!this.tradeReference) this.loadPortfolio();
       },
     });
   }
 
-  loadPerformance(): void {
+  editTrade(): void {
+    if (this.submittingTrade || this.isRetryingTrade || this.tradeStage !== 'review') return;
+    this.tradeStage = 'draft';
+    this.tradeReference = undefined;
+    this.referenceAcknowledged = false;
+    this.tradeError = '';
+    afterNextRender(() => this.document.getElementById('portfolio-trade-quantity')?.focus(), { injector: this.injector });
+  }
+
+  viewTradeReceipt(): void {
+    const receipt = this.tradeReceipt;
+    const dialog = this.tradeRef;
+    if (!receipt || !dialog) return;
+    dialog.hidden.pipe(take(1), takeUntilDestroyed(this.destroyRef)).subscribe(() => this.focusLedgerReceipt(receipt));
+    dialog.close();
+  }
+
+  private focusTradeHeading(): void {
+    afterNextRender(() => this.document.getElementById('portfolio-trade-title')?.focus(), { injector: this.injector });
+  }
+
+  private focusLedgerReceipt(receipt: PaperOrderReceipt): void {
+    // The confirmed response already contains a durable receipt, even if the ledger refresh is unavailable.
+    if (!this.receipts.some(order => order.orderId === receipt.orderId)) this.receipts = [receipt, ...this.receipts];
+    afterNextRender(() => {
+      const row = this.document.getElementById(`portfolio-receipt-${receipt.orderId}`);
+      if (!(row instanceof HTMLDetailsElement)) return;
+      row.open = true;
+      // ng-bootstrap restores the opening button on a timer when its dialog closes.
+      setTimeout(() => {
+        if (!row.isConnected) return;
+        row.querySelector('summary')?.focus({ preventScroll: true });
+        row.scrollIntoView({ block: 'center' });
+      });
+    }, { injector: this.injector });
+  }
+
+  loadPerformance(force = false): void {
+    if (this.performanceLoading && !force) return;
     this.performanceRequest?.unsubscribe();
     this.performanceLoading = true;
     this.performanceFailed = false;
@@ -409,7 +542,8 @@ export class PortfolioComponent implements OnInit {
     });
   }
 
-  loadReceipts(): void {
+  loadReceipts(force = false): void {
+    if (this.receiptsLoading && !force) return;
     this.receiptRequest?.unsubscribe();
     this.receiptsLoading = true;
     this.receiptsError = '';
@@ -437,6 +571,7 @@ export class PortfolioComponent implements OnInit {
       next: receipt => {
         this.statusMessage = paperOrderConfirmation(receipt);
         this.loadPortfolio(true);
+        this.focusLedgerReceipt(receipt);
       },
       error: (error: unknown) => {
         this.pendingError = error instanceof PendingOrderError

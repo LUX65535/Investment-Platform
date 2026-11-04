@@ -10,7 +10,7 @@
       <input #tickerInput #searchTrigger="matAutocompleteTrigger" matInput id="ticker-search"
              [formControl]="tickerFormControl" [matAutocomplete]="auto"
              [matAutocompleteConnectedTo]="searchOrigin"
-             placeholder="Symbol or company" maxlength="80" autocomplete="off" spellcheck="false">
+             placeholder="Symbol or name" maxlength="80" autocomplete="off" spellcheck="false">
       <button type="button" class="clear-search" aria-label="Clear search" *ngIf="tickerFormControl.value"
               (click)="clearSearch(); tickerInput.focus()">&times;</button>
       <button type="submit" class="submit-search" [disabled]="searchSubmitting" [attr.aria-busy]="searchSubmitting">
@@ -53,6 +53,13 @@
   </header>
 </ng-template>
 
+<ng-template #chartRuntimeState>
+  <div class="state-panel chart-state">
+    <p role="status">{{ chartRuntimeUnavailable ? 'Chart tools could not load.' : 'Loading chart tools…' }}</p>
+    <button *ngIf="chartRuntimeUnavailable" type="button" class="state-action" (click)="retryChartRuntime()">Reload to retry</button>
+  </div>
+</ng-template>
+
 <div *ngIf="DetailIsLoading" class="state-panel" role="status">
   <mat-spinner diameter="24"></mat-spinner>
   <p>Loading company data…</p>
@@ -84,8 +91,8 @@
       <p class="quote-caption" [class.quote-caption--stale]="quoteRefreshFailed">{{ quoteRefreshFailed ? 'Last available quote' : 'Latest quote' }}<span *ngIf="company.currency"> · {{ company.currency }}</span></p>
       <div class="quote-values">
         <span class="quote-price">{{ company.currency ? (quote.c | currency:company.currency) : (quote.c | number:'1.2-2') }}</span>
-        <span class="quote-movement" [class.quote-up]="quote.dp > 0" [class.quote-down]="quote.dp < 0">
-          {{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})
+        <span class="quote-movement" [class.quote-up]="(quote.dp ?? 0) > 0" [class.quote-down]="(quote.dp ?? 0) < 0">
+          <span class="visually-hidden">Change from previous close </span>{{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})
         </span>
       </div>
       <p>Finnhub · <time [attr.datetime]="quote.t * 1000 | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ quote.t * 1000 | date:'MMM d, HH:mm':'+0000' }} UTC</time><span *ngIf="!company.currency"> · Currency unavailable</span></p>
@@ -139,14 +146,15 @@
       <section class="data-panel chart-panel overview-chart-panel" aria-labelledby="overview-chart-title">
         <div class="panel-heading">
           <div>
-            <h2 id="overview-chart-title">Price history</h2>
-            <p *ngIf="!benchmarkResult">{{ overviewRange === 'Hourly' ? 'Hourly closes · Massive (Polygon)' : 'Through the last available daily close · Massive (Polygon)' }}</p>
+            <h2 id="overview-chart-title">{{ benchmarkResult ? company.ticker + ' vs ' + comparisonTicker : 'Price history' }}</h2>
+            <p *ngIf="!benchmarkResult">{{ overviewRange === 'Hourly' ? 'Hourly closes' : 'Daily closes' }}<ng-container *ngIf="company.currency"> · {{ company.currency }}</ng-container> · Massive (Polygon)</p>
+            <p *ngIf="benchmarkResult">Price return from a shared start, excluding dividends.</p>
           </div>
           <div *ngIf="overviewReturn !== null && !benchmarkResult" class="performance-stat" role="status">
             <span class="quote-movement" [class.quote-up]="overviewReturn > 0" [class.quote-down]="overviewReturn < 0">
               {{ overviewReturn > 0 ? '+' : '' }}{{ overviewReturn | number:'1.2-2' }}%
             </span>
-            <p>Period change</p>
+            <p>{{ overviewRange === 'Hourly' ? 'Hourly period' : overviewRange }} price return</p>
           </div>
         </div>
         <div class="overview-toolbar">
@@ -186,15 +194,21 @@
           </div>
           <p *ngIf="comparisonInputError" id="comparison-input-error" class="panel-note mb-0" role="alert">{{ comparisonInputError }}</p>
         </form>
-        <div *ngIf="benchmarkResult as benchmark" class="benchmark-summary" role="status">
-          <span><strong>{{ company.ticker }}</strong> {{ benchmark.stock > 0 ? '+' : '' }}{{ benchmark.stock | number:'1.2-2' }}%</span>
-          <span><strong>{{ comparisonTicker }}</strong> {{ benchmark.comparison > 0 ? '+' : '' }}{{ benchmark.comparison | number:'1.2-2' }}%</span>
-          <span><strong>Gap</strong> {{ benchmark.stock > benchmark.comparison ? '+' : '' }}{{ benchmark.stock - benchmark.comparison | number:'1.2-2' }} pp</span>
+        <div *ngIf="benchmarkResult as benchmark" class="benchmark-context">
+          <div class="benchmark-summary" role="status">
+            <span class="benchmark-key"><i aria-hidden="true"></i><strong>{{ company.ticker }}</strong> {{ benchmark.stock > 0 ? '+' : '' }}{{ benchmark.stock | number:'1.2-2' }}%</span>
+            <span class="benchmark-key benchmark-key--reference"><i aria-hidden="true"></i><strong>{{ comparisonTicker }}</strong> {{ benchmark.comparison > 0 ? '+' : '' }}{{ benchmark.comparison | number:'1.2-2' }}%</span>
+            <span><strong>Gap</strong> {{ benchmark.stock > benchmark.comparison ? '+' : '' }}{{ benchmark.stock - benchmark.comparison | number:'1.2-2' }} pp</span>
+          </div>
+          <p class="panel-note">
+            Matching trading days · <time [attr.datetime]="benchmark.start | date:'yyyy-MM-dd':'+0000'">{{ benchmark.start | date:'MMM d, yyyy':'+0000' }}</time>
+            to <time [attr.datetime]="benchmark.end | date:'yyyy-MM-dd':'+0000'">{{ benchmark.end | date:'MMM d, yyyy':'+0000' }}</time> · Massive (Polygon)
+          </p>
         </div>
         <p *ngIf="comparisonTicker && benchmarkLoading" class="panel-note mb-2" role="status">Loading {{ comparisonTicker }} prices…</p>
         <p *ngIf="comparisonTicker && benchmarkFailed" class="panel-note mb-2" role="status">
           {{ comparisonTicker }} is temporarily unavailable.
-          <button type="button" class="state-action" (click)="loadBenchmark()">Retry {{ comparisonTicker }}</button>
+          <button type="button" class="state-action" (click)="loadBenchmark(true)">Retry {{ comparisonTicker }}</button>
         </p>
         <p *ngIf="comparisonTicker && benchmarkUnavailable" class="panel-note mb-2" role="status">{{ benchmarkUnavailable }}</p>
         <p *ngIf="comparisonTicker && !benchmarkUnavailable && !benchmarkFailed && !benchmarkLoading && !benchmarkResult && !overviewLoading && !overviewFailed"
@@ -206,18 +220,28 @@
         </p>
         <p *ngIf="hourlyLagsQuote" class="panel-note mb-2">The hourly series ends before the latest quote.</p>
         <div id="company-chart">
+          <p *ngIf="overviewFailed && chartOptions.series?.length" class="panel-note" role="status">
+            Updated prices could not load. Showing the last available period.
+            <button type="button" class="state-action" (click)="loadOverview(true)">Retry prices</button>
+          </p>
           <div *ngIf="overviewLoading" class="state-panel chart-state" role="status"><p>Loading prices…</p></div>
           <div *ngIf="!overviewLoading && !chartOptions.series?.length" class="state-panel chart-state">
             <p>{{ overviewFailed ? 'Prices could not load for this period.' : 'There are not enough prices to chart this period.' }}</p>
             <button *ngIf="overviewFailed" type="button" class="state-action" (click)="loadOverview()">Retry prices</button>
           </div>
-          <highcharts-chart *ngIf="chartOptions.series?.length" [Highcharts]="Highcharts"
-                            [options]="chartOptions" [oneToOne]="true" class="chart chart--intraday"></highcharts-chart>
+          <!-- Recreate the chart when its units change. Highcharts merges options on update. -->
+          @if (benchmarkResult) {
+            <ng-container *ngTemplateOutlet="overviewChart"></ng-container>
+          } @else {
+            <ng-container *ngTemplateOutlet="overviewChart"></ng-container>
+          }
+          <ng-template #overviewChart>
+            <ng-container *ngIf="chartOptions.series?.length">
+              <highcharts-chart *ngIf="chartRuntime as charts; else chartRuntimeState" [Highcharts]="charts"
+                                [options]="chartOptions" [oneToOne]="true" class="chart chart--intraday"></highcharts-chart>
+            </ng-container>
+          </ng-template>
         </div>
-        <p *ngIf="benchmarkResult as benchmark" class="panel-note mb-2">
-          Price return from a shared start, excluding dividends.<br>Matching trading days · {{ benchmark.start | date:'MMM d, yyyy':'+0000' }} to
-          {{ benchmark.end | date:'MMM d, yyyy':'+0000' }} · Massive (Polygon)
-        </p>
         <button type="button" class="state-action" (click)="openHistory()">Open advanced chart</button>
       </section>
 
@@ -261,19 +285,32 @@
       </header>
 
       <ng-container *ngIf="topNews[0] as lead; else noNews">
-        <article class="news-lead" aria-label="Featured story">
-          <button type="button" class="news-story news-story--lead" [class.news-story--with-image]="lead.imageReady"
-                  (click)="openNews(newsDialog, lead)">
-            <span class="news-copy">
-              <span class="news-lead-label">{{ lead.relevance === 2 ? 'Company in the headlines' : lead.relevance === 1 ? 'Company mention' : 'Market context' }}</span>
-              <ng-container *ngTemplateOutlet="newsMeta; context: { $implicit: lead }"></ng-container>
-              <span class="news-headline">{{ lead.headline }}</span>
-              <span class="news-excerpt" *ngIf="lead.summary">{{ lead.summary }}</span>
-              <span class="news-read">Read brief <span aria-hidden="true">↗</span></span>
-            </span>
-            <ng-container *ngTemplateOutlet="newsMedia; context: { $implicit: lead, eager: true }"></ng-container>
-          </button>
-        </article>
+        <div class="news-feature" [class.news-feature--paired]="alternateNews">
+          <article class="news-lead" aria-label="Featured story">
+            <button type="button" class="news-story news-story--lead" [class.news-story--with-image]="lead.imageReady"
+                    (click)="openNews(newsDialog, lead)">
+              <span class="news-copy">
+                <span class="news-lead-label">{{ lead.relevance === 2 ? 'Company in the headlines' : lead.relevance === 1 ? 'Company mention' : 'Market context' }}</span>
+                <ng-container *ngTemplateOutlet="newsMeta; context: { $implicit: lead }"></ng-container>
+                <span class="news-headline">{{ lead.headline }}</span>
+                <span class="news-excerpt" *ngIf="lead.summary">{{ lead.summary }}</span>
+                <span class="news-read">Read brief <span aria-hidden="true">↗</span></span>
+              </span>
+              <ng-container *ngTemplateOutlet="newsMedia; context: { $implicit: lead, eager: true }"></ng-container>
+            </button>
+          </article>
+
+          <article *ngIf="alternateNews as alternate" class="news-alternate" aria-label="From another source">
+            <button type="button" class="news-story news-story--alternate" (click)="openNews(newsDialog, alternate)">
+              <ng-container *ngTemplateOutlet="newsMedia; context: { $implicit: alternate, eager: true }"></ng-container>
+              <span class="news-copy">
+                <span class="news-lead-label">From another source</span>
+                <ng-container *ngTemplateOutlet="newsMeta; context: { $implicit: alternate }"></ng-container>
+                <span class="news-headline">{{ alternate.headline }}</span>
+              </span>
+            </button>
+          </article>
+        </div>
 
         <section class="data-panel news-panel" *ngIf="topNews.length > 1" aria-labelledby="more-news-title">
           <header class="panel-heading">
@@ -325,18 +362,22 @@
   <section class="data-panel chart-panel chart-panel--history" *ngIf="activeTab === 'charts' && !loadingTabs.has('charts') && !failedTabs.has('charts')" aria-labelledby="history-title">
       <div class="panel-heading">
         <div><h2 id="history-title">Price history</h2><p>Daily prices and volume<ng-container *ngIf="historyEnd as point"> · through {{ point | date:'MMM d, yyyy':'+0000' }}</ng-container></p></div>
-        <button *ngIf="bigChartOptions.series?.length" type="button" class="state-action history-indicator" [disabled]="!smaAvailable"
+        <button *ngIf="bigChartOptions.series?.length && chartRuntime" type="button" class="state-action history-indicator" [disabled]="!smaAvailable"
                 [attr.aria-pressed]="showSma && smaAvailable" title="20-session simple moving average"
                 (click)="toggleSma()">SMA 20</button>
       </div>
       <div *ngIf="!bigChartOptions.series?.length" class="state-panel chart-state"><p>Historical prices are unavailable for this symbol.</p></div>
-      <div *ngIf="bigChartOptions.series?.length" class="history-ranges" role="group" aria-label="Historical chart date range">
-        <button *ngFor="let range of historyRanges" type="button" class="state-action"
-                [attr.aria-pressed]="historyRange === range" (click)="selectHistoryRange(range)">{{ range }}</button>
-      </div>
-      <highcharts-chart *ngIf="bigChartOptions.series?.length" [Highcharts]="Highcharts"
-                        [constructorType]="'stockChart'" [options]="bigChartOptions" [oneToOne]="true" class="chart chart--history"></highcharts-chart>
-      <p *ngIf="bigChartOptions.series?.length" class="panel-note">Candles show daily prices. Horizontal bars show volume by price. The lower panel shows daily volume.<ng-container *ngIf="showSma && smaAvailable"> SMA 20 averages 20 trading closes.</ng-container></p>
+      <ng-container *ngIf="bigChartOptions.series?.length">
+        <ng-container *ngIf="chartRuntime as charts; else chartRuntimeState">
+          <div class="history-ranges" role="group" aria-label="Historical chart date range">
+            <button *ngFor="let range of historyRanges" type="button" class="state-action"
+                    [attr.aria-pressed]="historyRange === range" (click)="selectHistoryRange(range)">{{ range }}</button>
+          </div>
+          <highcharts-chart [Highcharts]="charts" [constructorType]="'stockChart'"
+                            [options]="bigChartOptions" [oneToOne]="true" class="chart chart--history"></highcharts-chart>
+          <p class="panel-note">Candles show daily prices. Horizontal bars show volume by price. The lower panel shows daily volume.<ng-container *ngIf="showSma && smaAvailable"> SMA 20 averages 20 trading closes.</ng-container></p>
+        </ng-container>
+      </ng-container>
     </section>
 
     <div class="insights-grid" *ngIf="activeTab === 'insights' && !loadingTabs.has('insights') && !failedTabs.has('insights')">
@@ -355,14 +396,18 @@
       <section class="data-panel chart-panel" aria-labelledby="recommendations-title">
         <div class="panel-heading"><div><h2 id="recommendations-title">Analyst recommendations</h2><p>Rating distribution by month</p></div></div>
         <p *ngIf="!recommendations.length" class="panel-note">Analyst recommendations are unavailable.</p>
-        <highcharts-chart *ngIf="recommendations.length" [Highcharts]="Highcharts"
-                          [options]="trendChartOptions" class="chart chart--insight"></highcharts-chart>
+        <ng-container *ngIf="recommendations.length">
+          <highcharts-chart *ngIf="chartRuntime as charts; else chartRuntimeState" [Highcharts]="charts"
+                            [options]="trendChartOptions" class="chart chart--insight"></highcharts-chart>
+        </ng-container>
       </section>
       <section class="data-panel chart-panel" aria-labelledby="earnings-title">
         <div class="panel-heading"><div><h2 id="earnings-title">Quarterly earnings</h2><p>Actual and estimated earnings per share</p></div></div>
         <p *ngIf="!earnings.length" class="panel-note">Quarterly earnings are unavailable.</p>
-        <highcharts-chart *ngIf="earnings.length" [Highcharts]="Highcharts"
-                          [options]="earningChartOptions" class="chart chart--insight"></highcharts-chart>
+        <ng-container *ngIf="earnings.length">
+          <highcharts-chart *ngIf="chartRuntime as charts; else chartRuntimeState" [Highcharts]="charts"
+                            [options]="earningChartOptions" class="chart chart--insight"></highcharts-chart>
+        </ng-container>
       </section>
     </div>
   </section>

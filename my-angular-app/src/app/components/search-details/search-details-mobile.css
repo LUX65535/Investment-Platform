@@ -51,13 +51,13 @@
   .security-header {
     grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr);
     align-items: start;
-    gap: .28rem .5rem;
-    padding: .48rem;
+    gap: .45rem .5rem;
+    padding: .6rem 0 .72rem;
   }
 
   .security-identity { align-items: flex-start; gap: .42rem; }
   .security-mark { width: 2.1rem; border-radius: 7px; font-size: .69rem; }
-  .security-identity h1 { font-size: clamp(1.06rem, 3.9vw, 1.26rem); }
+  .security-identity h1 { font-size: 1.05rem; }
   .security-symbol { gap: .12rem .3rem; font-size: .63rem; }
   .security-exchange { max-width: 100%; }
 
@@ -82,7 +82,7 @@
   .security-quote p { margin-top: .2rem; font-size: .69rem; }
   .security-quote .quote-caption { font-size: .63rem; }
   .quote-values { display: grid; gap: .05rem; }
-  .quote-price { font-size: clamp(1.28rem, 5.5vw, 1.75rem); overflow-wrap: anywhere; }
+  .quote-price { font-size: 1.12rem; overflow-wrap: anywhere; }
   .quote-movement { font-size: .78rem; }
 
   .detail-tabs {
@@ -109,7 +109,7 @@
     margin-bottom: .3rem;
   }
   .overview-grid .chart-eyebrow { display: none; }
-  .overview-grid .panel-heading h2 { font-size: 1rem; }
+  .overview-grid .panel-heading h2 { font-size: 1.12rem; }
   .overview-grid .panel-heading p,
   .overview-grid .panel-note { font-size: .72rem; }
   .performance-stat { padding: .21rem .38rem; }
@@ -118,7 +118,7 @@
   :is(.security--charts, .security--comparison) .security-header {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: .3rem .55rem;
-    padding: .5rem;
+    padding: .55rem 0 .65rem;
   }
 
   :is(.security--charts, .security--comparison) .security-quote p { line-height: 1.25; }
@@ -156,6 +156,10 @@
 
 @media (max-width: 360px) {
   .security-mark { display: none; }
+  .research-header { grid-template-columns: minmax(0, 1fr) auto; }
+  .research-header > .search-form { grid-column: 1 / -1; }
+  .research-back { width: auto; gap: .3rem; padding-inline: .5rem; }
+  .research-back span { display: inline; }
   .security-quote .quote-caption:not(.quote-caption--stale) {
     position: absolute;
     width: 1px;

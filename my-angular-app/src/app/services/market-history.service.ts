@@ -1,6 +1,7 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { Observable, catchError, map, shareReplay, throwError } from 'rxjs';
+import { marketDayKey, retryAfterTime } from './market-refresh';
 
 export interface MarketBar {
   c: number;
@@ -48,25 +49,33 @@ export function validClosingBars(data: unknown): MarketBar[] {
 
 @Injectable({ providedIn: 'root' })
 export class MarketHistoryService {
-  private readonly recent = new Map<string, { expires: number; request: Observable<{ results: MarketBar[] }> }>();
+  private readonly recent = new Map<string, { expires: number; day: string; request: Observable<{ results: MarketBar[] }> }>();
+  private retryAt = 0;
 
   constructor(private http: HttpClient) {}
 
-  daily(ticker: string): Observable<{ results: MarketBar[] }> {
+  daily(symbol: string): Observable<{ results: MarketBar[] }> {
+    const ticker = symbol.trim().toUpperCase();
     const existing = this.recent.get(ticker);
     const now = Date.now();
-    if (existing && existing.expires > now) return existing.request;
+    const day = marketDayKey(now - 5 * 60_000);
+    if (existing && existing.day === day && existing.expires > now) return existing.request;
+    if (this.retryAt > now) return throwError(() => new HttpErrorResponse({ status: 503, statusText: 'Price history is temporarily unavailable' }));
 
     const request = this.http.get<{ results?: MarketBar[] }>('/company_data', { params: { symbol: ticker } }).pipe(
       map(response => ({ results: validClosingBars(response?.results) })),
-      catchError(error => {
+      catchError((error: HttpErrorResponse) => {
         if (this.recent.get(ticker)?.request === request) this.recent.delete(ticker);
+        const explicit = retryAfterTime(error.headers?.get('Retry-After') ?? null, Date.now());
+        if (error.status === 429 || (error.status === 503 && explicit !== null)) {
+          this.retryAt = Math.max(this.retryAt, explicit ?? Date.now() + 30_000);
+        }
         return throwError(() => error);
       }),
       shareReplay({ bufferSize: 1, refCount: true }),
     );
     this.recent.delete(ticker);
-    this.recent.set(ticker, { expires: now + 5 * 60_000, request });
+    this.recent.set(ticker, { expires: now + 5 * 60_000, day, request });
     if (this.recent.size > 12) {
       const oldest = this.recent.keys().next().value;
       if (oldest !== undefined) this.recent.delete(oldest);

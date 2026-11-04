@@ -9,8 +9,14 @@ export interface PortfolioPerformancePoint {
   spyClose: number | null;
 }
 
+export interface PortfolioAttributionPoint {
+  date: string;
+  contributions: { ticker: string; cents: number }[];
+}
+
 export interface PortfolioPerformance {
   points: PortfolioPerformancePoint[];
+  attribution?: PortfolioAttributionPoint[];
   status: 'ok' | 'partial' | 'insufficient' | 'not_initialized' | 'ledger_unavailable' | 'temporarily_unavailable';
   message: string;
   missingSessions: number;

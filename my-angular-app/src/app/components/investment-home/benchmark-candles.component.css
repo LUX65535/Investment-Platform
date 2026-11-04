@@ -1,0 +1,168 @@
+:host {
+  display: block;
+  min-width: 0;
+  --plot-axis-width: 3.65rem;
+  --plot-height: 15.3rem;
+}
+
+.candle-workspace {
+  min-width: 0;
+  padding: .45rem 1rem 0;
+}
+
+.candle-toolbar,
+.series-labels,
+.chart-range {
+  display: flex;
+  align-items: center;
+}
+
+.candle-toolbar {
+  justify-content: space-between;
+  gap: .55rem;
+  margin-bottom: .3rem;
+}
+
+.series-labels { gap: .42rem; }
+.series-title { color: var(--ink); font-size: .86rem; font-weight: 680; }
+.series-unit { color: var(--muted); font-size: .73rem; }
+
+.chart-range {
+  gap: .15rem;
+  padding: .1rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-subtle);
+}
+
+.chart-range button {
+  min-width: 2.55rem;
+  min-height: 2.25rem;
+  padding: .2rem .38rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: .77rem;
+  font-weight: 650;
+}
+
+.chart-range button:hover { color: var(--brand); background: var(--blue-tint); }
+.chart-range button[aria-pressed='true'] { color: var(--brand); background: var(--blue-tint); }
+
+.candle-plot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--plot-axis-width);
+  height: var(--plot-height);
+}
+
+.plot-canvas {
+  min-width: 0;
+  height: 100%;
+  touch-action: pan-y pinch-zoom;
+  cursor: crosshair;
+}
+
+.plot-canvas svg { display: block; width: 100%; height: 100%; }
+.plot-grid { stroke: var(--line); }
+.volume-rule { stroke: var(--blue-rule); }
+.selected-guide { stroke: var(--blue-rule); stroke-dasharray: 4 3; }
+.candlestick { color: var(--muted); }
+.candlestick.up { color: var(--positive); }
+.candlestick.down { color: var(--negative); }
+.candlestick line { stroke: currentColor; }
+.candlestick rect { fill: currentColor; }
+.volume-mark { fill: #b9cce2; }
+.selected-mark .volume-mark, .close-only-mark { fill: #4272a5; }
+
+.plot-axis {
+  position: relative;
+  min-width: 0;
+  border-inline-start: 1px solid var(--line);
+}
+
+.plot-axis span {
+  position: absolute;
+  inset-inline-start: .42rem;
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+
+.plot-axis, .session-axis {
+  color: var(--muted);
+  font-size: .73rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-axis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: .24rem var(--plot-axis-width) 0 0;
+}
+.session-axis span:nth-child(2) { text-align: center; }
+.session-axis span:last-child { text-align: end; }
+
+.chart-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .15rem .68rem;
+  min-height: 1.9rem;
+  color: var(--muted);
+  font-size: .73rem;
+}
+
+.volume-label { color: var(--ink); font-weight: 650; }
+.volume-label span { color: var(--muted); font-weight: 400; }
+
+.selected-session {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1.1fr) minmax(0, 4.5fr);
+  gap: .45rem .7rem;
+  padding: .63rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.selected-date span, .selected-fields dt {
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 500;
+}
+
+.selected-date time, .selected-fields dd {
+  display: block;
+  margin: .09rem 0 0;
+  color: var(--ink);
+  font-size: .84rem;
+  font-weight: 640;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+
+.selected-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.12fr);
+  gap: .3rem;
+  margin: 0;
+}
+.selected-fields dd { overflow-wrap: anywhere; }
+.chart-unavailable { margin: .8rem 0; color: var(--muted); font-size: .85rem; }
+
+@media (max-width: 760px) {
+  :host { --plot-height: 10rem; --plot-axis-width: 3.05rem; }
+  .candle-workspace { display: flex; flex-direction: column; padding-inline: .72rem; }
+  .candle-toolbar { order: -2; }
+  .chart-range button { min-width: 2.7rem; min-height: 2.65rem; }
+  .plot-axis, .session-axis { font-size: .66rem; }
+  .selected-session {
+    order: -1;
+    grid-template-columns: 1fr;
+    gap: .35rem;
+    margin-bottom: .43rem;
+    padding: .18rem 0 .5rem;
+    border-top: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .selected-date { display: flex; align-items: baseline; justify-content: space-between; gap: .4rem; }
+  .selected-fields dd { font-size: .77rem; }
+}

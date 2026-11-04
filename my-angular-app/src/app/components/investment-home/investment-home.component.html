@@ -1,0 +1,198 @@
+<header class="home-heading">
+  <h1>Market overview</h1>
+  <p>{{ closingNote || 'U.S. equities and ETFs at the close.' }}</p>
+  <a class="home-search" routerLink="/search-details">Find a stock <span aria-hidden="true">→</span></a>
+</header>
+
+<section *ngIf="breadth as market; else marketState" class="market-close" aria-labelledby="market-close-title">
+  <header class="market-close-heading">
+    <h2 id="market-close-title">Market close</h2>
+    <div>
+      <span *ngIf="market.stale">Last available session · </span>
+      <time [attr.datetime]="market.session">{{ (market.session + 'T00:00:00Z') | date:'MMM d, yyyy':'UTC' }}</time>
+      <span> · USD</span>
+    </div>
+  </header>
+
+  <div class="market-benchmarks" aria-label="Equity benchmarks">
+    <section *ngFor="let symbol of benchmarkSymbols" class="market-quote" [attr.aria-label]="symbol">
+      <h3>
+        <strong>{{ symbol }}</strong>
+        <small [ngSwitch]="symbol">
+          <ng-container *ngSwitchCase="'SPY'">S&amp;P 500</ng-container>
+          <ng-container *ngSwitchCase="'QQQ'">Nasdaq-100</ng-container>
+          <ng-container *ngSwitchCase="'IWM'">U.S. small caps</ng-container>
+        </small>
+      </h3>
+      <div *ngIf="benchmarkRow(symbol) as quote; else missingBenchmark" class="market-quote-values">
+        <strong>{{ quote.close | currency:'USD' }}</strong>
+        <span *ngIf="quote.change !== null; else missingChange"
+              [class.positive]="quote.change > 0" [class.negative]="quote.change < 0">
+          {{ quote.change > 0 ? '+' : '' }}{{ quote.change | number:'1.2-2' }}%
+        </span>
+      </div>
+      <ng-template #missingBenchmark><p class="breadth-missing">Close unavailable</p></ng-template>
+    </section>
+  </div>
+
+  <div class="market-breadth">
+    <div class="breadth-label">
+      <h3>Market breadth</h3>
+      <p>
+        {{ market.comparable | number }} of {{ market.screened | number }} compared
+        <ng-container *ngIf="market.previousSession as prior">
+          · vs. <time [attr.datetime]="prior">{{ (prior + 'T00:00:00Z') | date:'MMM d':'UTC' }}</time>
+        </ng-container>
+      </p>
+    </div>
+    <div *ngIf="market.comparable; else noBreadth" class="breadth-scale">
+      <div class="breadth-bar" aria-hidden="true">
+        <span class="breadth-up" [style.width.%]="breadthPercent(market.up)"></span>
+        <span class="breadth-flat" [style.width.%]="breadthPercent(market.unchanged)"></span>
+        <span class="breadth-down" [style.width.%]="breadthPercent(market.down)"></span>
+      </div>
+      <dl class="breadth-counts">
+        <div><dt>Up</dt><dd class="positive">{{ market.up | number }}</dd></div>
+        <div><dt>Flat</dt><dd>{{ market.unchanged | number }}</dd></div>
+        <div><dt>Down</dt><dd class="negative">{{ market.down | number }}</dd></div>
+      </dl>
+    </div>
+    <ng-template #noBreadth><p class="breadth-missing">Prior closes unavailable for comparison.</p></ng-template>
+    <a class="workspace-link" routerLink="/screener">Screen the market <span aria-hidden="true">→</span></a>
+  </div>
+
+  <div *ngIf="breadthError" class="market-state">
+    <p role="status">New market data is unavailable. Showing the last reported session.</p>
+    <button type="button" class="state-action" [disabled]="breadthLoading" (click)="loadBreadth()">Retry market data</button>
+  </div>
+</section>
+<ng-template #marketState>
+  <div class="market-state market-state--initial" aria-live="polite">
+    <p *ngIf="breadthLoading">Loading the latest market session…</p>
+    <ng-container *ngIf="!breadthLoading">
+      <p>Market breadth and volume leaders are temporarily unavailable.</p>
+      <button *ngIf="breadthError" type="button" class="state-action" (click)="loadBreadth()">Retry market data</button>
+    </ng-container>
+  </div>
+</ng-template>
+<ng-template #missingChange><span aria-label="Previous close unavailable">—</span></ng-template>
+
+<div class="home-layout" [class.home-layout--with-rail]="benchmark || breadth?.active?.length || recentSymbols().length">
+  <section class="benchmark-workspace" aria-labelledby="home-benchmark-title" [attr.aria-busy]="loading">
+    <header class="benchmark-heading">
+      <div>
+        <h2 id="home-benchmark-title">SPY <span>S&amp;P 500 ETF</span></h2>
+        <p *ngIf="benchmark as data">
+          Last close <strong>{{ data.close | currency:'USD' }}</strong>
+          <time [attr.datetime]="data.date | date:'yyyy-MM-dd':'+0000'">{{ data.date | date:'MMM d, yyyy':'+0000' }}</time>
+        </p>
+      </div>
+      <a class="workspace-link benchmark-compare" [routerLink]="['/search-details', 'AAPL']"
+         [queryParams]="{ compare: 'spy' }" aria-label="Compare AAPL vs SPY">
+        AAPL vs SPY <span aria-hidden="true">→</span>
+      </a>
+    </header>
+
+    <ng-container *ngIf="benchmark as data; else benchmarkState">
+      <app-benchmark-candles [bars]="data.bars"></app-benchmark-candles>
+      <footer class="benchmark-source">
+        <span>Split-adjusted daily bars · Massive (Polygon)</span>
+        <dl class="benchmark-returns">
+          <ng-container *ngFor="let period of data.returns">
+            <div *ngIf="period.label !== 'Latest session'">
+              <dt>{{ period.label }}</dt>
+              <dd *ngIf="period.value !== null; else missingReturn"
+                  [class.positive]="period.value > 0" [class.negative]="period.value < 0">
+                {{ period.value > 0 ? '+' : '' }}{{ period.value | number:'1.2-2' }}%
+              </dd>
+            </div>
+          </ng-container>
+        </dl>
+      </footer>
+      <div *ngIf="failed" class="market-state">
+        <p role="status">New SPY prices are unavailable. Showing the last available data.</p>
+        <button type="button" class="state-action" (click)="loadBenchmark()">Retry SPY prices</button>
+      </div>
+    </ng-container>
+
+    <ng-template #missingReturn><dd aria-label="Insufficient closing history">—</dd></ng-template>
+    <ng-template #benchmarkState>
+      <div class="market-state">
+        <p role="status" *ngIf="loading">Loading SPY daily prices…</p>
+        <ng-container *ngIf="!loading">
+          <p role="status">{{ failed ? 'SPY daily prices are temporarily unavailable.' : 'No SPY daily prices are available.' }}</p>
+          <button *ngIf="failed" type="button" class="state-action" (click)="loadBenchmark()">Retry SPY prices</button>
+        </ng-container>
+      </div>
+    </ng-template>
+  </section>
+
+  <aside *ngIf="benchmark || breadth?.active?.length || recentSymbols().length" class="home-rail" aria-label="Market details">
+    <section *ngIf="benchmark as data" class="rail-panel" aria-labelledby="home-sessions-title">
+      <header class="rail-heading">
+        <h2 id="home-sessions-title">SPY recent sessions</h2>
+        <span>USD</span>
+      </header>
+      <table class="rail-table" aria-labelledby="home-sessions-title">
+        <thead>
+          <tr><th scope="col">Date</th><th scope="col">Close</th><th scope="col">Change</th></tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let session of data.recentSessions">
+            <th scope="row">
+              <time [attr.datetime]="session.date | date:'yyyy-MM-dd':'+0000'">{{ session.date | date:'MMM d, yyyy':'+0000' }}</time>
+            </th>
+            <td>{{ session.close | currency:'USD' }}</td>
+            <td [class.positive]="session.change !== null && session.change > 0"
+                [class.negative]="session.change !== null && session.change < 0">
+              <ng-container *ngIf="session.change !== null; else missingChange">
+                {{ session.change > 0 ? '+' : '' }}{{ session.change | number:'1.2-2' }}%
+              </ng-container>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <ng-container *ngIf="breadth as market">
+      <section *ngIf="market.active.length" class="rail-panel" aria-labelledby="home-volume-title">
+        <header class="rail-heading">
+          <h2 id="home-volume-title">Most traded</h2>
+          <time [attr.datetime]="market.session">{{ (market.session + 'T00:00:00Z') | date:'MMM d':'UTC' }}</time>
+        </header>
+        <table class="rail-table volume-table" aria-labelledby="home-volume-title">
+          <thead>
+            <tr><th scope="col">Symbol</th><th scope="col">Close · USD</th><th scope="col">Shares traded</th></tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let quote of market.active">
+              <th scope="row"><a [routerLink]="['/search-details', quote.symbol]">{{ quote.symbol }}</a></th>
+              <td>{{ quote.close | currency:'USD':'symbol':'1.2-4' }}</td>
+              <td>{{ quote.volume | number:'1.0-2' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </ng-container>
+
+    <section *ngIf="recentSymbols().length" class="rail-panel home-recents" aria-labelledby="home-recent-title">
+      <header class="rail-heading"><h2 id="home-recent-title">Recently viewed</h2></header>
+      <ul class="recent-links">
+        <li *ngFor="let symbol of recentSymbols().slice(0, 4)">
+          <a [routerLink]="['/search-details', symbol]" [attr.aria-label]="'Research ' + symbol">{{ symbol }}</a>
+        </li>
+      </ul>
+    </section>
+  </aside>
+</div>
+
+<app-market-sector-moves *ngIf="breadth as market" [rows]="market.sectors"
+                         [session]="market.session"></app-market-sector-moves>
+
+<div *ngIf="!breadth && !breadthLoading" class="benchmark-fallback">
+  @defer (on viewport) {
+    <app-equity-benchmarks [spy]="benchmark?.recentSessions?.[0] ?? null"></app-equity-benchmarks>
+  } @placeholder {
+    <div class="benchmark-placeholder" aria-hidden="true"></div>
+  }
+</div>

@@ -1,0 +1,129 @@
+:host {
+  display: block;
+  margin-block-start: clamp(1.65rem, 2.7vw, 2.3rem);
+}
+
+.sector-report {
+  padding: 1rem .95rem .6rem;
+  border-block-start: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-block-end: .45rem;
+}
+
+h2, p {
+  margin: 0;
+}
+
+h2 {
+  font-size: 1.06rem;
+  font-weight: 690;
+}
+
+p, time, small {
+  color: var(--muted);
+  font-size: .75rem;
+}
+
+time {
+  white-space: nowrap;
+}
+
+.sector-reading {
+  margin: 0 0 .72rem;
+  color: var(--ink);
+  font-size: .89rem;
+  line-height: 1.55;
+}
+
+.sector-reading strong {
+  font-weight: 690;
+}
+
+.sector-rows {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template: repeat(6, auto) / repeat(2, minmax(0, 1fr));
+  column-gap: 2rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.sector-row {
+  display: grid;
+  grid-template-columns: minmax(9.5rem, 1.1fr) minmax(2.25rem, 1fr) 3.65rem;
+  align-items: center;
+  gap: .55rem;
+  border-block-start: 1px solid color-mix(in srgb, var(--line) 66%, var(--surface));
+  font-size: .8rem;
+}
+
+a {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 .4rem;
+  padding-block: .7rem;
+  color: #17365a;
+  text-decoration: none;
+}
+
+a:hover strong, a:focus-visible strong {
+  text-decoration: underline;
+}
+
+.move-track {
+  position: relative;
+  height: .8rem;
+  background: linear-gradient(to right, transparent calc(50% - .5px), #899eb8 calc(50% - .5px) 50%, transparent 50%);
+}
+
+.move-bar {
+  position: absolute;
+  inset: .15rem auto .15rem 50%;
+  background: #287761;
+}
+
+.move-bar.decline {
+  inset-inline: auto 50%;
+  background: #a43c54;
+}
+
+.move-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.advance {
+  color: #0c624b;
+}
+
+.decline {
+  color: #8b2840;
+}
+
+@media (max-width: 760px) {
+  .sector-report { padding-inline: .72rem; }
+
+  .sector-rows {
+    grid-auto-flow: row;
+    grid-template: none;
+  }
+
+  .sector-row {
+    grid-template-columns: minmax(0, 1.4fr) minmax(1.8rem, .8fr) minmax(3.45rem, auto);
+    gap: .36rem;
+  }
+
+  a {
+    min-height: 44px;
+    align-content: center;
+    padding-block: .35rem;
+  }
+}

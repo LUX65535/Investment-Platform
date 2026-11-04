@@ -1,0 +1,53 @@
+<section class="sector-report" aria-labelledby="sector-title">
+  <header>
+    <div>
+      <h2 id="sector-title">Sectors at the close</h2>
+      <p>SPDR sector ETFs · close-to-close change</p>
+    </div>
+    <time [attr.datetime]="session()">{{ (session() + 'T00:00:00Z') | date:'MMM d, yyyy':'UTC' }}</time>
+  </header>
+  @if (reading(); as summary) {
+    <p class="sector-reading">
+      @if (summary.gain || summary.loss) {
+        {{ summary.partial ? 'Among reported sectors, ' : '' }}
+        @if (summary.gain; as gain) {
+          <strong>{{ gain.label }}</strong> {{ gain.verb }} <strong class="advance">{{ gain.movement }}</strong>{{ summary.loss ? ', while ' : '.' }}
+        }
+        @if (summary.loss; as loss) {
+          <strong>{{ loss.label }}</strong> {{ loss.verb }} <strong class="decline">{{ loss.movement }}</strong>.
+        }
+      } @else if (!summary.reportedCount) {
+        Close-to-close changes are unavailable for this session.
+      } @else if (summary.reportedCount === 1) {
+        The only sector ETF with a reported change finished flat.
+      } @else if (summary.reportedCount === summary.total) {
+        All {{ summary.total }} sector ETFs finished flat.
+      } @else {
+        The {{ summary.reportedCount }} sector ETFs with a reported change finished flat.
+      }
+    </p>
+  }
+  <ol class="sector-rows" role="list" aria-label="Sector ETFs ranked by close-to-close change">
+    @for (row of ordered(); track row.symbol) {
+      <li class="sector-row">
+        <a [routerLink]="['/search-details', row.symbol]" [attr.aria-label]="'Research ' + row.label + ' (' + row.symbol + ')'">
+          <strong>{{ row.label }}</strong>
+          <small>{{ row.symbol }}</small>
+        </a>
+        <span class="move-track" aria-hidden="true">
+          @if (row.change !== null && row.change !== 0) {
+            <span class="move-bar" [class.decline]="row.change < 0" [style.width.%]="row.width"></span>
+          }
+        </span>
+        <span class="move-value" [class.advance]="row.change !== null && row.change > 0"
+              [class.decline]="row.change !== null && row.change < 0">
+          @if (row.change !== null) {
+            {{ row.change > 0 ? '+' : '' }}{{ row.change | number:'1.2-2' }}%
+          } @else {
+            <span aria-label="Change unavailable">—</span>
+          }
+        </span>
+      </li>
+    }
+  </ol>
+</section>

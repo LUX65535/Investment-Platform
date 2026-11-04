@@ -33,6 +33,7 @@ test('history bounds upstream requests and reports a gap for an unrequested hold
   assert.equal(history.status, 'partial');
   assert.match(history.message, /up to 3 other symbols plus SPY/);
   assert.deepEqual(history.points, [{ date: '2026-11-03', nav: null, spyClose: 600 }]);
+  assert.deepEqual(history.attribution, []);
   assert.equal(history.missingSessions, 1);
 });
 
@@ -51,6 +52,7 @@ test('history preserves an available NAV when SPY fails and reports a total outa
   const outage = await loadPortfolioHistory(account, startingCashCents, async () => failedRead(), asOf);
   assert.equal(outage.status, 'temporarily_unavailable');
   assert.deepEqual(outage.points, []);
+  assert.deepEqual(outage.attribution, []);
 });
 
 const bar = (date, c) => ({ t: Date.parse(date + 'T05:00:00Z'), c });
@@ -105,5 +107,10 @@ test('prepared history keeps verified closes during an outage and merges newer c
     { date: '2026-11-03', nav: 25010, spyClose: 600 },
     { date: '2026-11-04', nav: 25014, spyClose: 607 },
     { date: '2026-11-05', nav: 25020, spyClose: 612 },
+  ]);
+  assert.deepEqual(refreshed.attribution, [
+    { date: '2026-11-03', contributions: [] },
+    { date: '2026-11-04', contributions: [{ ticker: 'AAPL', cents: 400 }] },
+    { date: '2026-11-05', contributions: [{ ticker: 'AAPL', cents: 1000 }] },
   ]);
 });

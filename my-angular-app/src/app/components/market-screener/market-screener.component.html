@@ -1,0 +1,148 @@
+<header class="screener-heading">
+  <div>
+    <h1>Market screener</h1>
+    <p>Filter U.S. exchange-traded securities by closing price, daily change, and volume.</p>
+  </div>
+  <span class="data-tag">End-of-day data</span>
+</header>
+
+@if (snapshot(); as market) {
+  <dl class="session-strip">
+    <div>
+      <dt>Latest available session</dt>
+      <dd><time [attr.datetime]="market.session">{{ (market.session + 'T00:00:00Z') | date:'MMM d, y':'UTC' }}</time></dd>
+    </div>
+    <div>
+      <dt>Securities with a close</dt>
+      <dd>{{ market.coverage.screened | number }}</dd>
+    </div>
+    <div>
+      <dt>Prior session</dt>
+      <dd>
+        @if (market.previousSession; as previous) {
+          <time [attr.datetime]="previous">{{ (previous + 'T00:00:00Z') | date:'MMM d, y':'UTC' }}</time>
+        } @else { <span>Unavailable</span> }
+      </dd>
+    </div>
+  </dl>
+
+  @if (market.stale || market.previousUnavailable || error()) {
+    <div class="feed-notice" aria-live="polite">
+      <div>
+        @if (error()) { <p>{{ error() }}</p> }
+        @if (market.stale || error()) { <p>Showing the most recent market session loaded successfully.</p> }
+        @if (market.previousUnavailable) { <p>The prior session is unavailable. Daily changes are omitted.</p> }
+      </div>
+      <button type="button" class="table-action" [disabled]="loading()" (click)="load()">
+        {{ loading() ? 'Checking…' : 'Retry data' }}
+      </button>
+    </div>
+  }
+
+  <section class="screen-panel" aria-labelledby="screen-results-heading">
+    <div class="filter-bar">
+      <label>
+        Ticker
+        <input type="search" placeholder="e.g. AAPL" maxlength="32" autocomplete="off" spellcheck="false"
+          [value]="filters().symbol" (input)="filter('symbol', $any($event.target).value)">
+      </label>
+      <label>
+        Min. close
+        <input type="number" min="0" step="any" inputmode="decimal" placeholder="USD" [value]="filters().minimumClose"
+          (input)="filter('minimumClose', $any($event.target).value)">
+      </label>
+      <label>
+        Max. close
+        <input type="number" min="0" step="any" inputmode="decimal" placeholder="USD" [value]="filters().maximumClose"
+          (input)="filter('maximumClose', $any($event.target).value)">
+      </label>
+      <label>
+        Min. 1D change
+        <input type="number" step="any" placeholder="%" [value]="filters().minimumChange"
+          (input)="filter('minimumChange', $any($event.target).value)">
+      </label>
+      <label>
+        Min. volume
+        <input type="number" min="0" step="any" inputmode="decimal" placeholder="Shares"
+          [value]="filters().minimumVolume" (input)="filter('minimumVolume', $any($event.target).value)">
+      </label>
+    </div>
+
+    <div class="table-summary">
+      <h2 #resultsHeading id="screen-results-heading" tabindex="-1">Matching securities</h2>
+      <span aria-live="polite" class="result-count">{{ matched().length | number }} of {{ market.coverage.screened | number }}</span>
+      <button type="button" class="table-action clear-filters" (click)="clearFilters()">Clear filters</button>
+    </div>
+
+    @if (filterError()) {
+      <p class="table-empty" role="status">{{ filterError() }}</p>
+    } @else if (!visible().length) {
+      <p class="table-empty">No securities meet these filters.</p>
+    } @else {
+      <table>
+        <caption class="visually-hidden">Closing price, one-day change, and volume for matching U.S. securities</caption>
+        <thead>
+          <tr>
+            @for (column of sortColumns; track column.field) {
+              <th scope="col" [attr.aria-sort]="order().field === column.field ? order().direction : null">
+                <button type="button" class="sort-button" (click)="sort(column.field)" [title]="column.title">
+                  {{ column.label }}
+                  @if (order().field === column.field) {
+                    <span class="sort-direction" aria-hidden="true">{{ order().direction === 'ascending' ? '↑' : '↓' }}</span>
+                  }
+                </button>
+              </th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of visible(); track row.symbol) {
+            <tr>
+              <th scope="row">
+                <a [routerLink]="['/search-details', row.symbol]">{{ row.symbol }}</a>
+              </th>
+              <td>{{ formatPrice(row.close) }}</td>
+              <td [class.positive]="row.change !== null && row.change > 0"
+                  [class.negative]="row.change !== null && row.change < 0">
+                @if (row.change !== null) { {{ formatChange(row.change) }} }
+                @else { <span aria-label="Unavailable">—</span> }
+              </td>
+              <td class="volume-cell" [class.wide-volume]="(row.volume ?? 0) >= 1000000000">
+                @if (row.volume !== null) { {{ row.volume | number:'1.0-2' }} }
+                @else { <span aria-label="Unavailable">—</span> }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      @if (pageCount() > 1) {
+        <nav class="table-pagination" aria-label="Screener results pages">
+          <button type="button" class="table-action" [disabled]="page() === 0" (click)="changePage(-1)">Previous</button>
+          <span aria-live="polite">Page {{ page() + 1 | number }} of {{ pageCount() | number }}</span>
+          <button type="button" class="table-action" [disabled]="page() + 1 >= pageCount()" (click)="changePage(1)">Next</button>
+        </nav>
+      }
+    }
+  </section>
+
+  <p class="coverage-note">
+    Covers exchange-traded symbols reported by <a href="https://massive.com/docs/rest/stocks/aggregates/daily-market-summary"
+    target="_blank" rel="noopener noreferrer">Massive</a>, including funds. OTC securities are excluded.
+    Closes are split-adjusted in USD. A daily change is available for {{ market.coverage.comparable | number }}
+    of {{ market.coverage.screened | number }} symbols.
+    @if (market.coverage.reported > market.coverage.screened) {
+      The feed reported {{ market.coverage.reported | number }} records. Rows without a usable close are excluded.
+    }
+  </p>
+} @else {
+  <div class="load-state" aria-live="polite">
+    @if (loading()) {
+      <h2>Loading the latest market session</h2>
+      <p>Checking reported closes and volumes.</p>
+    } @else {
+      <h2>Market data unavailable</h2>
+      <p>{{ error() }}</p>
+      <button type="button" class="table-action" (click)="load()">Retry data</button>
+    }
+  </div>
+}

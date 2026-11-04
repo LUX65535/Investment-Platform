@@ -23,6 +23,18 @@
   </p>
 
   <ng-container *ngIf="!loading && !failed && chart as series">
+    <div class="performance-intro" *ngIf="closingReview as review">
+      <p class="review-window">
+        <ng-container *ngIf="review.first.date !== review.last.date">
+          <time [attr.datetime]="review.first.date">{{ review.first.time | date:(review.first.date.slice(0, 4) === review.last.date.slice(0, 4) ? 'MMM d' : 'MMM d, yyyy'):'+0000' }}</time>
+          <span aria-hidden="true"> – </span>
+        </ng-container>
+        <time [attr.datetime]="review.last.date">{{ review.last.time | date:'MMM d, yyyy':'+0000' }}</time>
+        <span> · {{ series.compared ? 'Shared closing dates' : 'Portfolio closing dates' }}</span>
+      </p>
+      <p class="review-summary">The portfolio {{ review.change }}<ng-container *ngIf="review.benchmark"> and {{ review.benchmark }}</ng-container>.</p>
+    </div>
+    <div class="performance-layout">
     <figure class="performance-figure" [class.performance-figure--comparison]="series.compared" *ngIf="selectedPoint as point">
       <dl *ngIf="series.compared; else dollarMetrics" class="chart-metrics" aria-label="Price returns on the selected date">
         <div><dt><span class="swatch" aria-hidden="true"></span>Portfolio</dt><dd>{{ returnLabel(point.navReturn) }}</dd></div>
@@ -36,9 +48,7 @@
         </dl>
       </ng-template>
       <div class="chart-context">
-        <p class="performance-basis" *ngIf="series.compared; else dollarBasis">
-          Since shared close <time [attr.datetime]="series.first.date">{{ series.first.time | date:'MMM d':'+0000' }}</time>
-        </p>
+        <p class="performance-basis" *ngIf="series.compared; else dollarBasis">Selected close</p>
         <ng-template #dollarBasis>
           <p class="performance-basis">Closing value in USD.<ng-container *ngIf="!canCompare"> SPY comparison needs two shared closing dates.</ng-container></p>
         </ng-template>
@@ -47,6 +57,11 @@
           <strong *ngIf="series.compared">{{ point.nav === null ? '—' : (point.nav | currency:'USD') }}</strong>
         </div>
       </div>
+      <button *ngIf="attributionReview?.entries?.[0] as contributor" class="mobile-contributor" type="button"
+              (click)="showAttribution(positionContributions)">
+        <span>Largest contribution</span><strong>{{ contributor.ticker }} {{ contributor.amount }}</strong>
+        <span class="contributor-arrow" aria-hidden="true">↓</span>
+      </button>
       <div class="performance-plot">
         <div class="chart-surface" (pointerdown)="inspectPointer($event)" (pointermove)="inspectPointer($event)">
           <input *ngIf="series.points.length > 1" type="range" class="visually-hidden" min="0"
@@ -94,6 +109,29 @@
               [style.left.%]="tick.x / width * 100" [attr.datetime]="tick.date">{{ tick.time | date:'MMM d':'+0000' }}</time>
       </figcaption>
     </figure>
+    <aside #positionContributions class="attribution" aria-labelledby="portfolio-attribution-title" tabindex="-1">
+      <h3 id="portfolio-attribution-title">What moved the portfolio</h3>
+      <p class="attribution-note">Change in account value by position across the selected closes.</p>
+      <ng-container *ngIf="attributionReview as review; else attributionUnavailable">
+        <div class="attribution-total"><span>Net contribution</span><strong>{{ review.total }}</strong></div>
+        <ul *ngIf="review.entries.length; else unchangedAttribution" class="attribution-list">
+          <li *ngFor="let entry of review.entries">
+            <span>{{ entry.ticker }}</span>
+            <strong>{{ entry.amount }}</strong>
+            <span class="attribution-track" aria-hidden="true">
+              <span [class.attribution-negative]="entry.negative" [style.width.%]="entry.width"></span>
+            </span>
+          </li>
+        </ul>
+        <ng-template #unchangedAttribution>
+          <p class="attribution-state">No position movement across these closes.</p>
+        </ng-template>
+      </ng-container>
+      <ng-template #attributionUnavailable>
+        <p class="attribution-state">Position-level changes are unavailable for these closes.</p>
+      </ng-template>
+    </aside>
+    </div>
     <div *ngIf="series.gaps.length || windowMissingSessions || windowMissingBenchmarkSessions || message" class="performance-coverage" role="status">
       <p *ngIf="message">{{ message }}</p>
       <p *ngIf="series.gaps.length"><span class="gap-key" aria-hidden="true"></span> Breaks mark missing closing values.</p>

@@ -149,7 +149,9 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   assert.ok(Number(blocked.retryAfter) > 0);
   assert.equal(quoteCalls - beforeReads, 4, 'Cooldown skips new upstream calls for the same provider.');
   assert.equal((await request('/company_quote?symbol=AAPL')).body.c, 100, 'An unexpired read survives cooldown.');
-  assert.equal((await request('/company_data?symbol=AAPL')).status, 200, 'The other provider stays available.');
+  const daily = await request('/company_data?symbol=AAPL');
+  assert.equal(daily.status, 200, 'The other provider stays available.');
+  assert.equal(daily.cache, 'public, max-age=0, s-maxage=300');
   assert.equal(chartCalls, 1);
 
   const secondOrder = { ...order, orderId: randomUUID() };
@@ -210,6 +212,16 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   [...records.values()][1].expiresAt = new Date(Date.now() - 60_000);
   assert.equal((await request('/api/portfolio/history')).status, 428);
   assert.equal(chartCalls, historyCalls, 'Cross-site and expired sessions cannot reach the market provider.');
+
+  t.mock.timers.tick(60_000);
+  assert.equal((await request('/company_data?symbol=AAPL')).status, 200);
+  assert.equal(chartCalls, historyCalls, 'Public daily bars are reused beyond the short quote cache.');
+  const hourly = await request('/company_OneDay_data?symbol=AAPL&from=2026-11-03&to=2026-11-04');
+  assert.equal(hourly.status, 200);
+  assert.equal(hourly.cache, 'public, max-age=0, s-maxage=30');
+  t.mock.timers.tick(5 * 60_000);
+  assert.equal((await request('/company_data?symbol=AAPL')).status, 200);
+  assert.equal(chartCalls, historyCalls + 2, 'Expired daily bars are refreshed from the provider.');
 });
 
 test('production market endpoints fail closed without provider credentials', async t => {

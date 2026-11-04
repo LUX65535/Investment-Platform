@@ -1,13 +1,15 @@
-import { CommonModule } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
-import { Component, DestroyRef, inject, OnInit } from '@angular/core';
+import { CommonModule, DOCUMENT } from '@angular/common';
+import { Component, DestroyRef, ElementRef, inject, OnInit } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import * as Highcharts from 'highcharts/highstock';
 import HighchartsAccessibility from 'highcharts/modules/accessibility';
 import { HighchartsChartModule } from 'highcharts-angular';
-import { catchError, distinctUntilChanged, map, merge, of, Subject, switchMap } from 'rxjs';
+import { catchError, distinctUntilChanged, map, of, Subject, switchMap } from 'rxjs';
+import { MarketHistoryService } from '../../services/market-history.service';
+import { MarketQuoteService, quoteRefreshMs } from '../../services/market-quote.service';
+import { activeRefreshes, dailyRefreshes } from '../../services/market-refresh';
 
 interface Quote {
   c: number;
@@ -51,11 +53,16 @@ HighchartsAccessibility(Highcharts);
   styleUrls: ['./research-embed.component.css'],
 })
 export class ResearchEmbedComponent implements OnInit {
-  private readonly http = inject(HttpClient);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
-  private readonly requests = new Subject<string>();
+  private readonly document = inject(DOCUMENT);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly marketQuotes = inject(MarketQuoteService);
+  private readonly marketHistory = inject(MarketHistoryService);
+  private readonly quoteRequests = new Subject<string>();
+  private readonly historyRequests = new Subject<string>();
+  private embeddedVisible = true;
 
   readonly highcharts = Highcharts;
   readonly exampleTickers = ['AAPL', 'MSFT', 'NVDA'];
@@ -68,6 +75,7 @@ export class ResearchEmbedComponent implements OnInit {
   quoteLoading = true;
   historyLoading = true;
   quoteFailed = false;
+  quotePrevious = false;
   historyFailed = false;
   activeRange: ChartRange = chartRanges[1];
   chartOptions: Highcharts.Options = {};
@@ -83,43 +91,29 @@ export class ResearchEmbedComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    this.requests.pipe(
-      switchMap(symbol => merge(
-        this.http.get<Quote>('/company_quote', { params: { symbol } }).pipe(
-          map(quote => ({
-            quote: quote && Number.isFinite(quote.c) && quote.c > 0
-              && Number.isFinite(new Date(quote.t * 1000).getTime()) && quote.t > 0
-              ? {
-                ...quote,
-                d: Number.isFinite(quote.d) ? quote.d : null,
-                dp: Number.isFinite(quote.dp) ? quote.dp : null,
-              } : null,
-            failed: false,
-          })),
-          catchError(() => of({ quote: null, failed: true })),
-        ),
-        this.http.get<{ results?: DailyPrice[] }>('/company_data', { params: { symbol } }).pipe(
-          map(response => ({
-            history: (Array.isArray(response?.results) ? response.results : [])
-              .filter(point => Number.isFinite(point?.t) && point.t > 0 && Number.isFinite(point.c) && point.c > 0)
-              .sort((first, second) => first.t - second.t),
-            failed: false,
-          })),
-          catchError(() => of({ history: [], failed: true })),
-        ),
+    this.quoteRequests.pipe(
+      switchMap(symbol => this.marketQuotes.read(symbol)),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(({ quote, previous }) => {
+      this.quote = quote ? { ...quote, d: Number.isFinite(quote.d) ? quote.d : null,
+        dp: Number.isFinite(quote.dp) ? quote.dp : null } : null;
+      this.quoteLoading = false;
+      this.quoteFailed = !quote;
+      this.quotePrevious = previous;
+    });
+
+    this.historyRequests.pipe(
+      switchMap(symbol => this.marketHistory.daily(symbol).pipe(
+        map(({ results }) => results.filter(point => point.t > 0 && Number.isFinite(new Date(point.t).getTime()))),
+        catchError(() => of(null)),
       )),
       takeUntilDestroyed(this.destroyRef),
-    ).subscribe(result => {
-      if ('quote' in result) {
-        this.quote = result.quote;
-        this.quoteLoading = false;
-        this.quoteFailed = result.failed;
-      } else {
-        this.history = result.history;
-        this.historyLoading = false;
-        this.historyFailed = result.failed;
-        this.setRange(this.activeRange);
-      }
+    ).subscribe(history => {
+      this.historyLoading = false;
+      this.historyFailed = history === null || (!history.length && this.history.length > 0);
+      if (this.historyFailed) return;
+      this.history = history ?? [];
+      this.setRange(this.activeRange);
     });
 
     this.route.queryParamMap.pipe(
@@ -135,6 +129,18 @@ export class ResearchEmbedComponent implements OnInit {
       this.tickerInput = symbol;
       this.load(symbol);
     });
+
+    const browser = this.document.defaultView;
+    if (browser && browser !== browser.top && typeof IntersectionObserver !== 'undefined') {
+      this.embeddedVisible = false;
+      const observer = new IntersectionObserver(entries => this.embeddedVisible = Boolean(entries[0]?.isIntersecting));
+      observer.observe(this.host.nativeElement);
+      this.destroyRef.onDestroy(() => observer.disconnect());
+    }
+    activeRefreshes(this.document, quoteRefreshMs).pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      if (this.embeddedVisible) this.retryQuote();
+    });
+    dailyRefreshes(this.document).pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => this.retryHistory());
   }
 
   selectTicker(value: string): void {
@@ -147,16 +153,21 @@ export class ResearchEmbedComponent implements OnInit {
     this.inputError = '';
     this.tickerInput = symbol;
     const linkedSymbol = this.route.snapshot.queryParamMap.get('ticker')?.trim().toUpperCase() || defaultTicker;
-    if (symbol === linkedSymbol) {
-      this.refresh();
-    } else {
+    if (symbol !== linkedSymbol) {
       void this.router.navigate([], { relativeTo: this.route, queryParams: { ticker: symbol } });
     }
   }
 
-  refresh(): void {
-    if (this.quoteLoading || this.historyLoading) return;
-    this.load(this.ticker);
+  retryQuote(): void {
+    if (this.quoteLoading || this.document.hidden || this.document.defaultView?.navigator.onLine === false) return;
+    this.quoteLoading = true;
+    this.quoteRequests.next(this.ticker);
+  }
+
+  retryHistory(): void {
+    if (this.historyLoading || this.document.hidden || this.document.defaultView?.navigator.onLine === false) return;
+    this.historyLoading = true;
+    this.historyRequests.next(this.ticker);
   }
 
   setRange(range: ChartRange): void {
@@ -213,9 +224,11 @@ export class ResearchEmbedComponent implements OnInit {
     }
     this.ticker = symbol;
     this.quoteFailed = false;
+    this.quotePrevious = false;
     this.historyFailed = false;
     this.quoteLoading = true;
     this.historyLoading = true;
-    this.requests.next(symbol);
+    this.quoteRequests.next(symbol);
+    this.historyRequests.next(symbol);
   }
 }

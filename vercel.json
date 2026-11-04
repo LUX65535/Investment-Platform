@@ -12,7 +12,7 @@
       "transforms": [{ "type": "request.path", "op": "set", "args": "/$1" }]
     },
     {
-      "src": "^/(?:search-details(?:/[^/]+)?|research-embed|watchlist|portfolio)/?$",
+      "src": "^/(?:search-details(?:/[^/]+)?|research-embed|screener|watchlist|portfolio)/?$",
       "dest": "/index.html"
     }
   ]

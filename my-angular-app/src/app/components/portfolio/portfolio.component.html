@@ -1,23 +1,10 @@
 <header class="portfolio-heading">
-  <div>
-    <p class="account-type">Paper account <span aria-hidden="true">/</span> USD</p>
-    <h1>Portfolio</h1>
-  </div>
-  <nav *ngIf="walletInitialized !== false" class="portfolio-sections" aria-label="Portfolio sections">
-    <a href="/portfolio#account-title">Overview</a>
-    <a href="/portfolio#positions-title">Positions</a>
-    <a href="/portfolio#orders-title">Order activity</a>
-  </nav>
+  <h1>Portfolio</h1>
   <div class="portfolio-toolbar" aria-label="Portfolio actions">
-    <button type="button" class="state-action" aria-label="Refresh portfolio" [disabled]="isLoading || isInitializing || checkingOrderId !== null"
-            (click)="loadPortfolio()">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M20 7v5h-5M4 17v-5h5m10.6 0a7.6 7.6 0 0 0-13-5.4L4 9m16 6-2.6 2.4a7.6 7.6 0 0 1-13-5.4"/>
-      </svg>
-      <span>Refresh</span>
-    </button>
-    <a class="state-action research-action" routerLink="/search-details">Research <span aria-hidden="true">↗</span></a>
+    <button *ngIf="walletInitialized !== false" type="button" class="portfolio-jump"
+            (click)="jumpToHeading(positionsTitle)">Positions</button>
+    <button *ngIf="walletInitialized !== false" type="button" class="portfolio-jump"
+            (click)="jumpToHeading(ordersTitle)">Orders</button>
   </div>
 </header>
 
@@ -36,16 +23,30 @@
   <p *ngIf="showcaseClaimError" class="state-message state-message--error" role="alert">{{ showcaseClaimError }}</p>
   <p *ngIf="actionError" class="state-message state-message--error" role="alert">{{ actionError }}</p>
   <p *ngIf="loadError" class="state-message state-message--error" role="alert">{{ loadError }}</p>
+  <button *ngIf="loadError" type="button" class="state-action" [disabled]="isLoading || quotesPending" (click)="loadPortfolio()">Retry account data</button>
 </div>
 
 <div class="portfolio-sheet">
 <section *ngIf="walletInitialized !== false" id="account-title" class="portfolio-overview" tabindex="-1"
          aria-label="Account overview" [attr.aria-busy]="isLoading">
-  <dl class="portfolio-metrics">
-    <div class="portfolio-metric primary-metric">
+  <div class="account-value">
+    <p class="account-type">Paper account <span>USD</span></p>
+    <dl>
       <dt>Account value</dt>
-      <dd>{{ accountValue === null ? '—' : (accountValue | currency:'USD') }}<span class="metric-source">Latest available quotes</span></dd>
-    </div>
+      <dd>{{ accountValue === null ? '—' : (accountValue | currency:'USD') }}</dd>
+    </dl>
+    <p *ngIf="holdingsCurrent && portfolio.length && marketValue === null" class="account-quote-time" role="status">
+      {{ quotesPending ? 'Pricing positions' : 'Quotes unavailable' }} · {{ quotedCount }} of {{ portfolio.length }} priced
+    </p>
+    <p *ngIf="holdingsCurrent && portfolio.length && marketValue !== null" class="account-quote-time">
+      <ng-container *ngIf="oldestQuote as timestamp; else unknownQuoteTimes">
+        Oldest quote <time [attr.datetime]="timestamp | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ timestamp | date:'MMM d, HH:mm':'+0000' }} UTC</time>
+        <ng-container *ngIf="previousQuoteCount"> · {{ previousQuoteCount }} retained</ng-container>
+      </ng-container>
+      <ng-template #unknownQuoteTimes>Some quote times are unavailable</ng-template>
+    </p>
+  </div>
+  <dl class="portfolio-metrics">
     <div class="portfolio-metric">
       <dt>Available cash</dt>
       <dd>{{ cashBalance === null ? '—' : (cashBalance | currency:'USD') }}</dd>
@@ -62,76 +63,23 @@
       </dd>
     </div>
   </dl>
-  <div class="account-foot" *ngIf="portfolioPrepared || (holdingsCurrent && portfolio.length)">
-    <p *ngIf="holdingsCurrent && portfolio.length && marketValue === null" class="mb-0" role="status">
-      {{ quotesPending ? 'Valuation in progress.' : 'Some quotes are unavailable.' }}
-      {{ quotedCount }} of {{ portfolio.length }} positions priced.
-    </p>
-    <p *ngIf="holdingsCurrent && portfolio.length && marketValue !== null" class="mb-0">
-      <ng-container *ngIf="oldestQuote as timestamp; else unknownQuoteTimes">
-        Oldest holding quote <time [attr.datetime]="timestamp | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ timestamp | date:'MMM d, HH:mm':'+0000' }} UTC</time>
-      </ng-container>
-      <ng-template #unknownQuoteTimes>Some quote times are unavailable</ng-template>
-    </p>
-    <p *ngIf="portfolioPrepared" class="prepared-account-label mb-0">Includes historical fills</p>
-  </div>
 </section>
 
-<div class="portfolio-analysis" [class.portfolio-analysis--with-allocation]="walletInitialized === true">
+<div class="portfolio-analysis">
 <app-portfolio-performance [points]="performance?.points ?? []" [loading]="performanceLoading"
+                           [attribution]="performance?.attribution ?? []"
                            [failed]="performanceFailed" [message]="performance?.message ?? ''"
                            [missingSessions]="performance?.missingSessions ?? 0"
                            [missingBenchmarkSessions]="performance?.missingBenchmarkSessions ?? 0"
                            (retry)="loadPerformance()"></app-portfolio-performance>
 
-<ng-container *ngIf="walletInitialized === true">
-<section class="allocation-panel" aria-labelledby="allocation-title" *ngIf="allocation as composition">
-  <div class="panel-header">
-    <div>
-      <h2 id="allocation-title">Allocation</h2>
-      <p>Share of account value, including cash</p>
-    </div>
-  </div>
-
-  <p *ngIf="composition.message; else allocationBreakdown" class="allocation-message" role="status">{{ composition.message }}</p>
-  <ng-template #allocationBreakdown>
-    <div class="allocation-body">
-      <div class="allocation-bar" aria-hidden="true">
-        <span *ngFor="let entry of composition.entries; trackBy: trackByAllocation" class="allocation-tone"
-              [attr.data-tone]="entry.tone" [style.width.%]="entry.weight * 100"></span>
-      </div>
-
-      <ng-template #allocationRow let-entry>
-        <span class="allocation-tone allocation-swatch" [attr.data-tone]="entry.tone" aria-hidden="true"></span>
-        <a *ngIf="entry.ticker; else cashLabel" [routerLink]="['/search-details', entry.ticker]">{{ entry.ticker }}</a>
-        <ng-template #cashLabel><span>Cash</span></ng-template>
-        <span class="allocation-amount">{{ entry.amount | currency:'USD' }}</span>
-        <strong>{{ entry.weight > 0 && entry.weight < 0.0005 ? '<0.1%' : (entry.weight | percent:'1.0-1') }}</strong>
-      </ng-template>
-      <ul class="allocation-list">
-        <li *ngFor="let entry of composition.entries | slice:0:visibleAllocationEntries; trackBy: trackByAllocation">
-          <ng-container *ngTemplateOutlet="allocationRow; context: { $implicit: entry }"></ng-container>
-        </li>
-      </ul>
-      <details *ngIf="composition.entries.length > visibleAllocationEntries" class="allocation-more">
-        <summary>Show {{ composition.entries.length - visibleAllocationEntries }} more {{ composition.entries.length === visibleAllocationEntries + 1 ? 'holding' : 'holdings' }}</summary>
-        <ul class="allocation-list">
-          <li *ngFor="let entry of composition.entries | slice:visibleAllocationEntries; trackBy: trackByAllocation">
-            <ng-container *ngTemplateOutlet="allocationRow; context: { $implicit: entry }"></ng-container>
-          </li>
-        </ul>
-      </details>
-    </div>
-  </ng-template>
-</section>
-</ng-container>
 </div>
 
 <div class="portfolio-ledger">
 <section class="positions-panel" aria-labelledby="positions-title" [attr.aria-busy]="isLoading">
   <div class="panel-header">
     <div>
-      <h2 id="positions-title" tabindex="-1">Positions</h2>
+      <h2 #positionsTitle id="positions-title" tabindex="-1">Positions</h2>
       <p *ngIf="!holdingsCurrent && !isLoading && portfolio.length">Showing the last loaded positions</p>
     </div>
     <span class="panel-context" *ngIf="holdingsCurrent">{{ portfolio.length }} open · USD<ng-container *ngIf="portfolio.length"> · Quotes may be delayed</ng-container></span>
@@ -140,6 +88,9 @@
   <div *ngIf="isLoading" class="status-loading" role="status">
     <mat-spinner diameter="22" aria-hidden="true"></mat-spinner>
     {{ portfolio.length ? 'Refreshing positions…' : 'Loading positions…' }}
+  </div>
+  <div *ngIf="quoteRecoveryNeeded" class="panel-messages">
+    <button type="button" class="state-action" (click)="refreshVisibleQuotes(true)">Retry unavailable quotes</button>
   </div>
 
   <p *ngIf="!isLoading && walletInitialized === false" class="panel-footer">Open your paper account to start building positions.</p>
@@ -175,7 +126,7 @@
       </tr>
     </thead>
     <tbody role="rowgroup">
-      <tr *ngFor="let stock of sortedPortfolio; trackBy: trackByTicker" role="row">
+      <tr *ngFor="let stock of sortedPortfolio; trackBy: trackByTicker" role="row" [attr.data-quote-symbol]="stock.ticker">
         <th scope="row" role="rowheader" class="holding-company">
           <a class="holding-link" [routerLink]="['/search-details', stock.ticker]">
             <span class="holding-ticker">{{ stock.ticker }}</span>
@@ -241,13 +192,58 @@
   <footer *ngIf="portfolio.length" class="panel-footer">Weight includes cash. Unrealized P&amp;L uses the cost of open shares.</footer>
 </section>
 
+<ng-container *ngIf="walletInitialized === true">
+<section class="allocation-panel" aria-labelledby="allocation-title" *ngIf="allocation as composition">
+  <div class="panel-header">
+    <div>
+      <h2 id="allocation-title">Current allocation</h2>
+      <p>Cash and open positions</p>
+    </div>
+  </div>
+
+  <p *ngIf="composition.message; else allocationBreakdown" class="allocation-message" role="status">{{ composition.message }}</p>
+  <ng-template #allocationBreakdown>
+    <div class="allocation-body">
+      <div class="allocation-bar" aria-hidden="true">
+        <span *ngFor="let entry of composition.entries; trackBy: trackByAllocation" class="allocation-tone"
+              [attr.data-tone]="entry.tone" [style.width.%]="entry.weight * 100"></span>
+      </div>
+
+      <ng-template #allocationRow let-entry>
+        <span class="allocation-tone allocation-swatch" [attr.data-tone]="entry.tone" aria-hidden="true"></span>
+        <a *ngIf="entry.ticker; else cashLabel" [routerLink]="['/search-details', entry.ticker]">{{ entry.ticker }}</a>
+        <ng-template #cashLabel><span>Cash</span></ng-template>
+        <span class="allocation-amount">{{ entry.amount | currency:'USD' }}</span>
+        <strong>{{ entry.weight > 0 && entry.weight < 0.0005 ? '<0.1%' : (entry.weight | percent:'1.0-1') }}</strong>
+      </ng-template>
+      <ul class="allocation-list">
+        <li *ngFor="let entry of composition.entries | slice:0:visibleAllocationEntries; trackBy: trackByAllocation">
+          <ng-container *ngTemplateOutlet="allocationRow; context: { $implicit: entry }"></ng-container>
+        </li>
+      </ul>
+      <details *ngIf="composition.entries.length > visibleAllocationEntries" class="allocation-more">
+        <summary>Show {{ composition.entries.length - visibleAllocationEntries }} more {{ composition.entries.length === visibleAllocationEntries + 1 ? 'holding' : 'holdings' }}</summary>
+        <ul class="allocation-list">
+          <li *ngFor="let entry of composition.entries | slice:visibleAllocationEntries; trackBy: trackByAllocation">
+            <ng-container *ngTemplateOutlet="allocationRow; context: { $implicit: entry }"></ng-container>
+          </li>
+        </ul>
+      </details>
+    </div>
+  </ng-template>
+</section>
+</ng-container>
+
 <section class="orders-panel" aria-labelledby="orders-title" [attr.aria-busy]="receiptsLoading">
   <div class="panel-header">
     <div>
-      <h2 id="orders-title" tabindex="-1">Order activity</h2>
-      <p>Paper trades and historical fills</p>
+      <h2 #ordersTitle id="orders-title" tabindex="-1">Order activity</h2>
+      <p>Paper trades<ng-container *ngIf="portfolioPrepared"> and historical fills</ng-container></p>
     </div>
-    <button type="button" class="state-action" [attr.aria-disabled]="receiptsLoading" (click)="!receiptsLoading && loadReceipts()">Refresh orders</button>
+    <button *ngIf="receiptsError || pendingOrders.length" type="button" class="state-action"
+            [disabled]="receiptsLoading || checkingOrderId !== null" (click)="loadReceipts()">
+      {{ pendingOrders.length ? 'Check order status' : 'Retry loading orders' }}
+    </button>
   </div>
   <div *ngIf="receiptsError" class="panel-messages">
     <p class="state-message state-message--error" role="alert">{{ receiptsError }}</p>
@@ -271,8 +267,8 @@
   </div>
   <ul class="order-list" *ngIf="receipts.length">
     <li *ngFor="let receipt of receipts">
-      <details class="order-receipt">
-        <summary>
+      <details class="order-receipt" [id]="'portfolio-receipt-' + receipt.orderId">
+        <summary tabindex="0">
           <span class="receipt-symbol">
             <strong><span class="receipt-side">{{ receipt.side === 'buy' ? 'Buy' : 'Sell' }}</span> {{ receipt.ticker }}</strong>
             <span class="receipt-origin" *ngIf="receipt.source === 'prepared'">Historical fill</span>
@@ -309,58 +305,86 @@
 </div>
 
 <ng-template #tradeDialog let-dialog>
-  <form *ngIf="activeTrade as trade" (ngSubmit)="submitTrade()">
-    <div class="modal-header">
+  <form *ngIf="activeTrade as trade" class="execution-ticket" (ngSubmit)="submitTrade()">
+    <header class="execution-header">
       <div>
-        <p class="page-eyebrow">Paper order</p>
-        <h2 id="portfolio-trade-title" class="modal-title">
-          {{ trade.side === 'buy' ? 'Buy' : 'Sell' }} {{ trade.holding.ticker }}
+        <p class="execution-kicker">Paper trading <span aria-hidden="true">/</span> USD</p>
+        <h2 id="portfolio-trade-title" tabindex="-1" [attr.ngbAutofocus]="isRetryingTrade ? '' : null">
+          <ng-container *ngIf="tradeStage === 'receipt'; else orderTitle">{{ trade.side === 'buy' ? 'Bought' : 'Sold' }} {{ trade.holding.ticker }}</ng-container>
+          <ng-template #orderTitle>{{ tradeStage === 'review' ? (isRetryingTrade ? 'Check order' : 'Review order') + ' · ' : '' }}{{ trade.side === 'buy' ? 'Buy' : 'Sell' }} {{ trade.holding.ticker }}</ng-template>
         </h2>
       </div>
-      <button type="button" class="btn-close" aria-label="Close trade"
+      <button type="button" class="execution-close btn-close" aria-label="Close trade"
               [disabled]="submittingTrade" (click)="dialog.dismiss()"></button>
-    </div>
-    <div class="modal-body">
-      <dl class="trade-summary">
-        <div><dt>{{ tradeReference?.quoteKind === 'reference' ? 'Reference price' : 'Last quote' }}</dt><dd>{{ (tradeReference?.quote?.price ?? trade.price) | currency:'USD':'symbol':'1.2-6' }}</dd></div>
-        <div *ngIf="trade.side === 'buy'"><dt>Available cash</dt><dd>{{ cashBalance | currency:'USD' }}</dd></div>
-        <div *ngIf="trade.side === 'sell'"><dt>Shares owned</dt><dd>{{ trade.holding.quantity }}</dd></div>
-        <div><dt>Estimated total</dt><dd>{{ estimatedTotal === null ? '—' : (estimatedTotal | currency:'USD') }}</dd></div>
-      </dl>
-      <label for="portfolio-trade-quantity" class="form-label">Shares</label>
-      <div class="quantity-field">
-        <input id="portfolio-trade-quantity" name="quantity" type="number" inputmode="numeric" min="1" step="1"
-               required ngbAutofocus class="form-control" [(ngModel)]="quantity"
-               [readonly]="submittingTrade || isRetryingTrade || !!tradeReference" [attr.aria-invalid]="quantityError ? 'true' : null"
-               [attr.aria-describedby]="quantityError ? 'portfolio-trade-estimate portfolio-quantity-error' : 'portfolio-trade-estimate'">
-        <button *ngIf="!isRetryingTrade && !tradeReference" type="button" class="state-action" [disabled]="submittingTrade || quantityLimit === 0"
-                (click)="useMaximumQuantity()">Use max</button>
+    </header>
+
+    <ol class="execution-steps" aria-label="Order progress">
+      <li [attr.aria-current]="tradeStage === 'draft' ? 'step' : null"><span aria-hidden="true">01</span> Size</li>
+      <li [attr.aria-current]="tradeStage === 'review' ? 'step' : null"><span aria-hidden="true">02</span> Review</li>
+      <li [attr.aria-current]="tradeStage === 'receipt' ? 'step' : null"><span aria-hidden="true">03</span> Receipt</li>
+    </ol>
+
+    <ng-container *ngIf="tradeReceipt as receipt; else unfinishedTrade">
+      <div class="execution-body">
+        <div class="execution-total execution-total--filled" role="status">
+          <div><span>Filled · {{ receipt.quantity | number }} {{ receipt.quantity === 1 ? 'share' : 'shares' }}</span>
+            <strong>{{ receipt.total === null ? '—' : (receipt.total | currency:'USD') }}</strong></div>
+          <span>{{ trade.side === 'buy' ? 'Simulated cost' : 'Simulated proceeds' }}</span>
+        </div>
+        <dl class="execution-facts">
+          <div><dt>Fill price</dt><dd>{{ receipt.price === null ? '—' : (receipt.price | currency:'USD':'symbol':'1.2-6') }}</dd></div>
+          <div *ngIf="receipt.quotedAt as quotedAt"><dt>{{ receipt.quoteKind === 'reference' ? 'Reference quote' : 'Quote time' }}</dt>
+            <dd><time [attr.datetime]="quotedAt">{{ quotedAt | date:'MMM d, HH:mm':'+0000' }} UTC</time></dd></div>
+          <div><dt>Cash after order</dt><dd>{{ receipt.balance === null ? '—' : (receipt.balance | currency:'USD') }}</dd></div>
+        </dl>
       </div>
-      <p id="portfolio-trade-estimate" class="form-text" role="status">
-        <ng-container *ngIf="tradeReference as reference; else normalEstimate">
-          {{ reference.quoteKind === 'reference' ? 'A recent quote is unavailable. Review the reference quote from' : 'The quote changed. Review the updated price from' }}
-          <time [attr.datetime]="reference.quote.quotedAt">{{ reference.quote.quotedAt | date:'MMM d, y, h:mm a':'+0000' }} UTC</time>.
-        </ng-container>
-        <ng-template #normalEstimate>
-          <ng-container *ngIf="!isRetryingTrade">Up to {{ quantityLimit | number }} {{ quantityLimit === 1 ? 'share' : 'shares' }} at this quote. </ng-container>
-          Paper orders check the quote when you submit.
-        </ng-template>
-      </p>
-      <label *ngIf="tradeReference" class="d-flex gap-2 align-items-start mt-2">
-        <input class="form-check-input flex-shrink-0" type="checkbox" name="referenceAcknowledged"
-               [(ngModel)]="referenceAcknowledged" [disabled]="submittingTrade">
-        {{ tradeReference.quoteKind === 'reference' ? 'Use this older quote for this paper order.' : 'Use this updated quote for this paper order.' }}
-      </label>
-      <p *ngIf="quantityError" id="portfolio-quantity-error" class="text-danger">{{ quantityError }}</p>
-      <p *ngIf="tradeError" class="state-message state-message--error" role="alert">{{ tradeError }}</p>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="state-action" [disabled]="submittingTrade" (click)="dialog.dismiss()">
-        {{ isRetryingTrade ? 'Close' : 'Cancel' }}
-      </button>
-      <button type="submit" class="btn btn-primary" [attr.aria-disabled]="!canSubmitTrade">
-        {{ submittingTrade ? 'Submitting…' : isRetryingTrade ? 'Retry same order' : tradeReference ? (tradeReference.quoteKind === 'reference' ? 'Simulate at reference price' : 'Simulate at updated price') : (trade.side === 'buy' ? 'Place buy order' : 'Place sell order') }}
-      </button>
-    </div>
+      <footer class="execution-footer">
+        <button type="button" class="execution-secondary" (click)="dialog.close()">Done</button>
+        <button type="button" class="execution-primary" (click)="viewTradeReceipt()">View receipt <span aria-hidden="true">↓</span></button>
+      </footer>
+    </ng-container>
+
+    <ng-template #unfinishedTrade>
+      <div class="execution-body">
+        <div *ngIf="tradeStage === 'draft'" class="execution-quantity">
+          <label for="portfolio-trade-quantity">Shares</label>
+          <div class="execution-quantity-field">
+            <input id="portfolio-trade-quantity" name="quantity" type="number" inputmode="numeric" min="1" step="1"
+                   required ngbAutofocus [(ngModel)]="quantity" [attr.aria-invalid]="quantityError ? 'true' : null"
+                   [attr.aria-describedby]="quantityError ? 'portfolio-quantity-error' : null">
+            <button type="button" class="execution-secondary" [disabled]="quantityLimit === 0" (click)="useMaximumQuantity()">Use max</button>
+          </div>
+        </div>
+        <div class="execution-total" aria-live="polite">
+          <div><span>{{ trade.side === 'buy' ? 'Estimated cost' : 'Estimated proceeds' }}</span>
+            <strong>{{ estimatedTotal === null ? '—' : (estimatedTotal | currency:'USD') }}</strong></div>
+          <span *ngIf="tradeStage === 'review'">{{ quantity | number }} {{ quantity === 1 ? 'share' : 'shares' }}</span>
+        </div>
+        <dl class="execution-facts" *ngIf="tradeQuote as quote">
+          <div><dt>{{ tradeReference?.quoteKind === 'reference' ? 'Reference price' : tradeReference ? 'Updated price' : 'Quote price' }}</dt>
+            <dd>{{ quote.price | currency:'USD':'symbol':'1.2-6' }}</dd></div>
+          <div><dt>Quote time</dt><dd><time *ngIf="quote.quotedAt; else unknownTime" [attr.datetime]="quote.quotedAt | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ quote.quotedAt | date:'MMM d, HH:mm':'+0000' }} UTC</time>
+            <ng-template #unknownTime>Unavailable</ng-template></dd></div>
+          <div *ngIf="trade.side === 'buy'"><dt>Available cash</dt><dd>{{ cashBalance === null ? '—' : (cashBalance | currency:'USD') }}</dd></div>
+          <div *ngIf="trade.side === 'sell'"><dt>Shares owned</dt><dd>{{ trade.holding.quantity | number }}</dd></div>
+        </dl>
+        <div *ngIf="tradeReference as reference" class="execution-reference">
+          <p>{{ reference.quoteKind === 'reference' ? 'A recent quote is unavailable. Review this reference price before submitting.' : 'The quote changed after your last review. Check the updated price before submitting.' }}</p>
+          <label><input type="checkbox" name="referenceAcknowledged" [(ngModel)]="referenceAcknowledged" [disabled]="submittingTrade">
+            {{ reference.quoteKind === 'reference' ? 'Use this reference quote' : 'Use this updated quote' }}</label>
+        </div>
+        <p *ngIf="tradeStage === 'review' && !tradeReference && !isRetryingTrade" class="execution-note">The simulated fill uses the quote available at submission. The final amount can differ from this estimate.</p>
+        <p *ngIf="quantityError" id="portfolio-quantity-error" class="execution-error" role="alert">{{ quantityError }}</p>
+        <p *ngIf="tradeError" class="execution-error" role="alert">{{ tradeError }}</p>
+      </div>
+      <footer class="execution-footer">
+        <button *ngIf="tradeStage === 'review' && !isRetryingTrade; else closeOrder" type="button" class="execution-secondary"
+                [disabled]="submittingTrade" (click)="editTrade()">Edit shares</button>
+        <ng-template #closeOrder><button type="button" class="execution-secondary" [disabled]="submittingTrade" (click)="dialog.dismiss()">{{ isRetryingTrade ? 'Close' : 'Cancel' }}</button></ng-template>
+        <button type="submit" class="execution-primary" [disabled]="!canSubmitTrade">
+          {{ submittingTrade ? 'Submitting…' : tradeStage === 'draft' ? 'Review order' : isRetryingTrade ? 'Retry same order' : tradeReference ? (tradeReference.quoteKind === 'reference' ? 'Simulate at reference price' : 'Simulate at updated price') : (trade.side === 'buy' ? 'Place buy order' : 'Place sell order') }}
+        </button>
+      </footer>
+    </ng-template>
   </form>
 </ng-template>
