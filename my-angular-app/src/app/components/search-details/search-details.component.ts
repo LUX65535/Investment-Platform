@@ -14,6 +14,8 @@ import { HighchartsChartModule } from 'highcharts-angular';
 import * as Highcharts from 'highcharts/highstock';
 import HC_accessibility from 'highcharts/modules/accessibility';
 import { ResearchLandingComponent } from '../research-landing/research-landing.component';
+import { ResearchQuickSwitchComponent } from './research-quick-switch.component';
+import { ResearchRecentsService } from '../../services/research-recents.service';
 HC_accessibility(Highcharts);
 import volumeByPrice from 'highcharts/indicators/volume-by-price';
 import indicators from 'highcharts/indicators/indicators';
@@ -124,10 +126,10 @@ interface SuggestionRequest {
   imports: [
     CommonModule, FormsModule, ReactiveFormsModule, RouterModule, NgbModule,
     MatAutocompleteModule, MatInputModule, MatProgressSpinnerModule, HighchartsChartModule,
-    ResearchLandingComponent,
+    ResearchLandingComponent, ResearchQuickSwitchComponent,
   ],
   templateUrl: './search-details.component.html',
-  styleUrls: ['./search-details.component.css', './search-details-news.css', './search-details-mobile.css'],
+  styleUrls: ['./search-details.component.css', './search-details-news.css', './search-details-mobile.css', './search-details-comparison.css'],
 })
 export class SearchDetailsComponent implements OnInit, OnDestroy {
   tickerFormControl = new FormControl<string | StockResult>('', { nonNullable: true });
@@ -152,11 +154,15 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   overviewStart: number | null = null;
   overviewEnd: number | null = null;
   overviewReturn: number | null = null;
-  compareWithSpy = false;
+  comparisonTicker: string | null = null;
+  comparisonPickerOpen = false;
+  comparisonInputError = '';
   benchmarkLoading = false;
   benchmarkFailed = false;
-  benchmarkResult: { start: number; end: number; stock: number; spy: number } | null = null;
+  benchmarkUnavailable = '';
+  benchmarkResult: { start: number; end: number; stock: number; comparison: number } | null = null;
   private benchmarkBars: AggregateBarResponse[] | null = null;
+  private benchmarkRequest?: Subscription;
   private hourlyBars: AggregateBarResponse[] | null = null;
   private overviewDailyBars: AggregateBarResponse[] | null = null;
   private overviewDailyLoading = false;
@@ -172,6 +178,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     { id: 'insights', label: 'Insights' },
   ];
   private readonly destroyRef = inject(DestroyRef);
+  private readonly recents = inject(ResearchRecentsService);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private searchSubscription = new Subscription();
   activeTab: DetailTab = 'summary';
@@ -202,6 +209,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   bigChartOptions: Highcharts.Options = {};
   readonly historyRanges = historyRanges;
   historyRange: HistoryRange | null = '1M';
+  showSma = false;
+  smaAvailable = false;
   historyEnd: number | null = null;
   private historyStart: number | null = null;
 
@@ -664,6 +673,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const bars = data.results.filter(bar => bar && [bar.t, bar.o, bar.h, bar.l, bar.c, bar.v].every(Number.isFinite))
       .sort((a, b) => a.t - b.t);
     if (!bars.length) return {};
+    this.smaAvailable = bars.length >= 20;
     this.historyStart = bars[0].t;
     this.historyEnd = bars[bars.length - 1].t;
     const ohlc = bars.map(bar => [
@@ -775,9 +785,13 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         }
       }, {
         type: 'sma',
+        name: 'SMA 20',
+        id: 'sma-20',
         linkedTo: 'aapl',
-        zIndex: 1,
-        color: '#677ca0',
+        params: { period: 20, index: 3 },
+        visible: this.showSma && this.smaAvailable,
+        zIndex: 3,
+        color: '#7653a6',
         marker: {
           enabled: false
         }
@@ -819,6 +833,16 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.updateViewQuery();
   }
 
+  toggleSma(): void {
+    if (!this.smaAvailable) return;
+    this.showSma = !this.showSma;
+    this.bigChartOptions = {
+      ...this.bigChartOptions,
+      series: this.bigChartOptions.series?.map(series => series.id === 'sma-20'
+        ? { ...series, visible: this.showSma } : series),
+    };
+  }
+
   private updateHistoryRange(range: HistoryRange): void {
     this.historyRange = range;
     if (this.historyEnd === null) return;
@@ -856,11 +880,12 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
     const seriesData = visible.map(point => [point.t, point.c]);
     const ticker = this.lastSuccessfulSearch ?? '';
-    const aligned = this.compareWithSpy && range !== 'Hourly' && this.benchmarkBars
+    const comparison = this.comparisonTicker;
+    const aligned = comparison && range !== 'Hourly' && this.benchmarkBars
       ? alignedPriceReturns(visible, this.benchmarkBars) : [];
     this.benchmarkResult = null;
-    if (aligned.length >= 2) {
-      this.renderBenchmark(ticker, aligned);
+    if (comparison && aligned.length >= 2) {
+      this.renderBenchmark(ticker, comparison, aligned);
       return;
     }
 
@@ -918,9 +943,9 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     };
   }
 
-  private renderBenchmark(ticker: string, aligned: Array<[number, number, number]>): void {
-    const [end, stock, spy] = aligned[aligned.length - 1];
-    this.benchmarkResult = { start: aligned[0][0], end, stock, spy };
+  private renderBenchmark(ticker: string, symbol: string, aligned: Array<[number, number, number]>): void {
+    const [end, stock, comparison] = aligned[aligned.length - 1];
+    this.benchmarkResult = { start: aligned[0][0], end, stock, comparison };
     this.chartOptions = {
       title: { text: '' },
       chart: { animation: false, backgroundColor: 'transparent', style: { fontFamily: 'inherit' } },
@@ -932,11 +957,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       tooltip: { shared: true, valueSuffix: '%', valueDecimals: 2 },
       plotOptions: { series: { animation: false, marker: { enabled: false } } },
       legend: { enabled: true },
-      accessibility: { description: `${ticker} and SPY price returns on matching trading days, rebased to zero.` },
+      accessibility: { description: `${ticker} and ${symbol} price returns on matching trading days, rebased to zero.` },
       exporting: { enabled: false },
       series: [
         { type: 'line', name: ticker, color: '#245adb', lineWidth: 2.5, data: aligned.map(([day, value]) => [day, value]) },
-        { type: 'line', name: 'SPY', color: '#75649f', dashStyle: 'ShortDash', data: aligned.map(([day, , value]) => [day, value]) },
+        { type: 'line', name: symbol, color: '#75649f', dashStyle: 'ShortDash', data: aligned.map(([day, , value]) => [day, value]) },
       ],
     };
   }
@@ -1119,11 +1144,10 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.overviewDailyBars = null;
     this.overviewDailyLoading = false;
     this.overviewDailyFailed = false;
-    this.compareWithSpy = false;
-    this.benchmarkBars = null;
+    this.setComparison(null);
+    this.comparisonPickerOpen = false;
+    this.comparisonInputError = '';
     this.benchmarkResult = null;
-    this.benchmarkLoading = false;
-    this.benchmarkFailed = false;
     this.overviewStart = null;
     this.overviewEnd = null;
     this.overviewReturn = null;
@@ -1140,6 +1164,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.chartOptions = {};
     this.bigChartOptions = {};
     this.historyRange = '1M';
+    this.smaAvailable = false;
     this.historyStart = null;
     this.historyEnd = null;
     this.trendChartOptions = {};
@@ -1169,6 +1194,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         }
 
         this.lastSuccessfulSearch = ticker;
+        this.recents.remember(ticker);
         const currency = typeof profile.currency === 'string' ? profile.currency.toUpperCase() : '';
         this.searchResults = {
           ...profile,
@@ -1249,35 +1275,101 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }));
   }
 
+  get canCompare(): boolean {
+    return this.searchResults?.currency === 'USD';
+  }
+
   toggleBenchmark(): void {
-    if (!this.lastSuccessfulSearch || this.lastSuccessfulSearch === 'SPY') return;
-    this.compareWithSpy = !this.compareWithSpy;
-    if (this.compareWithSpy && this.overviewRange === 'Hourly') this.overviewRange = '1M';
+    if (!this.canCompare || this.lastSuccessfulSearch === 'SPY' || this.searchResults?.ticker === 'SPY') return;
+    this.selectComparison(this.comparisonTicker === 'SPY' ? null : 'SPY');
+  }
+
+  toggleComparisonPicker(input: HTMLInputElement): void {
+    this.comparisonPickerOpen = !this.comparisonPickerOpen;
+    this.comparisonInputError = '';
+    if (!this.comparisonPickerOpen) return;
+    input.value = this.comparisonTicker ?? '';
+    requestAnimationFrame(() => {
+      if (this.comparisonPickerOpen && input.isConnected) input.focus();
+    });
+  }
+
+  closeComparisonPicker(trigger: HTMLButtonElement): void {
+    this.comparisonPickerOpen = false;
+    this.comparisonInputError = '';
+    trigger.focus();
+  }
+
+  submitComparison(input: HTMLInputElement, trigger: HTMLButtonElement): void {
+    const symbol = input.value.trim().toUpperCase();
+    if (!tickerPattern.test(symbol) || symbol === this.lastSuccessfulSearch || symbol === this.searchResults?.ticker) {
+      this.comparisonInputError = 'Enter a different stock or ETF ticker, such as MSFT.';
+      input.focus();
+      return;
+    }
+    this.selectComparison(symbol);
+    this.closeComparisonPicker(trigger);
+  }
+
+  selectComparison(symbol: string | null): void {
+    if (symbol && !this.canCompare) return;
+    this.setComparison(symbol);
+    if (symbol && this.overviewRange === 'Hourly') this.overviewRange = '1M';
     this.renderOverview();
     this.loadOverview();
     this.updateViewQuery();
   }
 
+  private setComparison(symbol: string | null): void {
+    if (this.comparisonTicker === symbol) return;
+    this.benchmarkRequest?.unsubscribe();
+    this.benchmarkRequest = undefined;
+    this.comparisonTicker = symbol;
+    this.benchmarkBars = null;
+    this.benchmarkLoading = false;
+    this.benchmarkFailed = false;
+    this.benchmarkUnavailable = '';
+  }
+
   loadBenchmark(): void {
-    if (!this.compareWithSpy || this.benchmarkLoading || this.benchmarkBars || !this.lastSuccessfulSearch
-      || this.lastSuccessfulSearch === 'SPY' || this.overviewRange === 'Hourly') return;
+    const symbol = this.comparisonTicker;
+    if (!symbol || this.benchmarkLoading || this.benchmarkBars || this.benchmarkUnavailable
+      || !this.lastSuccessfulSearch || this.overviewRange === 'Hourly') return;
+    if (!this.canCompare || symbol === this.searchResults?.ticker) {
+      this.benchmarkUnavailable = 'Comparison requires two different securities quoted in USD.';
+      return;
+    }
+
     this.benchmarkFailed = false;
     this.benchmarkLoading = true;
-    this.searchSubscription.add(this.getBigChartData('SPY').pipe(
+    const eligibility = symbol === 'SPY' ? of(true) : this.getStockDetails(symbol).pipe(
+      map(profile => typeof profile?.ticker === 'string' && profile.ticker.trim().toUpperCase() === symbol
+        && typeof profile.currency === 'string' && profile.currency.trim().toUpperCase() === 'USD'),
+    );
+    this.benchmarkRequest = eligibility.pipe(
+      switchMap(eligible => {
+        if (eligible) return this.getBigChartData(symbol);
+        this.benchmarkUnavailable = `No USD-quoted security was found for ${symbol}.`;
+        return EMPTY;
+      }),
       finalize(() => this.benchmarkLoading = false),
     ).subscribe({
       next: ({ results }) => {
         this.benchmarkBars = results;
         this.renderOverview();
       },
-      error: () => this.benchmarkFailed = true,
-    }));
+      error: (error: HttpErrorResponse) => {
+        if (error.status === 404) this.benchmarkUnavailable = `No daily prices were found for ${symbol}.`;
+        else this.benchmarkFailed = true;
+      },
+    });
+    this.searchSubscription.add(this.benchmarkRequest);
   }
 
   selectOverviewRange(range: OverviewRange): void {
     if (this.overviewRange === range) return;
     this.overviewRange = range;
-    if (range === 'Hourly') this.compareWithSpy = false;
+    if (range === 'Hourly') this.setComparison(null);
     this.renderOverview();
     this.loadOverview();
     this.updateViewQuery();
@@ -1298,12 +1390,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const tab = this.detailTabs.find(item => item.id === query.get('view'))?.id ?? 'summary';
     const range = overviewRanges.find(item => item.toLowerCase() === query.get('range')) ?? '1M';
     const history = historyRanges.find(item => item.toLowerCase() === query.get('history')) ?? '1M';
-    const comparison = Boolean(ticker && ticker.toUpperCase() !== 'SPY' && query.get('compare') === 'spy' && range !== 'Hourly');
-    const viewChanged = tab !== this.activeTab || range !== this.overviewRange || comparison !== this.compareWithSpy;
+    const symbol = query.get('compare')?.trim().toUpperCase() ?? '';
+    const comparison = ticker && range !== 'Hourly' && symbol !== ticker.toUpperCase() && tickerPattern.test(symbol)
+      ? symbol : null;
+    const viewChanged = tab !== this.activeTab || range !== this.overviewRange || comparison !== this.comparisonTicker;
     this.activeTab = tab;
-    if (range !== this.overviewRange || comparison !== this.compareWithSpy) {
+    if (range !== this.overviewRange || comparison !== this.comparisonTicker) {
       this.overviewRange = range;
-      this.compareWithSpy = comparison;
+      this.setComparison(comparison);
       this.renderOverview();
     }
     if (history !== this.historyRange) this.updateHistoryRange(history);
@@ -1318,7 +1412,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         view: this.activeTab === 'summary' ? null : this.activeTab,
         range: this.overviewRange === '1M' ? null : this.overviewRange.toLowerCase(),
         history: history === '1m' ? null : history,
-        compare: this.compareWithSpy ? 'spy' : null,
+        compare: this.comparisonTicker?.toLowerCase() ?? null,
       },
       queryParamsHandling: 'merge',
       preserveFragment: true,

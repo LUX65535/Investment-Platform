@@ -8,10 +8,11 @@
   min-width: 0;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: .65rem;
+  margin-block: -.75rem .45rem;
 }
 
+.research-header .search-form { margin-inline-start: auto; }
 
 .research-kicker {
   margin: 0 0 .55rem;
@@ -167,12 +168,10 @@
 
 .security-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(12rem, .65fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(13rem, .7fr) auto;
   align-items: center;
-  gap: .9rem 1.2rem;
-  padding: clamp(1rem, 3vw, 1.5rem);
-  background: linear-gradient(125deg, var(--surface) 50%, var(--surface-subtle));
-  box-shadow: var(--shadow);
+  gap: .55rem .95rem;
+  padding: .62rem .85rem;
 }
 
 .security-identity {
@@ -188,13 +187,13 @@
 
 .security-mark {
   display: grid;
-  width: clamp(2.9rem, 5vw, 3.65rem);
+  width: 2.65rem;
   aspect-ratio: 1;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid #c8d7f2;
-  border-radius: 12px;
-  background: linear-gradient(145deg, #f3f7ff, #e2ebff);
+  border-radius: .48rem;
+  background: var(--surface-subtle);
   color: var(--accent-hover);
   font-size: .9rem;
   font-weight: 750;
@@ -217,14 +216,14 @@
   flex-wrap: wrap;
   align-items: center;
   gap: .3rem .48rem;
-  margin: 0 0 .33rem;
+  margin: 0 0 .15rem;
   color: var(--muted);
   font-size: .74rem;
   font-weight: 620;
   overflow-wrap: anywhere;
 }
 
-.security-symbol span {
+.security-ticker {
   padding: .18rem .4rem;
   border-radius: 4px;
   background: var(--accent-soft);
@@ -234,9 +233,16 @@
   line-height: 1.15;
 }
 
+.security-exchange {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .security-identity h1 {
   margin: 0;
-  font-size: clamp(1.45rem, 4vw, 2.1rem);
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
   font-weight: 680;
   letter-spacing: -.045em;
   line-height: 1.15;
@@ -299,7 +305,7 @@
 }
 
 .quote-price {
-  font-size: clamp(2rem, 6.5vw, 3rem);
+  font-size: clamp(1.65rem, 4vw, 2.3rem);
   font-weight: 685;
   font-variant-numeric: tabular-nums;
   letter-spacing: -.055em;
@@ -318,9 +324,9 @@
 
 .security-quote p,
 .quote-note {
-  margin: .4rem 0 0;
+  margin: .18rem 0 0;
   color: var(--muted);
-  font-size: .8rem;
+  font-size: .75rem;
 }
 
 .security-quote .quote-caption {
@@ -346,7 +352,7 @@
 .detail-tabs {
   display: flex;
   gap: clamp(.45rem, 2vw, 1.3rem);
-  margin: .72rem 0 1rem;
+  margin: .25rem 0 .55rem;
   border-bottom: 1px solid var(--line);
 }
 
@@ -378,7 +384,7 @@
 .overview-grid,
 .insights-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(14rem, 19rem);
+  grid-template-columns: minmax(0, 1fr) minmax(13rem, 16rem);
   align-items: start;
   gap: .85rem;
 }
@@ -386,8 +392,12 @@
 .overview-sidebar {
   display: grid;
   min-width: 0;
-  gap: .85rem;
+  gap: 0;
 }
+
+.overview-sidebar .facts-panel + .facts-panel { border-top: 1px solid var(--line); }
+.overview-chart-panel { border-top: 2px solid var(--accent); }
+.overview-chart-panel .panel-heading { margin-bottom: .5rem; }
 
 .panel-heading {
   display: flex;
@@ -423,7 +433,7 @@
 
 .chart-panel,
 .facts-panel {
-  padding: clamp(.85rem, 2.3vw, 1.25rem);
+  padding: clamp(.7rem, 1.35vw, 1rem);
 }
 
 .chart-panel .panel-heading {
@@ -441,10 +451,8 @@
 }
 
 .performance-stat {
-  padding: .38rem .62rem;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--surface-subtle);
+  padding: .15rem 0 .15rem .6rem;
+  border-inline-start: 1px solid var(--line);
   text-align: right;
 }
 
@@ -456,7 +464,7 @@
   min-width: 0;
 }
 
-.chart--intraday { height: clamp(16rem, 33vw, 23rem); }
+.chart--intraday { height: clamp(18rem, 34vw, 28rem); }
 .chart--history { height: clamp(24rem, 47vw, 34rem); }
 .chart--insight { height: 19rem; }
 
@@ -534,13 +542,14 @@
   color: var(--accent-hover);
 }
 
-.history-ranges { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .5rem; }
+.history-ranges { display: flex; flex-wrap: wrap; gap: .22rem; margin-bottom: .4rem; }
+.history-indicator[aria-pressed="true"] { border-color: #7653a6; color: #68478c; background: #f2ecf9; }
 .history-ranges button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 
 .facts {
   display: grid;
   gap: 0;
-  margin: .65rem 0 0;
+  margin: .4rem 0 0;
 }
 
 .facts div {
@@ -548,7 +557,7 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: .45rem;
   align-items: baseline;
-  padding: .47rem 0;
+  padding: .37rem 0;
   border-top: 1px solid var(--line);
 }
 

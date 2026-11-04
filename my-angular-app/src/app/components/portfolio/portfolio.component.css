@@ -10,6 +10,7 @@
 }
 
 .portfolio-overview,
+.allocation-panel,
 .positions-panel,
 .orders-panel {
   min-width: 0;
@@ -18,7 +19,55 @@
   background: var(--surface);
 }
 
-.portfolio-overview { margin-bottom: 1.15rem; }
+.portfolio-overview,
+.allocation-panel { margin-bottom: 1.15rem; }
+
+.allocation-body,
+.allocation-message { padding: 0 clamp(.85rem, 2vw, 1.5rem) 1rem; }
+
+.allocation-message { margin: 0; color: var(--muted); font-size: .86rem; }
+
+.allocation-bar {
+  display: flex;
+  height: .65rem;
+  margin: 0 0 .6rem;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--surface-subtle);
+}
+
+.allocation-tone { flex: none; background: #a1afca; }
+.allocation-tone[data-tone='0'] { background: #8595ac; }
+.allocation-tone[data-tone='1'] { background: #2957c9; }
+.allocation-tone[data-tone='2'] { background: #5b80db; }
+.allocation-tone[data-tone='3'] { background: #8a80c2; }
+.allocation-tone[data-tone='4'] { background: #408391; }
+.allocation-swatch { width: .65rem; height: .65rem; border-radius: 3px; }
+
+.allocation-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0 1.15rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.allocation-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(3.5rem, auto);
+  gap: .4rem;
+  align-items: center;
+  min-height: 2.75rem;
+  border-bottom: 1px solid var(--line);
+  font-size: .85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.allocation-list a { padding-block: .6rem; font-weight: 650; overflow-wrap: anywhere; }
+.allocation-list strong { text-align: right; font-weight: 700; }
+.allocation-amount { color: var(--muted); }
+.allocation-more summary { padding: .7rem 0 .25rem; cursor: pointer; color: var(--accent); font-size: .85rem; }
 
 .portfolio-metrics {
   display: grid;

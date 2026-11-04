@@ -11,10 +11,10 @@
     <section class="featured" aria-labelledby="featured-title">
       <header class="featured-header">
         <div>
-          <p class="featured-kicker">Featured equity</p>
-          <h2 id="featured-title">Apple Inc. <span>AAPL</span></h2>
+          <p class="featured-kicker">AAPL · U.S. equity</p>
+          <h2 id="featured-title">Apple Inc.</h2>
         </div>
-        <a class="featured-action" [routerLink]="['/search-details', 'AAPL']" [queryParams]="{ range: '3m' }"
+        <a class="state-action featured-action" [routerLink]="['/search-details', 'AAPL']" [queryParams]="{ range: range.toLowerCase() }"
            aria-label="Open research for Apple">
           Open research
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -23,54 +23,87 @@
         </a>
       </header>
 
-      <ng-container *ngIf="featured as chart; else emptyFeature">
-        <div class="featured-values">
-          <div><strong>{{ chart.close | currency:'USD' }}</strong><span>Last close · USD</span></div>
-          <div class="featured-change" [class.featured-change--down]="chart.change < 0">
-            <strong>{{ chart.change > 0 ? '+' : '' }}{{ chart.change | number:'1.2-2' }}%</strong><span>3M price return</span>
-          </div>
+      <div class="featured-values" *ngIf="featured as chart">
+        <div><strong>{{ chart.close | currency:'USD' }}</strong><span>Last close · USD</span></div>
+        <div class="featured-change" [class.featured-change--down]="chart.change < 0">
+          <strong>{{ chart.change > 0 ? '+' : '' }}{{ chart.change | number:'1.2-2' }}%</strong><span>Period price return</span>
         </div>
-        <figure class="featured-figure">
-          <div class="featured-plot">
+      </div>
+
+      <div class="featured-toolbar">
+        <div class="featured-ranges" role="group" aria-label="Research chart period">
+          <button *ngFor="let period of ranges" type="button" [attr.aria-pressed]="period === range"
+                  [disabled]="!canSelectRange" (click)="selectRange(period)">{{ period }}</button>
+        </div>
+        <div *ngIf="activePoint as point" class="featured-readout">
+          <time [attr.datetime]="point.time | date:'yyyy-MM-dd':'+0000'">{{ point.time | date:'MMM d, yyyy':'+0000' }}</time>
+          <strong>{{ point.close | currency:'USD' }}</strong>
+        </div>
+      </div>
+
+      <figure *ngIf="featured as chart; else emptyFeature" class="featured-figure">
+        <div class="featured-plot">
+          <div class="chart-surface" (pointerdown)="inspectPointer($event)" (pointermove)="inspectPointer($event)">
+            <ng-container *ngIf="activePoint as point">
+              <input type="range" class="visually-hidden" min="0" [max]="chart.points.length - 1" [value]="pointIndex"
+                     aria-label="Inspect Apple daily closes" aria-describedby="featured-chart-help"
+                     [attr.aria-valuetext]="(point.time | date:'MMM d, yyyy':'+0000') + ', close ' + (point.close | currency:'USD')"
+                     (input)="inspectPoint($event)">
+              <span id="featured-chart-help" class="visually-hidden">Use the arrow keys to read the close for each trading day.</span>
+              <span class="chart-marker" aria-hidden="true" [style.left.%]="point.x / 3.6" [style.top.%]="point.y / 1.28"></span>
+            </ng-container>
             <svg class="featured-chart" viewBox="0 0 360 128" preserveAspectRatio="none" role="img"
-                 aria-label="Apple daily closing prices over the displayed three months">
+                 [attr.aria-label]="'Apple daily closing prices for the selected ' + range + ' period'">
               <defs>
                 <linearGradient id="featured-area" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stop-color="#72a7ff" stop-opacity=".35"/>
-                  <stop offset="100%" stop-color="#72a7ff" stop-opacity=".02"/>
+                  <stop offset="0%" stop-color="#72a7ff" stop-opacity=".25"/>
+                  <stop offset="100%" stop-color="#72a7ff" stop-opacity="0"/>
                 </linearGradient>
               </defs>
-              <path d="M8 13H352 M8 62H352 M8 111H352" stroke="#3b5579" fill="none" vector-effect="non-scaling-stroke"/>
+              <path d="M8 13H352 M8 62H352 M8 111H352" stroke="#344967" fill="none" vector-effect="non-scaling-stroke"/>
               <path [attr.d]="chart.area" fill="url(#featured-area)"/>
               <path [attr.d]="chart.line" fill="none" stroke="#8cb9ff" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
-              <circle cx="352" [attr.cy]="chart.lastY" r="3" fill="#c4daff"/>
+              <line *ngIf="activePoint as point" [attr.x1]="point.x" [attr.x2]="point.x" y1="13" y2="111"
+                    stroke="#a9c8f7" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
             </svg>
-            <div class="featured-axis" aria-hidden="true">
-              <span *ngFor="let tick of chart.ticks" [style.top.%]="tick.position">{{ tick.price | currency:'USD' }}</span>
-            </div>
           </div>
-          <figcaption class="featured-dates">
-            <time [attr.datetime]="chart.start | date:'yyyy-MM-dd':'+0000'">{{ chart.start | date:'MMM d':'+0000' }}</time>
-            <time [attr.datetime]="chart.end | date:'yyyy-MM-dd':'+0000'">{{ chart.end | date:'MMM d, yyyy':'+0000' }}</time>
-          </figcaption>
-        </figure>
-      </ng-container>
+          <div class="featured-axis" aria-hidden="true">
+            <span *ngFor="let tick of chart.ticks" [style.top.%]="tick.position">{{ tick.price | currency:'USD' }}</span>
+          </div>
+        </div>
+        <figcaption class="featured-dates">
+          <time [attr.datetime]="chart.start | date:'yyyy-MM-dd':'+0000'">{{ chart.start | date:'MMM d, yyyy':'+0000' }}</time>
+          <time [attr.datetime]="chart.end | date:'yyyy-MM-dd':'+0000'">{{ chart.end | date:'MMM d, yyyy':'+0000' }}</time>
+        </figcaption>
+      </figure>
       <ng-template #emptyFeature>
         <div class="featured-state">
           <p role="status">
             {{ loading ? 'Loading Apple price history…' : requestFailed ? 'Apple price history is temporarily unavailable.' : 'There are not enough daily closes to chart Apple.' }}
           </p>
-          <button *ngIf="requestFailed" type="button" (click)="loadFeatured()">Retry price history</button>
+          <button *ngIf="requestFailed" type="button" class="state-action featured-action" (click)="loadFeatured()">Retry price history</button>
         </div>
       </ng-template>
       <footer class="featured-footer">
         <span>Daily closes · Massive (Polygon)</span>
-        <a [routerLink]="['/search-details', 'AAPL']" [queryParams]="{ range: '3m', compare: 'spy' }">Compare with SPY <span aria-hidden="true">↗</span></a>
+        <a [routerLink]="['/search-details', 'AAPL']" [queryParams]="{ range: range.toLowerCase(), compare: 'spy' }">Compare with SPY <span aria-hidden="true">↗</span></a>
       </footer>
     </section>
 
-    <aside class="desk-sidebar" aria-labelledby="shortcuts-title">
-      <h2 id="shortcuts-title">Explore companies</h2>
+    <aside class="desk-sidebar" aria-label="Session data and company shortcuts">
+      <section *ngIf="featured?.session as session" class="desk-session" aria-labelledby="desk-session-title">
+        <div class="desk-session-heading">
+          <h2 id="desk-session-title">AAPL last session</h2>
+          <span>{{ featured?.end | date:'MMM d, yyyy':'+0000' }}</span>
+        </div>
+        <dl>
+          <div><dt>Open</dt><dd>{{ session.open | currency:'USD' }}</dd></div>
+          <div><dt>High</dt><dd>{{ session.high | currency:'USD' }}</dd></div>
+          <div><dt>Low</dt><dd>{{ session.low | currency:'USD' }}</dd></div>
+          <div><dt>Volume</dt><dd>{{ session.volume | number:'1.0-0' }}</dd></div>
+        </dl>
+      </section>
+      <h2 class="shortcuts-title">Explore companies</h2>
       <ul class="company-list">
         <li *ngFor="let item of examples">
           <a [routerLink]="['/search-details', item.ticker]" [attr.aria-label]="'Research ' + item.name + ' (' + item.ticker + ')'">
@@ -82,27 +115,7 @@
           </a>
         </li>
       </ul>
-      <section *ngIf="featured?.session as session" class="desk-session" aria-labelledby="desk-session-title">
-        <div class="desk-session-heading">
-          <h3 id="desk-session-title">AAPL session</h3>
-          <span>{{ featured?.end | date:'MMM d, yyyy':'+0000' }} close</span>
-        </div>
-        <dl>
-          <div><dt>Open</dt><dd>{{ session.open | currency:'USD' }}</dd></div>
-          <div><dt>High</dt><dd>{{ session.high | currency:'USD' }}</dd></div>
-          <div><dt>Low</dt><dd>{{ session.low | currency:'USD' }}</dd></div>
-          <div><dt>Volume</dt><dd>{{ session.volume | number:'1.0-0' }}</dd></div>
-        </dl>
-      </section>
-      <div class="desk-note">
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm0-11v5m0-8h.01" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-        </svg>
-        <div>
-          <h3>Practice with virtual cash</h3>
-          <p>Open a stock to save it to your watchlist or place a simulated order on eligible quotes.</p>
-        </div>
-      </div>
+      <p class="desk-note">Paper orders use virtual cash. Open a stock to get started.</p>
     </aside>
   </div>
 </section>

@@ -7,6 +7,15 @@ import {
   PaperOrderReceipt, PendingOrderError, PendingPaperOrder, PortfolioService, ReferenceQuoteRequired, Stock, estimateOrderCents, paperOrderConfirmation,
 } from '../../services/portfolio.service';
 
+const allocationQuoteLifetimeMs = 7 * 24 * 60 * 60_000;
+
+interface AllocationEntry {
+  ticker: string | null;
+  amount: number;
+  weight: number;
+  tone: number;
+}
+
 interface Holding extends Omit<Stock, 'price' | 'change'> {
   price: number | null;
   change: number | null;
@@ -27,6 +36,7 @@ export class PortfolioComponent implements OnInit {
   private pendingTrade?: PendingPaperOrder;
 
   @ViewChild('tradeDialog', { static: true }) private tradeDialog!: TemplateRef<unknown>;
+  readonly visibleAllocationEntries = 5;
   portfolio: Holding[] = [];
   cashBalance: number | null = null;
   walletInitialized: boolean | null = null;
@@ -70,6 +80,42 @@ export class PortfolioComponent implements OnInit {
   get accountValue(): number | null {
     const marketValue = this.marketValue;
     return marketValue === null || this.cashBalance === null ? null : this.cashBalance + marketValue;
+  }
+
+  get allocation(): { entries: AllocationEntry[]; message?: string } {
+    const unavailable = (message: string) => ({ entries: [], message });
+    if (this.isLoading || this.quotesPending) return unavailable('Calculating allocation…');
+    if (this.walletInitialized === false) return unavailable('Initialize your paper wallet to see allocation.');
+    if (!this.holdingsCurrent || this.cashBalance === null) return unavailable('Refresh to load your cash and holdings.');
+
+    const equity = this.accountValue;
+    if (equity === null) {
+      return unavailable(`Allocation needs a price for every holding. ${this.quotedCount} of ${this.portfolio.length} priced.`);
+    }
+    if (this.portfolio.length) {
+      const oldestQuote = this.oldestQuote;
+      if (oldestQuote === null) return unavailable('Allocation needs a quote time for every holding.');
+      if (Date.now() - oldestQuote > allocationQuoteLifetimeMs) {
+        return unavailable('A holding quote is more than seven days old. Refresh for a newer valuation.');
+      }
+    }
+    if (!Number.isFinite(equity) || equity <= 0 || this.cashBalance < 0) {
+      return unavailable('Allocation appears when the account has a positive value.');
+    }
+
+    const holdings = this.portfolio
+      .map(stock => ({ ticker: stock.ticker, amount: stock.quantity * (stock.price ?? 0) }))
+      .sort((first, second) => second.amount - first.amount || first.ticker.localeCompare(second.ticker));
+    return {
+      entries: [
+        { ticker: null, amount: this.cashBalance, weight: this.cashBalance / equity, tone: 0 },
+        ...holdings.map((holding, index) => ({ ...holding, weight: holding.amount / equity, tone: Math.min(index + 1, this.visibleAllocationEntries) })),
+      ],
+    };
+  }
+
+  trackByAllocation(_index: number, entry: AllocationEntry): string {
+    return entry.ticker ?? '';
   }
 
   get unrealizedProfit(): number | null {

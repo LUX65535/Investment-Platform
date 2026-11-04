@@ -28,10 +28,14 @@
   .search-field input { padding-inline-start: .65rem; font-size: 1rem; }
   .research-header {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: .45rem;
-    margin-bottom: .62rem;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: .3rem;
+    margin-block: -.35rem .36rem;
   }
+
+  .research-header > .search-form { grid-column: 3; }
+  .research-header .search-field { gap: .12rem; }
+  .research-header .submit-search { padding-inline: .48rem; }
 
   .research-trail > :not(.research-back),
   .research-back span { display: none; }
@@ -47,14 +51,15 @@
   .security-header {
     grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr);
     align-items: start;
-    gap: .55rem .58rem;
-    padding: .75rem;
+    gap: .28rem .5rem;
+    padding: .48rem;
   }
 
   .security-identity { align-items: flex-start; gap: .42rem; }
   .security-mark { width: 2.1rem; border-radius: 7px; font-size: .69rem; }
   .security-identity h1 { font-size: clamp(1.06rem, 3.9vw, 1.26rem); }
-  .security-symbol { gap: .2rem .3rem; font-size: .63rem; }
+  .security-symbol { gap: .12rem .3rem; font-size: .63rem; }
+  .security-exchange { max-width: 100%; }
 
   .security-actions {
     grid-column: 1 / -1;
@@ -83,7 +88,7 @@
   .detail-tabs {
     justify-content: space-between;
     gap: .12rem;
-    margin: .25rem 0 .55rem;
+    margin: .15rem 0 .35rem;
   }
 
   .detail-tabs button {
@@ -96,12 +101,12 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .overview-grid .chart-panel { padding: .7rem; }
+  .overview-grid .chart-panel { padding: .5rem; }
   .overview-grid .panel-heading {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: .35rem;
-    margin-bottom: .45rem;
+    margin-bottom: .3rem;
   }
   .overview-grid .chart-eyebrow { display: none; }
   .overview-grid .panel-heading h2 { font-size: 1rem; }
@@ -133,7 +138,6 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(2.75rem, 1fr));
     gap: 0;
-    margin-bottom: .25rem;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--surface-subtle);
@@ -144,4 +148,20 @@
 
   .range-switch { margin-bottom: .4rem; }
   .range-switch button { min-width: 2.5rem; min-height: 2.75rem; padding-inline: .42rem; }
+}
+
+@media (min-width: 531px) and (max-width: 760px) {
+  .overview-sidebar .facts-panel + .facts-panel { border-top: 0; border-inline-start: 1px solid var(--line); }
+}
+
+@media (max-width: 360px) {
+  .security-mark { display: none; }
+  .security-quote .quote-caption:not(.quote-caption--stale) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }

@@ -48,6 +48,7 @@
         <span class="research-current" aria-current="page">{{ company.ticker }}</span>
       </ng-container>
     </nav>
+    <app-research-quick-switch *ngIf="searchResults as company" [activeTicker]="company.ticker"></app-research-quick-switch>
     <ng-container *ngTemplateOutlet="symbolSearch"></ng-container>
   </header>
 </ng-template>
@@ -64,7 +65,7 @@
   <button type="button" class="close-button" aria-label="Dismiss notification" (click)="closeConfirmation()">&times;</button>
 </div>
 
-<div *ngIf="searchResults as company" class="security" [class.security--charts]="activeTab === 'charts'" [class.security--comparison]="compareWithSpy && activeTab === 'summary'">
+<div *ngIf="searchResults as company" class="security" [class.security--charts]="activeTab === 'charts'" [class.security--comparison]="comparisonTicker && activeTab === 'summary'">
   <section class="security-header" aria-labelledby="security-title">
     <div class="security-identity">
       <div class="security-mark" aria-hidden="true">
@@ -74,20 +75,20 @@
              (error)="companyLogoReady = false">
       </div>
       <div>
-        <p class="security-symbol"><span>{{ company.ticker }}</span> <ng-container *ngIf="company.exchange">{{ company.exchange }}</ng-container></p>
+        <p class="security-symbol"><span class="security-ticker">{{ company.ticker }}</span><span *ngIf="company.exchange" class="security-exchange" [title]="company.exchange">{{ company.exchange }}</span></p>
         <h1 id="security-title">{{ company.name || company.ticker }}</h1>
       </div>
     </div>
 
     <div class="security-quote" *ngIf="currentStock as quote; else quoteUnavailable">
-      <p class="quote-caption">{{ quoteRefreshFailed ? 'Last available quote' : 'Latest quote' }}<span *ngIf="company.currency"> · {{ company.currency }}</span></p>
+      <p class="quote-caption" [class.quote-caption--stale]="quoteRefreshFailed">{{ quoteRefreshFailed ? 'Last available quote' : 'Latest quote' }}<span *ngIf="company.currency"> · {{ company.currency }}</span></p>
       <div class="quote-values">
         <span class="quote-price">{{ company.currency ? (quote.c | currency:company.currency) : (quote.c | number:'1.2-2') }}</span>
         <span class="quote-movement" [class.quote-up]="quote.dp > 0" [class.quote-down]="quote.dp < 0">
           {{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})
         </span>
       </div>
-      <p>Finnhub · <time [attr.datetime]="quote.t * 1000 | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ quote.t * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC</time><span *ngIf="!company.currency"> · Currency unavailable</span></p>
+      <p>Finnhub · <time [attr.datetime]="quote.t * 1000 | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ quote.t * 1000 | date:'MMM d, HH:mm':'+0000' }} UTC</time><span *ngIf="!company.currency"> · Currency unavailable</span></p>
     </div>
     <ng-template #quoteUnavailable>
       <p class="security-quote quote-note" role="status">{{ quoteLoading ? 'Loading latest quote…' : 'Latest quote unavailable. Historical prices and company details may still be available.' }}</p>
@@ -135,12 +136,11 @@
     </div>
 
     <div class="overview-grid" *ngIf="activeTab === 'summary'">
-      <section class="data-panel chart-panel" aria-labelledby="overview-chart-title">
+      <section class="data-panel chart-panel overview-chart-panel" aria-labelledby="overview-chart-title">
         <div class="panel-heading">
           <div>
-            <p class="chart-eyebrow">Market performance</p>
             <h2 id="overview-chart-title">Price history</h2>
-            <p>{{ benchmarkResult ? 'Price return from a shared start · excludes dividends' : (overviewRange === 'Hourly' ? 'Hourly closes · Massive (Polygon)' : 'Through the last available daily close · Massive (Polygon)') }}</p>
+            <p *ngIf="!benchmarkResult">{{ overviewRange === 'Hourly' ? 'Hourly closes · Massive (Polygon)' : 'Through the last available daily close · Massive (Polygon)' }}</p>
           </div>
           <div *ngIf="overviewReturn !== null && !benchmarkResult" class="performance-stat" role="status">
             <span class="quote-movement" [class.quote-up]="overviewReturn > 0" [class.quote-down]="overviewReturn < 0">
@@ -155,21 +155,49 @@
                     [attr.aria-pressed]="overviewRange === range"
                     (click)="selectOverviewRange(range)">{{ range }}</button>
           </div>
-          <button *ngIf="company.ticker !== 'SPY'" type="button" class="benchmark-toggle"
-                  aria-label="Compare with SPY" [attr.aria-pressed]="compareWithSpy" (click)="toggleBenchmark()">
-            <span class="benchmark-wide-label">Compare with SPY</span><span class="benchmark-small-label" aria-hidden="true">vs SPY</span>
-          </button>
+          <div class="comparison-actions" [hidden]="!canCompare">
+            <button *ngIf="company.ticker !== 'SPY'" type="button" class="benchmark-toggle"
+                    aria-label="Compare with SPY" [attr.aria-pressed]="comparisonTicker === 'SPY'" (click)="toggleBenchmark()">
+              <span class="benchmark-wide-label">Compare with SPY</span><span class="benchmark-small-label" aria-hidden="true">vs SPY</span>
+            </button>
+            <button #comparisonPickerTrigger type="button" class="benchmark-toggle comparison-picker-toggle"
+                    aria-label="Compare symbol" aria-controls="comparison-picker" [attr.aria-expanded]="comparisonPickerOpen"
+                    (click)="toggleComparisonPicker(comparisonField)">
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                <path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <span class="benchmark-wide-label">Compare symbol</span>
+            </button>
+          </div>
         </div>
+        <form id="comparison-picker" class="comparison-picker" [hidden]="!comparisonPickerOpen"
+              (ngSubmit)="submitComparison(comparisonField, comparisonPickerTrigger)"
+              (keydown.escape)="closeComparisonPicker(comparisonPickerTrigger)">
+          <label for="comparison-symbol">Compare a USD stock or ETF</label>
+          <div class="comparison-picker-fields">
+            <input #comparisonField id="comparison-symbol" name="comparisonSymbol" type="text" placeholder="e.g. MSFT"
+                   maxlength="25" autocomplete="off" autocapitalize="characters" spellcheck="false"
+                   [attr.aria-invalid]="comparisonInputError ? 'true' : null"
+                   [attr.aria-describedby]="comparisonInputError ? 'comparison-input-error' : null"
+                   (input)="comparisonInputError = ''">
+            <button type="submit" class="benchmark-toggle">Compare</button>
+            <button *ngIf="comparisonTicker" type="button" class="benchmark-toggle"
+                    (click)="selectComparison(null); closeComparisonPicker(comparisonPickerTrigger)">Clear</button>
+          </div>
+          <p *ngIf="comparisonInputError" id="comparison-input-error" class="panel-note mb-0" role="alert">{{ comparisonInputError }}</p>
+        </form>
         <div *ngIf="benchmarkResult as benchmark" class="benchmark-summary" role="status">
           <span><strong>{{ company.ticker }}</strong> {{ benchmark.stock > 0 ? '+' : '' }}{{ benchmark.stock | number:'1.2-2' }}%</span>
-          <span><strong>SPY</strong> {{ benchmark.spy > 0 ? '+' : '' }}{{ benchmark.spy | number:'1.2-2' }}%</span>
-          <span><strong>Gap</strong> {{ benchmark.stock > benchmark.spy ? '+' : '' }}{{ benchmark.stock - benchmark.spy | number:'1.2-2' }} pp</span>
+          <span><strong>{{ comparisonTicker }}</strong> {{ benchmark.comparison > 0 ? '+' : '' }}{{ benchmark.comparison | number:'1.2-2' }}%</span>
+          <span><strong>Gap</strong> {{ benchmark.stock > benchmark.comparison ? '+' : '' }}{{ benchmark.stock - benchmark.comparison | number:'1.2-2' }} pp</span>
         </div>
-        <p *ngIf="compareWithSpy && benchmarkLoading" class="panel-note mb-2" role="status">Loading SPY benchmark…</p>
-        <p *ngIf="compareWithSpy && benchmarkFailed" class="panel-note mb-2" role="status">
-          SPY is temporarily unavailable. <button type="button" class="state-action" (click)="loadBenchmark()">Retry SPY</button>
+        <p *ngIf="comparisonTicker && benchmarkLoading" class="panel-note mb-2" role="status">Loading {{ comparisonTicker }} prices…</p>
+        <p *ngIf="comparisonTicker && benchmarkFailed" class="panel-note mb-2" role="status">
+          {{ comparisonTicker }} is temporarily unavailable.
+          <button type="button" class="state-action" (click)="loadBenchmark()">Retry {{ comparisonTicker }}</button>
         </p>
-        <p *ngIf="compareWithSpy && !benchmarkFailed && !benchmarkLoading && !benchmarkResult && !overviewLoading && !overviewFailed"
+        <p *ngIf="comparisonTicker && benchmarkUnavailable" class="panel-note mb-2" role="status">{{ benchmarkUnavailable }}</p>
+        <p *ngIf="comparisonTicker && !benchmarkUnavailable && !benchmarkFailed && !benchmarkLoading && !benchmarkResult && !overviewLoading && !overviewFailed"
            class="panel-note mb-2" role="status">There are too few matching trading days to compare this period.</p>
         <p *ngIf="!benchmarkResult && overviewStart !== null && overviewEnd !== null" class="panel-note mb-2">
           <ng-container *ngIf="overviewRange === 'Hourly'">Bar timestamps · </ng-container>
@@ -187,14 +215,14 @@
                             [options]="chartOptions" [oneToOne]="true" class="chart chart--intraday"></highcharts-chart>
         </div>
         <p *ngIf="benchmarkResult as benchmark" class="panel-note mb-2">
-          Matching trading days · {{ benchmark.start | date:'MMM d, yyyy':'+0000' }} to
+          Price return from a shared start, excluding dividends.<br>Matching trading days · {{ benchmark.start | date:'MMM d, yyyy':'+0000' }} to
           {{ benchmark.end | date:'MMM d, yyyy':'+0000' }} · Massive (Polygon)
         </p>
         <button type="button" class="state-action" (click)="openHistory()">Open advanced chart</button>
       </section>
 
-      <aside class="overview-sidebar" aria-label="Market statistics and company profile">
-        <section class="data-panel facts-panel" aria-labelledby="session-title">
+      <aside class="overview-sidebar data-panel" aria-label="Market statistics and company profile">
+        <section class="facts-panel" aria-labelledby="session-title">
           <h2 id="session-title">Session statistics</h2>
           <p class="panel-note">{{ company.currency ? 'Quote values in ' + company.currency : 'Quote currency unavailable' }}</p>
           <dl class="facts">
@@ -205,7 +233,7 @@
           </dl>
         </section>
 
-        <section class="data-panel facts-panel" aria-labelledby="company-title">
+        <section class="facts-panel" aria-labelledby="company-title">
           <h2 id="company-title">Company profile</h2>
           <dl class="facts">
             <div><dt>Industry</dt><dd>{{ company.finnhubIndustry || '—' }}</dd></div>
@@ -295,15 +323,20 @@
     </section>
 
   <section class="data-panel chart-panel chart-panel--history" *ngIf="activeTab === 'charts' && !loadingTabs.has('charts') && !failedTabs.has('charts')" aria-labelledby="history-title">
-      <div class="panel-heading"><div><h2 id="history-title">Price history</h2><p>Daily prices and volume<ng-container *ngIf="historyEnd as point"> · through {{ point | date:'MMM d, yyyy':'+0000' }}</ng-container></p></div></div>
+      <div class="panel-heading">
+        <div><h2 id="history-title">Price history</h2><p>Daily prices and volume<ng-container *ngIf="historyEnd as point"> · through {{ point | date:'MMM d, yyyy':'+0000' }}</ng-container></p></div>
+        <button *ngIf="bigChartOptions.series?.length" type="button" class="state-action history-indicator" [disabled]="!smaAvailable"
+                [attr.aria-pressed]="showSma && smaAvailable" title="20-session simple moving average"
+                (click)="toggleSma()">SMA 20</button>
+      </div>
       <div *ngIf="!bigChartOptions.series?.length" class="state-panel chart-state"><p>Historical prices are unavailable for this symbol.</p></div>
       <div *ngIf="bigChartOptions.series?.length" class="history-ranges" role="group" aria-label="Historical chart date range">
         <button *ngFor="let range of historyRanges" type="button" class="state-action"
                 [attr.aria-pressed]="historyRange === range" (click)="selectHistoryRange(range)">{{ range }}</button>
       </div>
       <highcharts-chart *ngIf="bigChartOptions.series?.length" [Highcharts]="Highcharts"
-                        [constructorType]="'stockChart'" [options]="bigChartOptions" class="chart chart--history"></highcharts-chart>
-      <p *ngIf="bigChartOptions.series?.length" class="panel-note">Candles show daily prices. Horizontal bars show volume by price. The lower panel shows daily volume.</p>
+                        [constructorType]="'stockChart'" [options]="bigChartOptions" [oneToOne]="true" class="chart chart--history"></highcharts-chart>
+      <p *ngIf="bigChartOptions.series?.length" class="panel-note">Candles show daily prices. Horizontal bars show volume by price. The lower panel shows daily volume.<ng-container *ngIf="showSma && smaAvailable"> SMA 20 averages 20 trading closes.</ng-container></p>
     </section>
 
     <div class="insights-grid" *ngIf="activeTab === 'insights' && !loadingTabs.has('insights') && !failedTabs.has('insights')">

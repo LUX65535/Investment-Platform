@@ -42,6 +42,46 @@
   </p>
 </section>
 
+<section class="allocation-panel" aria-labelledby="allocation-title" *ngIf="allocation as composition">
+  <div class="panel-header">
+    <div>
+      <h2 id="allocation-title">Allocation</h2>
+      <p>Cash and holdings as a share of account value</p>
+    </div>
+  </div>
+
+  <p *ngIf="composition.message; else allocationBreakdown" class="allocation-message" role="status">{{ composition.message }}</p>
+  <ng-template #allocationBreakdown>
+    <div class="allocation-body">
+      <div class="allocation-bar" aria-hidden="true">
+        <span *ngFor="let entry of composition.entries; trackBy: trackByAllocation" class="allocation-tone"
+              [attr.data-tone]="entry.tone" [style.width.%]="entry.weight * 100"></span>
+      </div>
+
+      <ng-template #allocationRow let-entry>
+        <span class="allocation-tone allocation-swatch" [attr.data-tone]="entry.tone" aria-hidden="true"></span>
+        <a *ngIf="entry.ticker; else cashLabel" [routerLink]="['/search-details', entry.ticker]">{{ entry.ticker }}</a>
+        <ng-template #cashLabel><span>Cash</span></ng-template>
+        <span class="allocation-amount">{{ entry.amount | currency:'USD' }}</span>
+        <strong>{{ entry.weight > 0 && entry.weight < 0.0005 ? '<0.1%' : (entry.weight | percent:'1.0-1') }}</strong>
+      </ng-template>
+      <ul class="allocation-list">
+        <li *ngFor="let entry of composition.entries | slice:0:visibleAllocationEntries; trackBy: trackByAllocation">
+          <ng-container *ngTemplateOutlet="allocationRow; context: { $implicit: entry }"></ng-container>
+        </li>
+      </ul>
+      <details *ngIf="composition.entries.length > visibleAllocationEntries" class="allocation-more">
+        <summary>Show {{ composition.entries.length - visibleAllocationEntries }} more {{ composition.entries.length === visibleAllocationEntries + 1 ? 'holding' : 'holdings' }}</summary>
+        <ul class="allocation-list">
+          <li *ngFor="let entry of composition.entries | slice:visibleAllocationEntries; trackBy: trackByAllocation">
+            <ng-container *ngTemplateOutlet="allocationRow; context: { $implicit: entry }"></ng-container>
+          </li>
+        </ul>
+      </details>
+    </div>
+  </ng-template>
+</section>
+
 <section class="positions-panel" aria-labelledby="positions-title" [attr.aria-busy]="isLoading">
   <div class="panel-header">
     <div>

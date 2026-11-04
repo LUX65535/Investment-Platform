@@ -1,0 +1,98 @@
+.comparison-actions {
+  display: flex;
+  gap: .3rem;
+}
+
+.comparison-actions[hidden],
+.comparison-picker[hidden] {
+  display: none;
+}
+
+.comparison-picker-toggle {
+  display: inline-flex;
+  min-width: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: .35rem;
+}
+
+.comparison-picker-toggle[aria-expanded="true"] {
+  border-color: #8eabec;
+  background: #e8eefc;
+}
+
+.comparison-picker {
+  display: grid;
+  gap: .35rem;
+  margin-bottom: .5rem;
+  padding: .5rem;
+  border: 1px solid var(--line);
+  border-radius: .45rem;
+  background: var(--surface-subtle);
+}
+
+.comparison-picker label {
+  font-size: .8rem;
+  font-weight: 650;
+}
+
+.comparison-picker-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+}
+
+.comparison-picker-fields input {
+  flex: 1 1 6rem;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: .35rem .55rem;
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.benchmark-summary,
+.comparison-picker {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 530px) {
+  .comparison-actions .benchmark-toggle {
+    min-width: 2.75rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .benchmark-summary {
+    column-gap: .35rem;
+    font-size: .74rem;
+  }
+
+  .overview-toolbar {
+    gap: .12rem;
+    margin-inline: -.15rem;
+  }
+
+  .overview-toolbar .range-switch {
+    gap: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .overview-toolbar .range-switch button {
+    padding-inline: .14rem;
+  }
+
+  .comparison-actions {
+    gap: .12rem;
+  }
+
+  .comparison-actions .benchmark-toggle {
+    padding-inline: .18rem;
+    font-size: .74rem;
+    white-space: nowrap;
+  }
+}
