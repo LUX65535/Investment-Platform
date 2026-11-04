@@ -26,7 +26,7 @@
     "@popperjs/core": "^2.11.8",
     "bootstrap": "^5.3.3",
     "date-fns": "^3.6.0",
-    "highcharts": "^11.4.0",
+    "highcharts": "^11.4.9",
     "highcharts-angular": "^4.0.0",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",

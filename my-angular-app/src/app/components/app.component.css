@@ -3,6 +3,7 @@
   min-height: 100vh;
   min-height: 100dvh;
   flex-direction: column;
+  --mobile-nav-height: 3.85rem;
 }
 
 .shell-width {
@@ -13,7 +14,7 @@
 
 .skip-link {
   position: fixed;
-  z-index: 20;
+  z-index: 30;
   inset: .75rem auto auto .75rem;
   padding: .65rem 1rem;
   transform: translateY(calc(-100% - 1.5rem));
@@ -27,13 +28,16 @@
 }
 
 .app-header {
+  position: sticky;
+  z-index: 20;
+  top: 0;
   border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 96%, var(--canvas));
 }
 
 .header-inner {
   display: grid;
-  min-height: 4rem;
+  min-height: 4.15rem;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: .75rem 1rem;
@@ -74,7 +78,7 @@
 
 .app-nav {
   display: flex;
-  gap: .2rem;
+  gap: .25rem;
 }
 
 .app-nav a {
@@ -83,7 +87,7 @@
   align-items: center;
   justify-content: center;
   gap: .4rem;
-  padding: .45rem .8rem;
+  padding: .45rem .85rem;
   border-radius: 9px;
   color: var(--muted);
   font-size: .88rem;
@@ -165,28 +169,41 @@
   font-weight: 650;
 }
 
+.footer-mode {
+  font-weight: 400;
+}
+
 @media (max-width: 760px) {
   .header-inner {
     grid-template-columns: 1fr auto;
-    gap: .55rem .45rem;
-    padding-block: .7rem .5rem;
+    min-height: 3.45rem;
+    gap: .45rem;
+    padding-top: env(safe-area-inset-top, 0px);
   }
 
   .app-nav {
+    position: fixed;
+    inset: auto 0 0;
     display: grid;
-    grid-column: 1 / -1;
-    grid-row: 2;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-height: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px));
+    gap: .2rem;
+    padding: .25rem max(.45rem, env(safe-area-inset-right, 0px)) calc(.25rem + env(safe-area-inset-bottom, 0px)) max(.45rem, env(safe-area-inset-left, 0px));
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    box-shadow: 0 -4px 18px rgba(21, 44, 84, .07);
   }
 
   .app-nav a {
-    min-height: 2.7rem;
-    padding-inline: .25rem;
-    font-size: .8rem;
+    min-height: 2.9rem;
+    flex-direction: column;
+    gap: .18rem;
+    padding: .18rem .12rem;
+    font-size: .74rem;
   }
 
   .app-nav svg {
-    width: .98rem;
+    width: 1.18rem;
   }
 
   .brand {
@@ -196,5 +213,9 @@
 
   .brand-mark {
     width: 2rem;
+  }
+
+  .app-footer {
+    padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px));
   }
 }

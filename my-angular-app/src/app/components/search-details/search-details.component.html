@@ -31,7 +31,16 @@
 </app-research-landing>
 <ng-template #compactSearch>
   <header class="research-header">
-    <a class="research-back" routerLink="/search-details"><span aria-hidden="true">‹</span> All symbols</a>
+    <nav class="research-trail" aria-label="Research navigation">
+      <a class="research-back" routerLink="/search-details" aria-label="Back to Research">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Research</span>
+      </a>
+      <ng-container *ngIf="searchResults as company">
+        <span aria-hidden="true">/</span>
+        <span class="research-current" aria-current="page">{{ company.ticker }}</span>
+      </ng-container>
+    </nav>
     <ng-container *ngTemplateOutlet="symbolSearch"></ng-container>
   </header>
 </ng-template>
@@ -51,12 +60,31 @@
 <div *ngIf="searchResults as company" class="security">
   <section class="security-header" aria-labelledby="security-title">
     <div class="security-identity">
-      <div class="security-mark" aria-hidden="true">{{ company.ticker | slice:0:2 }}</div>
+      <div class="security-mark" aria-hidden="true">
+        <span *ngIf="!companyLogoReady">{{ company.ticker | slice:0:2 }}</span>
+        <img *ngIf="company.logo" [src]="company.logo" [class.security-logo--ready]="companyLogoReady"
+             alt="" decoding="async" referrerpolicy="no-referrer" (load)="validateCompanyLogo($event)"
+             (error)="companyLogoReady = false">
+      </div>
       <div>
-        <p class="security-symbol">{{ company.ticker }} <ng-container *ngIf="company.exchange">· {{ company.exchange }}</ng-container></p>
+        <p class="security-symbol"><span>{{ company.ticker }}</span> <ng-container *ngIf="company.exchange">{{ company.exchange }}</ng-container></p>
         <h1 id="security-title">{{ company.name || company.ticker }}</h1>
       </div>
     </div>
+
+    <div class="security-quote" *ngIf="currentStock as quote; else quoteUnavailable">
+      <p class="quote-caption">Latest quote<span *ngIf="company.currency"> · {{ company.currency }}</span></p>
+      <div class="quote-values">
+        <span class="quote-price">{{ company.currency ? (quote.c | currency:company.currency) : (quote.c | number:'1.2-2') }}</span>
+        <span class="quote-movement" [class.quote-up]="quote.dp > 0" [class.quote-down]="quote.dp < 0">
+          {{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})
+        </span>
+      </div>
+      <p>Finnhub · <time [attr.datetime]="quote.t * 1000 | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ quote.t * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC</time><span *ngIf="!company.currency"> · Currency unavailable</span></p>
+    </div>
+    <ng-template #quoteUnavailable>
+      <p class="security-quote quote-note" role="status">{{ quoteLoading ? 'Loading latest quote…' : 'Latest quote unavailable. Historical prices and company details may still be available.' }}</p>
+    </ng-template>
 
     <div class="security-actions">
       <button type="button" class="btn btn-outline-secondary save-action" [class.saved]="isFavorited"
@@ -72,19 +100,6 @@
       <button type="button" class="btn btn-primary"
               [disabled]="!currentStock || !supportsPaperTrade || tradePending" (click)="openTrade(tradeDialog, 'buy')">Paper buy</button>
     </div>
-
-    <div class="security-quote" *ngIf="currentStock as quote; else quoteUnavailable">
-      <div class="quote-values">
-        <span class="quote-price">{{ company.currency ? (quote.c | currency:company.currency) : (quote.c | number:'1.2-2') }}</span>
-        <span class="quote-movement" [class.quote-up]="quote.dp > 0" [class.quote-down]="quote.dp < 0">
-          {{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})
-        </span>
-      </div>
-      <p>Quote from Finnhub · {{ quote.t * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC<span *ngIf="!company.currency"> · Currency unavailable</span></p>
-    </div>
-    <ng-template #quoteUnavailable>
-      <p class="security-quote quote-note" role="status">{{ quoteLoading ? 'Loading latest quote…' : 'Latest quote unavailable. Historical prices and company details may still be available.' }}</p>
-    </ng-template>
 
     <p class="quote-note" *ngIf="!supportsPaperTrade">{{ company.currency ? 'Paper trading is available for USD quotes.' : 'Paper trading requires a verified USD quote.' }}</p>
     <div *ngIf="watchlistUnavailable" class="quote-note watchlist-retry">
@@ -124,11 +139,11 @@
             <span class="quote-movement" [class.quote-up]="overviewReturn > 0" [class.quote-down]="overviewReturn < 0">
               {{ overviewReturn > 0 ? '+' : '' }}{{ overviewReturn | number:'1.2-2' }}%
             </span>
-            <p>Price change over this period</p>
+            <p>Period change</p>
           </div>
         </div>
-        <div class="d-flex flex-wrap gap-1 mb-2" role="group" aria-label="Price performance period">
-          <button *ngFor="let range of overviewRanges" type="button" class="state-action"
+        <div class="range-switch" role="group" aria-label="Price performance period">
+          <button *ngFor="let range of overviewRanges" type="button"
                   [attr.aria-pressed]="overviewRange === range"
                   (click)="selectOverviewRange(range)">{{ range }}</button>
         </div>
@@ -179,28 +194,76 @@
       </aside>
     </div>
 
-    <section class="data-panel news-panel" *ngIf="activeTab === 'news' && !loadingTabs.has('news') && !failedTabs.has('news')" aria-labelledby="news-title">
-      <div class="panel-heading"><div><h2 id="news-title">Top News</h2><p>Recent coverage for {{ company.ticker }} · via Finnhub</p></div></div>
-      <div *ngIf="!topNews.length" class="state-panel"><p>No recent articles are available for this symbol.</p></div>
-      <ul class="news-list" *ngIf="topNews.length">
-        <li *ngFor="let item of topNews | slice:0:visibleNewsCount">
-          <button type="button" class="news-row" (click)="openNews(newsDialog, item)">
+    <section class="news-workspace" *ngIf="activeTab === 'news' && !loadingTabs.has('news') && !failedTabs.has('news')" aria-labelledby="news-title">
+      <header class="news-heading">
+        <div>
+          <p class="chart-eyebrow">Company coverage</p>
+          <h2 id="news-title">Top News</h2>
+          <p>Recent reporting on {{ company.name || company.ticker }}</p>
+        </div>
+        <span class="news-feed">Via Finnhub</span>
+      </header>
+
+      <ng-container *ngIf="topNews[0] as lead; else noNews">
+        <article class="news-lead" aria-label="Latest story">
+          <button type="button" class="news-story news-story--lead" [class.news-story--with-image]="lead.imageReady"
+                  (click)="openNews(newsDialog, lead)">
             <span class="news-copy">
-              <span class="news-meta">{{ item.source }} <ng-container *ngIf="item.datetime">· {{ item.datetime * 1000 | date:'MMM d, h:mm a' }}</ng-container></span>
-              <span class="news-headline">{{ item.headline }}</span>
+              <span class="news-lead-label">Latest story</span>
+              <ng-container *ngTemplateOutlet="newsMeta; context: { $implicit: lead }"></ng-container>
+              <span class="news-headline">{{ lead.headline }}</span>
+              <span class="news-excerpt" *ngIf="lead.summary">{{ lead.summary }}</span>
+              <span class="news-read">Read brief <span aria-hidden="true">↗</span></span>
             </span>
-            <img *ngIf="item.image" [src]="item.image" [class.news-image--ready]="item.imageReady" alt=""
-                 loading="lazy" decoding="async" referrerpolicy="no-referrer" class="news-image"
-                 (load)="validateNewsImage($event, item)" (error)="discardNewsImage(item)">
-            <svg class="news-arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+            <ng-container *ngTemplateOutlet="newsMedia; context: { $implicit: lead, eager: true }"></ng-container>
           </button>
-        </li>
-      </ul>
-      <div class="news-more" *ngIf="topNews.length > visibleNewsCount">
-        <button type="button" class="state-action" (click)="showMoreNews()">Show more articles</button>
-      </div>
+        </article>
+
+        <section class="data-panel news-panel" *ngIf="topNews.length > 1" aria-labelledby="more-news-title">
+          <header class="panel-heading">
+            <div><h3 id="more-news-title">More coverage</h3><p>Latest first</p></div>
+            <span class="news-count" role="status">{{ visibleNewsCount < topNews.length ? visibleNewsCount - 1 : topNews.length - 1 }} of {{ topNews.length - 1 }} stories</span>
+          </header>
+          <ul class="news-list">
+            <li *ngFor="let item of topNews | slice:1:visibleNewsCount; trackBy: trackNews">
+              <button type="button" class="news-story news-row" [class.news-story--with-image]="item.imageReady"
+                      (click)="openNews(newsDialog, item)">
+                <span class="news-copy">
+                  <ng-container *ngTemplateOutlet="newsMeta; context: { $implicit: item }"></ng-container>
+                  <span class="news-headline">{{ item.headline }}</span>
+                </span>
+                <ng-container *ngTemplateOutlet="newsMedia; context: { $implicit: item }"></ng-container>
+                <svg class="news-arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </li>
+          </ul>
+          <div class="news-more" *ngIf="topNews.length > visibleNewsCount">
+            <button type="button" class="state-action" (click)="showMoreNews()">Show more articles</button>
+          </div>
+        </section>
+      </ng-container>
+
+      <ng-template #noNews>
+        <div class="state-panel news-empty">
+          <p>No recent articles are available for {{ company.ticker }}.</p>
+          <button type="button" class="state-action" (click)="setActiveTab('summary')">Back to overview</button>
+        </div>
+      </ng-template>
+      <ng-template #newsMedia let-item let-eager="eager">
+        <span *ngIf="item.image" class="news-media" [class.news-media--ready]="item.imageReady" aria-hidden="true">
+          <img [src]="item.image" alt=""
+               [attr.loading]="eager ? 'eager' : 'lazy'" decoding="async" referrerpolicy="no-referrer" class="news-image"
+               (load)="validateNewsImage($event, item)" (error)="discardNewsImage(item)">
+        </span>
+      </ng-template>
+      <ng-template #newsMeta let-item>
+        <span class="news-meta">
+          <span>{{ item.source }}</span>
+          <time *ngIf="item.datetime" [attr.datetime]="item.datetime * 1000 | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ item.datetime * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC</time>
+        </span>
+      </ng-template>
     </section>
 
     <section class="data-panel chart-panel" *ngIf="activeTab === 'charts' && !loadingTabs.has('charts') && !failedTabs.has('charts')" aria-labelledby="history-title">
@@ -251,20 +314,24 @@
       </div>
       <div class="modal-body">
         <dl class="trade-summary">
-          <div><dt>Latest quote</dt><dd>{{ currentStock?.c | currency:(company.currency || 'USD') }}</dd></div>
+          <div><dt>Latest quote</dt><dd>{{ currentStock?.c | currency:(company.currency || 'USD'):'symbol':'1.2-6' }}</dd></div>
           <div *ngIf="tradeSide === 'buy'"><dt>Buying power</dt><dd>{{ walletLoading ? 'Loading…' : (userWalletBalance | currency:'USD') }}</dd></div>
           <div *ngIf="tradeSide === 'sell'"><dt>Shares available</dt><dd>{{ ownedStockQuantity }}</dd></div>
         </dl>
         <label for="research-trade-quantity" class="form-label">Number of shares</label>
         <input id="research-trade-quantity" name="quantity" class="form-control" type="number" min="1" step="1"
+               [attr.aria-describedby]="tradeLimitMessage ? 'research-trade-limit' : null" [attr.aria-invalid]="!!tradeLimitMessage"
                [(ngModel)]="tradeQuantity" [readonly]="tradePending || tradeNeedsRefresh" ngbAutofocus required>
         <dl class="trade-summary"><div><dt>Estimated total</dt><dd>{{ estimatedTradeTotal | currency:(company.currency || 'USD') }}</dd></div></dl>
         <p class="panel-note">Paper orders use the latest quote when they execute.</p>
         <p *ngIf="tradeSide === 'buy' && walletInitialized === false" class="mt-2 mb-0">Start by initializing your paper wallet in <a routerLink="/portfolio" (click)="modal.dismiss()">Portfolio</a>.</p>
+        <p *ngIf="tradeLimitMessage" id="research-trade-limit" class="error-message" role="status">{{ tradeLimitMessage }}</p>
         <p *ngIf="tradeError" class="error-message" role="alert">{{ tradeError }}</p>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary" [disabled]="tradePending" (click)="modal.dismiss()">Cancel</button>
+        <button type="button" class="btn btn-outline-secondary" [disabled]="tradePending" (click)="modal.dismiss()">
+          {{ tradeNeedsRefresh ? 'Close' : 'Cancel' }}
+        </button>
         <button type="submit" class="btn btn-primary" [attr.aria-disabled]="!canSubmitTrade">
           {{ tradePending ? 'Submitting…' : tradeNeedsRefresh ? 'Retry same order' : (tradeSide === 'buy' ? 'Confirm buy' : 'Confirm sell') }}
         </button>

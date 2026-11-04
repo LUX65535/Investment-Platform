@@ -1,19 +1,25 @@
-import { Component, DestroyRef, inject, OnDestroy, OnInit, TemplateRef } from '@angular/core';
+import { Component, DestroyRef, ElementRef, inject, OnDestroy, OnInit, TemplateRef } from '@angular/core';
+import { CommonModule } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
+import { NgbModal, NgbModalRef, NgbModule } from '@ng-bootstrap/ng-bootstrap';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import {Observable, of, Subscription, interval, forkJoin} from 'rxjs';
 import { catchError, debounceTime, distinctUntilChanged, filter, finalize, map, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
-import { ActivatedRoute, NavigationEnd, Router } from '@angular/router';
-import {FormControl} from "@angular/forms";
+import { ActivatedRoute, NavigationEnd, Router, RouterModule } from '@angular/router';
+import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
+import { MatAutocompleteModule } from '@angular/material/autocomplete';
+import { MatInputModule } from '@angular/material/input';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { HighchartsChartModule } from 'highcharts-angular';
 import * as Highcharts from 'highcharts/highstock';
 import HC_accessibility from 'highcharts/modules/accessibility';
+import { ResearchLandingComponent } from '../research-landing/research-landing.component';
 HC_accessibility(Highcharts);
 import volumeByPrice from 'highcharts/indicators/volume-by-price';
 import indicators from 'highcharts/indicators/indicators';
 indicators(Highcharts);
 volumeByPrice(Highcharts);
-import { paperOrderConfirmation, PendingOrderError, PendingPaperOrder, PortfolioService } from '../../services/portfolio.service';
+import { estimateOrderCents, paperOrderConfirmation, PendingOrderError, PendingPaperOrder, PortfolioService } from '../../services/portfolio.service';
 import { MarketBar as AggregateBarResponse, MarketHistoryService, utcDayMonthsBefore, validClosingBars } from '../../services/market-history.service';
 
 export interface QuoteResponse {
@@ -102,12 +108,19 @@ const historyRanges = ['1M', '3M', '6M', 'YTD', '1Y', 'All'] as const;
 type HistoryRange = typeof historyRanges[number];
 const overviewRanges = ['Hourly', '1M', '3M', '1Y'] as const;
 type OverviewRange = typeof overviewRanges[number];
+const uncertainOrderMessage = 'The order may have filled. Check your receipts in Portfolio or retry the same order.';
 
 
 @Component({
   selector: 'app-search-details',
+  standalone: true,
+  imports: [
+    CommonModule, FormsModule, ReactiveFormsModule, RouterModule, NgbModule,
+    MatAutocompleteModule, MatInputModule, MatProgressSpinnerModule, HighchartsChartModule,
+    ResearchLandingComponent,
+  ],
   templateUrl: './search-details.component.html',
-  styleUrls: ['./search-details.component.css'],
+  styleUrls: ['./search-details.component.css', './search-details-news.css', './search-details-mobile.css'],
 })
 export class SearchDetailsComponent implements OnInit, OnDestroy {
   tickerFormControl = new FormControl<string | StockResult>('', { nonNullable: true });
@@ -142,9 +155,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     { id: 'insights', label: 'Insights' },
   ];
   private readonly destroyRef = inject(DestroyRef);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private searchSubscription = new Subscription();
   activeTab: DetailTab = 'summary';
   searchResults: CompanyProfile | null = null;
+  companyLogoReady = false;
 
 
   private lastSuccessfulSearch: string | null = null;
@@ -270,7 +285,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.pendingTrade = pending;
     this.tradeSide = side;
     this.tradeQuantity = pending?.quantity ?? 1;
-    this.tradeError = pending ? 'This order is awaiting confirmation. Retry with the original order ID.' : '';
+    this.tradeError = pending ? uncertainOrderMessage : '';
     this.tradeNeedsRefresh = Boolean(pending);
     this.userWalletBalance = 0;
     this.walletInitialized = undefined;
@@ -305,17 +320,33 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   get estimatedTradeTotal(): number {
-    return (this.tradeQuantity ?? 0) * (this.currentStock?.c ?? 0);
+    const cents = this.estimatedTradeCents;
+    return Number.isSafeInteger(cents) && cents > 0 ? cents / 100 : 0;
+  }
+
+  private get estimatedTradeCents(): number {
+    return estimateOrderCents(this.currentStock?.c ?? 0, this.tradeQuantity ?? 0);
+  }
+
+  get tradeLimitMessage(): string {
+    const quantity = this.tradeQuantity;
+    if (this.tradePending || this.tradeNeedsRefresh || quantity === null) return '';
+    if (!Number.isSafeInteger(quantity) || quantity < 1) return 'Enter a whole number of shares.';
+    const cents = this.estimatedTradeCents;
+    if (!Number.isSafeInteger(cents) || cents < 1) return 'Enter a quantity with an estimated total of at least $0.01.';
+    if (this.tradeSide === 'sell' && quantity > this.ownedStockQuantity) return 'You have fewer shares available to sell.';
+    if (this.tradeSide === 'buy' && this.walletInitialized && cents > Math.round(this.userWalletBalance * 100)) {
+      return 'The estimated total exceeds your buying power.';
+    }
+    return '';
   }
 
   get canSubmitTrade(): boolean {
     const quantity = this.tradeQuantity ?? 0;
-    const price = this.currentStock?.c ?? 0;
     if (this.tradePending || !Number.isSafeInteger(quantity) || quantity < 1) return false;
     if (this.tradeNeedsRefresh) return true;
-    return this.supportsPaperTrade && !this.walletLoading && price > 0 && (this.tradeSide === 'buy'
-        ? this.walletInitialized !== false && this.estimatedTradeTotal <= this.userWalletBalance
-        : quantity <= this.ownedStockQuantity);
+    return this.supportsPaperTrade && !this.walletLoading && !this.tradeLimitMessage
+      && (this.tradeSide === 'sell' || this.walletInitialized === true);
   }
 
   submitTrade(): void {
@@ -346,7 +377,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         this.tradeNeedsRefresh = Boolean(this.pendingTrade);
         if (this.tradeNeedsRefresh) {
           this.refreshHolding(ticker);
-          this.tradeError = 'This order is awaiting confirmation. Retry the same order here or from Portfolio.';
+          this.tradeError = uncertainOrderMessage;
         } else {
           this.tradeError = error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
             ? error.error.message
@@ -422,22 +453,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       map(payload => {
         if (!Array.isArray(payload)) throw new Error('Unexpected news response');
 
-        const seenUrls = new Set<string>();
-        const seenHeadlines = new Set<string>();
-        const imageCounts = new Map<string, number>();
         const articles: TopNews[] = [];
         for (const item of payload) {
           const headline = this.newsText(item?.headline);
           const url = this.httpsUrl(item?.url);
-          const key = headline.toLowerCase();
-          if (!headline || !url || seenUrls.has(url) || seenHeadlines.has(key)) continue;
-          seenUrls.add(url);
-          seenHeadlines.add(key);
+          if (!headline || !url) continue;
 
-          const image = this.httpsUrl(item.image);
-          if (image) imageCounts.set(image, (imageCounts.get(image) ?? 0) + 1);
           articles.push({
-            headline, url, image, imageReady: false,
+            headline, url, image: this.httpsUrl(item.image), imageReady: false,
             source: this.newsText(item.source) || new URL(url).hostname,
             summary: this.newsText(item.summary),
             datetime: Number.isFinite(item.datetime) && item.datetime > 0 && item.datetime < 4_102_444_800
@@ -445,8 +468,21 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
           });
         }
 
-        return articles.sort((a, b) => b.datetime - a.datetime).slice(0, 40).map(article => {
-          if ((imageCounts.get(article.image) ?? 0) > 2) article.image = '';
+        const seenUrls = new Set<string>();
+        const seenHeadlines = new Set<string>();
+        const latest = articles.sort((a, b) => b.datetime - a.datetime).filter(article => {
+          const key = article.headline.toLowerCase();
+          if (seenUrls.has(article.url) || seenHeadlines.has(key)) return false;
+          seenUrls.add(article.url);
+          seenHeadlines.add(key);
+          return true;
+        }).slice(0, 40);
+        const imageCounts = new Map<string, number>();
+        for (const article of latest) {
+          if (article.image) imageCounts.set(article.image, (imageCounts.get(article.image) ?? 0) + 1);
+        }
+        return latest.map(article => {
+          if ((imageCounts.get(article.image) ?? 0) > 1) article.image = '';
           return article;
         });
       })
@@ -467,13 +503,30 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }
   }
 
-  validateNewsImage(event: Event, article: TopNews): void {
+  async validateNewsImage(event: Event, article: TopNews): Promise<void> {
     const image = event.target as HTMLImageElement;
     const ratio = image.naturalWidth / image.naturalHeight;
     if (image.naturalWidth < 160 || image.naturalHeight < 90 || ratio > 3.5 || ratio < .65) {
       this.discardNewsImage(article);
-    } else {
-      article.imageReady = true;
+      return;
+    }
+    try {
+      await image.decode();
+      if (image.isConnected) article.imageReady = true;
+    } catch {
+      this.discardNewsImage(article);
+    }
+  }
+
+  async validateCompanyLogo(event: Event): Promise<void> {
+    const image = event.target as HTMLImageElement;
+    if (image.naturalWidth < 24 || image.naturalHeight < 24) return;
+    const source = image.currentSrc;
+    try {
+      await image.decode();
+      if (image.isConnected && image.currentSrc === source) this.companyLogoReady = true;
+    } catch {
+      // Keep the ticker monogram until an image can actually be painted.
     }
   }
 
@@ -482,11 +535,16 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     article.imageReady = false;
   }
 
+  trackNews(_index: number, article: TopNews): string {
+    return article.url;
+  }
+
   showMoreNews(): void {
-    const firstNewItem = this.visibleNewsCount + 1;
-    this.visibleNewsCount += 12;
+    // The latest story is displayed separately, so article index n is row n in the remaining list.
+    const firstNewRow = this.visibleNewsCount;
+    this.visibleNewsCount = Math.min(this.visibleNewsCount + 12, this.topNews.length);
     requestAnimationFrame(() => {
-      document.querySelector<HTMLButtonElement>(`.news-list li:nth-child(${firstNewItem}) .news-row`)?.focus();
+      this.host.nativeElement.querySelector<HTMLButtonElement>(`.news-list li:nth-child(${firstNewRow}) .news-row`)?.focus();
     });
   }
   openNews(template: TemplateRef<unknown>, newsItem: TopNews): void {
@@ -837,9 +895,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       takeUntilDestroyed(this.destroyRef)
     ).subscribe(update => {
       if (update?.quote && update.context === this.searchSubscription) {
-        const hadQuote = !!this.currentStock;
+        const previousQuote = this.currentStock;
         this.currentStock = update.quote;
-        if (!hadQuote && this.activeTab === 'summary' && this.overviewRange === 'Hourly') this.loadOverview();
+        const nextDay = !previousQuote || Math.floor(previousQuote.t / 86_400) !== Math.floor(update.quote.t / 86_400);
+        if (nextDay) this.hourlyBars = null;
+        if (nextDay && this.activeTab === 'summary' && this.overviewRange === 'Hourly') {
+          this.renderOverview();
+          this.loadOverview();
+        }
       }
     });
   }
@@ -899,6 +962,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.quoteLoading = false;
     this.searchError = '';
     this.searchResults = null;
+    this.companyLogoReady = false;
     this.currentStock = null;
     this.isFavorited = false;
     this.watchlistUnavailable = false;
@@ -954,7 +1018,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
         this.lastSuccessfulSearch = ticker;
         const currency = typeof profile.currency === 'string' ? profile.currency.toUpperCase() : '';
-        this.searchResults = { ...profile, currency: /^[A-Z]{3}$/.test(currency) ? currency : '' };
+        this.searchResults = {
+          ...profile,
+          currency: /^[A-Z]{3}$/.test(currency) ? currency : '',
+          logo: this.httpsUrl(profile.logo),
+        };
         this.loadSummary(ticker);
         this.loadActiveView();
         this.checkWatchlistStatus();

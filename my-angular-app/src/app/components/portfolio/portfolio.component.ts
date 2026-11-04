@@ -4,13 +4,14 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 import { catchError, finalize, forkJoin, from, map, mergeMap, of, Subscription, switchMap, tap } from 'rxjs';
 import {
-  PaperOrderReceipt, PendingOrderError, PendingPaperOrder, PortfolioService, Stock, paperOrderConfirmation,
+  PaperOrderReceipt, PendingOrderError, PendingPaperOrder, PortfolioService, Stock, estimateOrderCents, paperOrderConfirmation,
 } from '../../services/portfolio.service';
 
 interface Holding extends Omit<Stock, 'price' | 'change'> {
   price: number | null;
   change: number | null;
   quotePending?: boolean;
+  quotedAt?: number;
 }
 
 @Component({
@@ -37,7 +38,6 @@ export class PortfolioComponent implements OnInit {
   actionError = '';
   activeTrade?: { holding: Holding; side: 'buy' | 'sell'; price: number };
   tradeError = '';
-  tradeNeedsRefresh = false;
   submittingTrade = false;
   quantity: number | null = 1;
   receipts: PaperOrderReceipt[] = [];
@@ -75,6 +75,11 @@ export class PortfolioComponent implements OnInit {
     return marketValue === null ? null : marketValue - this.portfolio.reduce((total, stock) => total + stock.totalCost, 0);
   }
 
+  get oldestQuote(): number | null {
+    if (!this.holdingsCurrent || !this.portfolio.length || this.portfolio.some(stock => stock.quotedAt === undefined)) return null;
+    return Math.min(...this.portfolio.map(stock => stock.quotedAt!));
+  }
+
   get quotesPending(): boolean {
     return this.portfolio.some(stock => stock.quotePending);
   }
@@ -83,8 +88,48 @@ export class PortfolioComponent implements OnInit {
     return this.portfolio.filter(stock => stock.price !== null).length;
   }
 
-  get estimatedTotal(): number {
-    return (this.quantity ?? 0) * (this.activeTrade?.price ?? 0);
+  get isRetryingTrade(): boolean {
+    return Boolean(this.pendingTrade);
+  }
+
+  get quantityLimit(): number {
+    const trade = this.activeTrade;
+    if (!trade) return 0;
+
+    const selling = trade.side === 'sell';
+    const maxCents = selling ? Number.MAX_SAFE_INTEGER : Math.round((this.cashBalance ?? 0) * 100);
+    // Round the full order the same way as execution, including prices below one cent.
+    let lower = 0;
+    let upper = selling ? trade.holding.quantity : Number.MAX_SAFE_INTEGER;
+    while (lower < upper) {
+      const middle = lower + Math.ceil((upper - lower) / 2);
+      if (estimateOrderCents(trade.price, middle) <= maxCents) lower = middle;
+      else upper = middle - 1;
+    }
+    return lower;
+  }
+
+  get estimatedTotal(): number | null {
+    if (!this.validQuantity || !this.activeTrade || this.quantity === null) return null;
+    const cents = estimateOrderCents(this.activeTrade.price, this.quantity);
+    return Number.isSafeInteger(cents) ? cents / 100 : null;
+  }
+
+  get quantityError(): string {
+    if (!this.validQuantity) return 'Enter a positive whole number of shares.';
+    if (!this.activeTrade || this.pendingTrade || this.quantity === null) return '';
+    if (this.quantity > this.quantityLimit) {
+      return this.activeTrade.side === 'buy'
+        ? 'The estimated cost exceeds your available cash.'
+        : 'This order exceeds your sell limit.';
+    }
+    return this.estimatedTotal === 0 ? 'The estimated order value must be at least $0.01.' : '';
+  }
+
+  useMaximumQuantity(): void {
+    if (this.submittingTrade || this.pendingTrade) return;
+    const maximum = this.quantityLimit;
+    if (maximum > 0) this.quantity = maximum;
   }
 
   get validQuantity(): boolean {
@@ -94,14 +139,11 @@ export class PortfolioComponent implements OnInit {
   get canSubmitTrade(): boolean {
     const trade = this.activeTrade;
     if (!trade || !this.validQuantity || this.submittingTrade || this.checkingOrderId || this.quantity === null) return false;
-    if (this.tradeNeedsRefresh) return true;
-    return trade.side === 'sell'
-      ? this.quantity <= trade.holding.quantity
-      : this.cashBalance !== null && this.estimatedTotal <= this.cashBalance;
+    return Boolean(this.pendingTrade) || !this.quantityError;
   }
 
-  loadPortfolio(): void {
-    if (this.isLoading) return;
+  loadPortfolio(force = false): void {
+    if (this.isLoading && !force) return;
     this.loadReceipts();
     this.portfolioRequest?.unsubscribe();
     this.isLoading = true;
@@ -131,12 +173,14 @@ export class PortfolioComponent implements OnInit {
         this.isLoading = false;
       }),
       switchMap(({ holdings }) => from(holdings ?? []).pipe(mergeMap(stock =>
-        this.http.get<{ c: number; dp: number }>('/company_quote', { params: { symbol: stock.ticker } }).pipe(
+        this.http.get<{ c: number; dp: number; t?: number }>('/company_quote', { params: { symbol: stock.ticker } }).pipe(
           catchError(() => of(null)),
           map((quote): Holding => ({
             ...stock,
             price: quote && Number.isFinite(quote.c) && quote.c > 0 ? quote.c : null,
             change: quote && quote.c > 0 && Number.isFinite(quote.dp) ? quote.dp : null,
+            quotedAt: quote?.t && Number.isSafeInteger(quote.t) && quote.t > 0 && quote.t <= Date.now() / 1000 + 60
+              ? quote.t * 1000 : undefined,
           })),
         ), 3))),
       takeUntilDestroyed(this.destroyRef),
@@ -165,7 +209,11 @@ export class PortfolioComponent implements OnInit {
 
   canOpenTrade(holding: Holding, side: 'buy' | 'sell'): boolean {
     if (this.checkingOrderId || this.isLoading || this.isInitializing || !this.holdingsCurrent || !this.walletInitialized || holding.price === null) return false;
-    return side === 'buy' ? this.cashBalance !== null && this.cashBalance > 0 : holding.quantity > 0;
+    const cents = estimateOrderCents(holding.price, 1);
+    if (!Number.isSafeInteger(cents)) return false;
+    return side === 'buy'
+      ? this.cashBalance !== null && Math.round(this.cashBalance * 100) >= Math.max(1, cents)
+      : holding.quantity > 0;
   }
 
   openTrade(holding: Holding, side: 'buy' | 'sell'): void {
@@ -175,7 +223,6 @@ export class PortfolioComponent implements OnInit {
     const pending = this.portfolioService.getPendingOrder(side, holding.ticker);
     this.pendingTrade = pending;
     this.tradeError = pending ? 'This order is awaiting confirmation. Retry with the original order ID.' : '';
-    this.tradeNeedsRefresh = Boolean(pending);
     this.quantity = pending?.quantity ?? 1;
     this.activeTrade = { holding, side, price: holding.price };
     this.tradeRef = this.modal.open(this.tradeDialog, {
@@ -210,18 +257,17 @@ export class PortfolioComponent implements OnInit {
       next: receipt => {
         this.statusMessage = paperOrderConfirmation(receipt);
         this.tradeRef?.close();
-        this.loadPortfolio();
+        this.loadPortfolio(true);
       },
       error: (error: HttpErrorResponse | PendingOrderError) => {
         this.pendingTrade = error instanceof PendingOrderError ? error.order : undefined;
-        this.tradeNeedsRefresh = Boolean(this.pendingTrade);
-        if (this.tradeNeedsRefresh) {
-          this.tradeError = 'This order is awaiting confirmation. Retry the same order here or from Orders.';
+        if (this.isRetryingTrade) {
+          this.tradeError = 'This order is awaiting confirmation. Retry it here or close this ticket and check Order activity.';
         } else {
           this.tradeError = error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
             ? error.error.message : 'The order could not be sent. Please try again.';
         }
-        this.loadReceipts();
+        this.loadPortfolio();
       },
     });
   }
@@ -244,7 +290,7 @@ export class PortfolioComponent implements OnInit {
   }
 
   retryPendingOrder(order: PendingPaperOrder): void {
-    if (this.submittingTrade || this.checkingOrderId) return;
+    if (this.tradeRef || this.submittingTrade || this.checkingOrderId || this.isLoading || this.isInitializing) return;
     this.checkingOrderId = order.orderId;
     this.pendingError = '';
     this.portfolioService.retryOrder(order).pipe(
@@ -253,14 +299,14 @@ export class PortfolioComponent implements OnInit {
     ).subscribe({
       next: receipt => {
         this.statusMessage = paperOrderConfirmation(receipt);
-        this.loadPortfolio();
+        this.loadPortfolio(true);
       },
       error: (error: HttpErrorResponse | PendingOrderError) => {
         this.pendingError = error instanceof PendingOrderError
           ? 'Order confirmation is still unavailable. You can retry again with the same ID.'
           : error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
             ? error.error.message : 'The order could not be sent. Please try again.';
-        this.loadReceipts();
+        this.loadPortfolio();
       },
     });
   }

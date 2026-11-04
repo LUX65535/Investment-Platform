@@ -2,7 +2,7 @@
   <div>
     <p class="page-eyebrow">Market workspace</p>
     <h1>Watchlist</h1>
-    <p>Keep your shortlist in one place and open any company to continue researching.</p>
+    <p>Follow price moves for your saved companies and jump back into research.</p>
   </div>
   <span *ngIf="hasLoaded" class="workspace-label">{{ watchlist.length }} saved {{ watchlist.length === 1 ? 'symbol' : 'symbols' }}</span>
 </header>
@@ -38,23 +38,57 @@
     <p class="state-message state-message--error" role="alert">{{ loadError }}</p>
   </div>
 
-  <div *ngIf="actionError" class="panel-message">
-    <p class="state-message state-message--error" role="alert">{{ actionError }}</p>
+  <div *ngIf="actionError || actionStatus" class="panel-message">
+    <p *ngIf="actionError" class="state-message state-message--error" role="alert">{{ actionError }}</p>
+    <p *ngIf="actionStatus" class="state-message" role="status">{{ actionStatus }}</p>
   </div>
-  <p class="visually-hidden" role="status">{{ actionStatus }}</p>
+
+  <div *ngIf="watchlist.length" class="quote-coverage" role="status">
+    <span class="quote-coverage-label"><span class="quote-indicator" aria-hidden="true"></span>
+      {{ loadError ? 'Last loaded watchlist' : quotesPending ? 'Refreshing quotes' : 'Quote coverage' }}
+    </span>
+    <span>{{ quotedCount }} of {{ watchlist.length }} priced</span>
+  </div>
+
+  <div *ngIf="watchlist.length" class="mobile-sort">
+    <label for="watchlist-sort">Sort by</label>
+    <select id="watchlist-sort" [ngModel]="sortKey" (ngModelChange)="sortBy($event)">
+      <option value="symbol">Symbol</option>
+      <option value="price">Last price</option>
+      <option value="change">Day change</option>
+      <option value="changePercent">Day change %</option>
+    </select>
+    <button type="button" class="state-action" (click)="sortBy(sortKey)"
+            [attr.aria-label]="ascending ? 'Sort descending' : 'Sort ascending'">
+      <span aria-hidden="true">{{ ascending ? '↑' : '↓' }}</span>
+    </button>
+  </div>
 
   <table *ngIf="watchlist.length" class="watchlist" role="table">
     <caption class="visually-hidden">Saved stocks with latest price and daily change</caption>
     <thead role="rowgroup">
       <tr role="row">
-        <th scope="col" role="columnheader">Company</th>
-        <th scope="col" role="columnheader">Last price</th>
-        <th scope="col" role="columnheader">Day change</th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortDirection('symbol')">
+          <span class="mobile-header">Symbol</span>
+          <button type="button" (click)="sortBy('symbol')">Symbol <span aria-hidden="true">{{ sortDirection('symbol') ? (ascending ? '↑' : '↓') : '↕' }}</span></button>
+        </th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortDirection('price')">
+          <span class="mobile-header">Last price</span>
+          <button type="button" (click)="sortBy('price')">Last price <span aria-hidden="true">{{ sortDirection('price') ? (ascending ? '↑' : '↓') : '↕' }}</span></button>
+        </th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortDirection('change')">
+          <span class="mobile-header">Day change</span>
+          <button type="button" (click)="sortBy('change')" aria-label="Day change">Day Δ <span aria-hidden="true">{{ sortDirection('change') ? (ascending ? '↑' : '↓') : '↕' }}</span></button>
+        </th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortDirection('changePercent')">
+          <span class="mobile-header">Day change percent</span>
+          <button type="button" (click)="sortBy('changePercent')" aria-label="Day change percent">Day % <span aria-hidden="true">{{ sortDirection('changePercent') ? (ascending ? '↑' : '↓') : '↕' }}</span></button>
+        </th>
         <th scope="col" role="columnheader"><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
     <tbody role="rowgroup">
-      <tr *ngFor="let item of watchlist; trackBy: trackByTicker" role="row">
+      <tr *ngFor="let item of sortedWatchlist; trackBy: trackByTicker" role="row">
         <th scope="row" role="rowheader" class="company-cell">
           <a class="watchlist-link" [routerLink]="['/search-details', item.ticker]">
             <span class="watchlist-ticker">{{ item.ticker }}</span>
@@ -63,25 +97,36 @@
         </th>
         <td role="cell" class="price-cell">
           <ng-container *ngIf="item.quote as quote; else unavailableQuote">
-            <span class="watchlist-price">{{ item.currency ? (quote.c | currency:item.currency:(item.currency + ' ')) : (quote.c | number:'1.2-2') }}</span>
-            <span *ngIf="!item.currency" class="watchlist-unavailable currency-missing">Currency unavailable</span>
+            <span class="watchlist-price">{{ item.currency ? (quote.c | currency:item.currency:(item.currency + ' '):(item.currency === 'USD' ? '1.2-6' : undefined)) : (quote.c | number:'1.2-6') }}</span>
+            <span *ngIf="!item.currency" class="watchlist-unavailable quote-detail">Currency unavailable</span>
+            <time *ngIf="item.quotedAt; else missingTime" class="quote-detail" [attr.datetime]="item.quotedAt | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">
+              {{ item.quotedAt | date:'MMM d, HH:mm':'+0000' }} UTC
+            </time>
+            <ng-template #missingTime><span class="watchlist-unavailable quote-detail">Quote time unavailable</span></ng-template>
           </ng-container>
           <ng-template #unavailableQuote>
             <span class="watchlist-unavailable">{{ item.quotePending ? 'Loading quote…' : 'Quote unavailable' }}</span>
           </ng-template>
         </td>
         <td role="cell" class="change-cell">
-          <ng-container *ngIf="item.quote as quote">
-            <span *ngIf="quote.dp !== null; else missingChange" class="watchlist-change"
-                  [class.positive]="quote.dp > 0" [class.negative]="quote.dp < 0">
-              <span *ngIf="quote.d !== null" class="absolute-change">
-                {{ quote.d > 0 ? '+' : '' }}{{ item.currency ? (quote.d | currency:item.currency:(item.currency + ' ')) : (quote.d | number:'1.2-2') }}
-              </span>
-              <span class="percent-change">{{ quote.dp > 0 ? '+' : '' }}{{ quote.dp | number:'1.2-2' }}%</span>
+          <span class="mobile-header" aria-hidden="true">Day Δ</span>
+          <ng-container *ngIf="item.quote as quote; else missingChange">
+            <span *ngIf="quote.d !== null; else missingChange" class="watchlist-change"
+                  [class.positive]="quote.d > 0" [class.negative]="quote.d < 0">
+              {{ quote.d > 0 ? '+' : '' }}{{ item.currency ? (quote.d | currency:item.currency:(item.currency + ' ')) : (quote.d | number:'1.2-2') }}
             </span>
           </ng-container>
-          <ng-template #missingChange><span class="watchlist-unavailable" aria-label="Day change unavailable">—</span></ng-template>
         </td>
+        <td role="cell" class="change-percent-cell">
+          <span class="mobile-header" aria-hidden="true">Day %</span>
+          <ng-container *ngIf="item.quote as quote; else missingChange">
+            <span *ngIf="quote.dp !== null; else missingChange" class="watchlist-change percent-change"
+                  [class.positive]="quote.dp > 0" [class.negative]="quote.dp < 0">
+              {{ quote.dp > 0 ? '+' : '' }}{{ quote.dp | number:'1.2-2' }}%
+            </span>
+          </ng-container>
+        </td>
+        <ng-template #missingChange><span class="watchlist-unavailable" aria-label="Day change unavailable">—</span></ng-template>
         <td role="cell" class="remove-cell">
           <button type="button" class="remove-button" #removeButton
                   [attr.aria-label]="'Remove ' + item.ticker + ' from watchlist'"
@@ -106,7 +151,7 @@
            stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9Z"/></svg>
     </span>
     <h3>Your watchlist is empty</h3>
-    <p>Open a company and choose Watchlist to save it here.</p>
+    <p>Explore a company and save it to start tracking its price here.</p>
     <a class="state-action" routerLink="/search-details">Explore stocks</a>
   </div>
 

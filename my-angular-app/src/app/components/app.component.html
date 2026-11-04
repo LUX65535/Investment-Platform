@@ -38,13 +38,13 @@
   </div>
 </header>
 
-<main id="workspace" class="shell-width content-container" [class.embed-container]="embeddedResearch" tabindex="-1">
+<main #workspace id="workspace" class="shell-width content-container" [class.embed-container]="embeddedResearch" tabindex="-1">
   <router-outlet></router-outlet>
 </main>
 
 <footer *ngIf="!embeddedResearch" class="app-footer">
   <div class="shell-width footer-inner">
-    <span>Investment Platform</span>
+    <span>Investment Platform <span class="footer-mode">· Simulated orders</span></span>
     <span>Quotes and news by <a href="https://finnhub.io" target="_blank" rel="noopener noreferrer">Finnhub</a> · Chart data by Polygon</span>
   </div>
 </footer>

@@ -1,0 +1,123 @@
+@media (max-width: 760px) {
+  .security-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .security-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .security-quote {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .overview-grid,
+  .insights-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .overview-sidebar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 530px) {
+  .search-field .search-icon { display: none; }
+  .search-field input { padding-inline-start: .65rem; font-size: 1rem; }
+  .research-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: .45rem;
+    margin-bottom: .62rem;
+  }
+
+  .research-trail > :not(.research-back),
+  .research-back span { display: none; }
+
+  .research-back {
+    width: 2.75rem;
+    justify-content: center;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+
+  .history-ranges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+
+
+  .security-header {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr);
+    align-items: start;
+    gap: .55rem .58rem;
+    padding: .75rem;
+  }
+
+  .security-identity { align-items: flex-start; gap: .42rem; }
+  .security-mark { width: 2.1rem; border-radius: 7px; font-size: .69rem; }
+  .security-identity h1 { font-size: clamp(1.06rem, 3.9vw, 1.26rem); }
+  .security-symbol { gap: .2rem .3rem; font-size: .63rem; }
+
+  .security-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+
+  .security-actions .btn {
+    min-height: 2.75rem;
+    padding-inline: .6rem;
+    font-size: .8rem;
+  }
+
+  .security-quote {
+    grid-column: 2;
+    grid-row: 1;
+    padding-inline-start: .6rem;
+  }
+
+  .security-quote p { margin-top: .2rem; font-size: .69rem; }
+  .security-quote .quote-caption { font-size: .63rem; }
+  .quote-values { display: grid; gap: .05rem; }
+  .quote-price { font-size: clamp(1.28rem, 5.5vw, 1.75rem); overflow-wrap: anywhere; }
+  .quote-movement { font-size: .78rem; }
+
+  .detail-tabs {
+    justify-content: space-between;
+    gap: .12rem;
+    margin: .25rem 0 .55rem;
+  }
+
+  .detail-tabs button {
+    flex: 1;
+    padding-inline: .16rem;
+    font-size: .79rem;
+  }
+
+  .overview-sidebar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .overview-grid .chart-panel { padding: .7rem; }
+  .overview-grid .panel-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: .35rem;
+    margin-bottom: .45rem;
+  }
+  .overview-grid .chart-eyebrow { display: none; }
+  .overview-grid .panel-heading h2 { font-size: 1rem; }
+  .overview-grid .panel-heading p,
+  .overview-grid .panel-note { font-size: .72rem; }
+  .performance-stat { padding: .21rem .38rem; }
+  .performance-stat .quote-movement { font-size: .9rem; }
+
+  .chart--history {
+    height: 23rem;
+  }
+
+  .range-switch { margin-bottom: .4rem; }
+  .range-switch button { min-width: 2.5rem; min-height: 2.75rem; padding-inline: .42rem; }
+}

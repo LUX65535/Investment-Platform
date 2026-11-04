@@ -31,6 +31,16 @@ body.mat-typography :is(h1, h2, h3, h4, h5, h6, .mat-headline, .mat-title) {
   font-family: var(--font);
 }
 
+html {
+  scroll-padding-block-start: 4.75rem;
+}
+
+@media (max-width: 760px) {
+  html {
+    scroll-padding-block: calc(4rem + env(safe-area-inset-top, 0px)) calc(4.2rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 a {
   color: var(--accent);
   text-underline-offset: .18em;

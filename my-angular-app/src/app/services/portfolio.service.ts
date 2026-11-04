@@ -35,6 +35,11 @@ interface PaperSession {
 }
 
 const pendingPrefix = 'investment-paper-order:';
+const orderPrice = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 6,
+});
 
 export class PendingOrderError extends Error {
   constructor(public readonly order: PendingPaperOrder) {
@@ -48,10 +53,15 @@ export function paperOrderUncertain(error: unknown): boolean {
     || error.status === 408 || error.status === 429 || error.status >= 500;
 }
 
+export function estimateOrderCents(price: number, quantity: number): number {
+  const gross = price * quantity;
+  return Math.round((gross + gross * Number.EPSILON) * 100);
+}
+
 export function paperOrderConfirmation(receipt: PaperOrderReceipt): string {
   const action = receipt.side === 'buy' ? 'Bought' : 'Sold';
   const shares = receipt.quantity === 1 ? 'share' : 'shares';
-  const price = receipt.price === null ? '' : ` at $${receipt.price.toFixed(2)}`;
+  const price = receipt.price === null ? '' : ` at ${orderPrice.format(receipt.price)}`;
   return `${action} ${receipt.quantity} ${shares} of ${receipt.ticker}${price}. Receipt ${receipt.orderId.slice(0, 8)}.`;
 }
 

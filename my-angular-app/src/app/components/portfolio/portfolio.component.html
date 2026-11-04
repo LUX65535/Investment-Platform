@@ -2,9 +2,9 @@
   <div>
     <p class="page-eyebrow">Paper trading</p>
     <h1>Portfolio</h1>
-    <p>Review simulated orders, buying power, and open positions in your browser workspace.</p>
+    <p>Track buying power, open positions, and simulated orders.</p>
   </div>
-  <span class="workspace-label">Simulated account · USD</span>
+  <span class="workspace-label">Paper account · USD</span>
 </header>
 
 <section class="portfolio-overview" aria-label="Portfolio overview" [attr.aria-busy]="isLoading">
@@ -33,6 +33,13 @@
     {{ quotesPending ? 'Valuation in progress.' : 'Some quotes are unavailable.' }}
     {{ quotedCount }} of {{ portfolio.length }} positions priced.
   </p>
+  <p *ngIf="holdingsCurrent && portfolio.length && marketValue !== null" class="quote-coverage">
+    Estimated using the latest available quotes.
+    <ng-container *ngIf="oldestQuote as timestamp; else unknownQuoteTimes">
+      Oldest quote {{ timestamp | date:'MMM d, HH:mm':'+0000' }} UTC.
+    </ng-container>
+    <ng-template #unknownQuoteTimes>Some quote times are unavailable.</ng-template>
+  </p>
 </section>
 
 <section class="positions-panel" aria-labelledby="positions-title" [attr.aria-busy]="isLoading">
@@ -40,10 +47,11 @@
     <div>
       <h2 id="positions-title">Positions</h2>
       <p *ngIf="holdingsCurrent">{{ portfolio.length }} open {{ portfolio.length === 1 ? 'position' : 'positions' }}</p>
+      <p *ngIf="!holdingsCurrent && !isLoading && portfolio.length">Showing the last loaded positions</p>
     </div>
     <div class="portfolio-toolbar">
-      <button type="button" class="state-action" [attr.aria-disabled]="isLoading || isInitializing"
-              (click)="!isInitializing && loadPortfolio()">
+      <button type="button" class="state-action" [attr.aria-disabled]="isLoading || isInitializing || checkingOrderId !== null"
+              (click)="!isInitializing && !checkingOrderId && loadPortfolio()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M20 7v5h-5M4 17v-5h5m10.6 0a7.6 7.6 0 0 0-13-5.4L4 9m16 6-2.6 2.4a7.6 7.6 0 0 1-13-5.4"/>
@@ -68,7 +76,7 @@
   <div *ngIf="!isLoading && walletInitialized === false" class="wallet-setup">
     <div>
       <h3>Activate your demo wallet</h3>
-      <p>Start with simulated cash to practice placing orders.</p>
+      <p>Get $25,000 in simulated cash to place your first paper order.</p>
     </div>
     <button type="button" class="btn-primary-lg" [attr.aria-disabled]="isInitializing" (click)="onInitializeWallet()">
       {{ isInitializing ? 'Initializing…' : 'Initialize demo wallet' }}
@@ -122,7 +130,7 @@
         </td>
         <td role="cell">
           <span class="mobile-label" aria-hidden="true">Last price</span>
-          <strong *ngIf="stock.price !== null; else unavailablePrice">{{ stock.price | currency:'USD' }}</strong>
+          <strong *ngIf="stock.price !== null; else unavailablePrice">{{ stock.price | currency:'USD':'symbol':'1.2-6' }}</strong>
           <ng-template #unavailablePrice><span class="unavailable">{{ stock.quotePending ? 'Loading…' : 'Unavailable' }}</span></ng-template>
         </td>
         <td role="cell">
@@ -135,7 +143,7 @@
         </td>
         <td role="cell">
           <span class="mobile-label" aria-hidden="true">Market value</span>
-          <strong>{{ stock.price === null ? '—' : (stock.quantity * stock.price | currency:'USD') }}</strong>
+          <strong>{{ stock.price === null ? '—' : (stock.quantity * stock.price | currency:'USD':'symbol':'1.2-6') }}</strong>
         </td>
         <td role="cell" class="holding-profit">
           <span class="mobile-label" aria-hidden="true">Unrealized P&amp;L</span>
@@ -165,7 +173,7 @@
       <h2 id="orders-title">Order activity</h2>
       <p>Review fills, rejections, and orders awaiting confirmation.</p>
     </div>
-    <button type="button" class="state-action" [attr.aria-disabled]="receiptsLoading" (click)="loadReceipts()">Refresh orders</button>
+    <button type="button" class="state-action" [attr.aria-disabled]="receiptsLoading" (click)="!receiptsLoading && loadReceipts()">Refresh orders</button>
   </div>
   <div *ngIf="receiptsError" class="panel-messages">
     <p class="state-message state-message--error" role="alert">{{ receiptsError }}</p>
@@ -180,7 +188,7 @@
   <ul class="order-list" *ngIf="pendingOrders.length">
     <li *ngFor="let order of pendingOrders" class="pending-order">
       <div><strong>{{ order.side === 'buy' ? 'Buy' : 'Sell' }} {{ order.ticker }}</strong><p>{{ order.quantity }} {{ order.quantity === 1 ? 'share' : 'shares' }} · Awaiting confirmation</p></div>
-      <button type="button" class="state-action" [attr.aria-disabled]="checkingOrderId !== null"
+      <button type="button" class="state-action" [attr.aria-disabled]="checkingOrderId !== null || isLoading || isInitializing"
               (click)="retryPendingOrder(order)">{{ checkingOrderId === order.orderId ? 'Checking…' : 'Retry same order' }}</button>
     </li>
   </ul>
@@ -196,7 +204,7 @@
         <div class="receipt-body">
           <p>{{ receipt.message }}</p>
           <dl>
-            <div *ngIf="receipt.price !== null"><dt>Execution price</dt><dd>{{ receipt.price | currency:'USD' }}</dd></div>
+            <div *ngIf="receipt.price !== null"><dt>Execution price</dt><dd>{{ receipt.price | currency:'USD':'symbol':'1.2-6' }}</dd></div>
             <div *ngIf="receipt.total !== null"><dt>Order value</dt><dd>{{ receipt.total | currency:'USD' }}</dd></div>
             <div *ngIf="receipt.balance !== null"><dt>Cash after order</dt><dd>{{ receipt.balance | currency:'USD' }}</dd></div>
             <div><dt>Receipt ID</dt><dd><code>{{ receipt.orderId }}</code></dd></div>
@@ -210,34 +218,44 @@
 <ng-template #tradeDialog let-dialog>
   <form *ngIf="activeTrade as trade" (ngSubmit)="submitTrade()">
     <div class="modal-header">
-      <h2 id="portfolio-trade-title" class="modal-title">
-        {{ trade.side === 'buy' ? 'Buy' : 'Sell' }} {{ trade.holding.ticker }}
-      </h2>
+      <div>
+        <p class="page-eyebrow">Paper order</p>
+        <h2 id="portfolio-trade-title" class="modal-title">
+          {{ trade.side === 'buy' ? 'Buy' : 'Sell' }} {{ trade.holding.ticker }}
+        </h2>
+      </div>
       <button type="button" class="btn-close" aria-label="Close trade"
               [disabled]="submittingTrade" (click)="dialog.dismiss()"></button>
     </div>
     <div class="modal-body">
       <dl class="trade-summary">
-        <div><dt>Last quote</dt><dd>{{ trade.price | currency:'USD' }}</dd></div>
+        <div><dt>Last quote</dt><dd>{{ trade.price | currency:'USD':'symbol':'1.2-6' }}</dd></div>
         <div *ngIf="trade.side === 'buy'"><dt>Available cash</dt><dd>{{ cashBalance | currency:'USD' }}</dd></div>
         <div *ngIf="trade.side === 'sell'"><dt>Shares owned</dt><dd>{{ trade.holding.quantity }}</dd></div>
-        <div><dt>Estimated total</dt><dd>{{ estimatedTotal | currency:'USD' }}</dd></div>
+        <div><dt>Estimated total</dt><dd>{{ estimatedTotal === null ? '—' : (estimatedTotal | currency:'USD') }}</dd></div>
       </dl>
       <label for="portfolio-trade-quantity" class="form-label">Shares</label>
-      <input id="portfolio-trade-quantity" name="quantity" type="number" min="1" step="1"
-             required ngbAutofocus class="form-control" [(ngModel)]="quantity"
-             [readonly]="submittingTrade || tradeNeedsRefresh" aria-describedby="portfolio-trade-estimate">
-      <p id="portfolio-trade-estimate" class="form-text">The final price uses the latest quote at execution.</p>
-      <p *ngIf="!validQuantity" class="text-danger">Enter a positive whole number.</p>
-      <p *ngIf="validQuantity && !submittingTrade && !tradeNeedsRefresh && !canSubmitTrade" class="text-danger">
-        {{ trade.side === 'buy' ? 'The estimated cost exceeds your available cash.' : 'You don’t own that many shares.' }}
+      <div class="quantity-field">
+        <input id="portfolio-trade-quantity" name="quantity" type="number" inputmode="numeric" min="1" step="1"
+               required ngbAutofocus class="form-control" [(ngModel)]="quantity"
+               [readonly]="submittingTrade || isRetryingTrade" [attr.aria-invalid]="quantityError ? 'true' : null"
+               [attr.aria-describedby]="quantityError ? 'portfolio-trade-estimate portfolio-quantity-error' : 'portfolio-trade-estimate'">
+        <button *ngIf="!isRetryingTrade" type="button" class="state-action" [disabled]="submittingTrade || quantityLimit === 0"
+                (click)="useMaximumQuantity()">Use max</button>
+      </div>
+      <p id="portfolio-trade-estimate" class="form-text">
+        <ng-container *ngIf="!isRetryingTrade">Up to {{ quantityLimit | number }} {{ quantityLimit === 1 ? 'share' : 'shares' }} at this quote. </ng-container>
+        The final price uses the latest quote at execution.
       </p>
+      <p *ngIf="quantityError" id="portfolio-quantity-error" class="text-danger">{{ quantityError }}</p>
       <p *ngIf="tradeError" class="state-message state-message--error" role="alert">{{ tradeError }}</p>
     </div>
     <div class="modal-footer">
-      <button type="button" class="state-action" [disabled]="submittingTrade" (click)="dialog.dismiss()">Cancel</button>
+      <button type="button" class="state-action" [disabled]="submittingTrade" (click)="dialog.dismiss()">
+        {{ isRetryingTrade ? 'Close' : 'Cancel' }}
+      </button>
       <button type="submit" class="btn btn-primary" [attr.aria-disabled]="!canSubmitTrade">
-        {{ submittingTrade ? 'Submitting…' : tradeNeedsRefresh ? 'Retry same order' : (trade.side === 'buy' ? 'Place buy order' : 'Place sell order') }}
+        {{ submittingTrade ? 'Submitting…' : isRetryingTrade ? 'Retry same order' : (trade.side === 'buy' ? 'Place buy order' : 'Place sell order') }}
       </button>
     </div>
   </form>

@@ -8,13 +8,17 @@ interface Quote {
   c: number;
   d: number | null;
   dp: number | null;
+  t?: number;
 }
+
+type SortKey = 'symbol' | 'price' | 'change' | 'changePercent';
 
 interface WatchlistItem {
   ticker: string;
   name?: string;
   currency?: string;
   quote?: Quote;
+  quotedAt?: number;
   quotePending?: boolean;
 }
 
@@ -28,6 +32,8 @@ export class WatchlistComponent implements OnInit {
   @ViewChild('listTitle', { static: true }) private listTitle!: ElementRef<HTMLElement>;
   readonly removing = new Set<string>();
   watchlist: WatchlistItem[] = [];
+  sortKey: SortKey = 'symbol';
+  ascending = true;
   loading = false;
   hasLoaded = false;
   private enriching = false;
@@ -41,6 +47,43 @@ export class WatchlistComponent implements OnInit {
     this.loadWatchlist();
   }
 
+  get sortedWatchlist(): WatchlistItem[] {
+    const direction = this.ascending ? 1 : -1;
+    return [...this.watchlist].sort((first, second) => {
+      const symbolOrder = first.ticker.localeCompare(second.ticker);
+      if (this.sortKey === 'symbol') return direction * symbolOrder;
+
+      const a = this.sortValue(first);
+      const b = this.sortValue(second);
+      if (a === null) return b === null ? symbolOrder : 1;
+      if (b === null) return -1;
+      return direction * (a - b) || symbolOrder;
+    });
+  }
+
+  sortBy(key: SortKey): void {
+    this.ascending = this.sortKey === key ? !this.ascending : key === 'symbol';
+    this.sortKey = key;
+  }
+
+  sortDirection(key: SortKey): 'ascending' | 'descending' | null {
+    return this.sortKey === key ? (this.ascending ? 'ascending' : 'descending') : null;
+  }
+
+  private sortValue(item: WatchlistItem): number | null {
+    if (!item.quote) return null;
+    if (this.sortKey === 'price') return item.quote.c;
+    return this.sortKey === 'change' ? item.quote.d : item.quote.dp;
+  }
+
+  get quotedCount(): number {
+    return this.watchlist.filter(item => item.quote).length;
+  }
+
+  get quotesPending(): boolean {
+    return this.watchlist.some(item => item.quotePending);
+  }
+
   get canRefresh(): boolean {
     return !this.loading && !this.enriching && this.removing.size === 0;
   }
@@ -49,6 +92,7 @@ export class WatchlistComponent implements OnInit {
     if (!this.canRefresh) return;
     this.loading = true;
     this.loadError = '';
+    this.actionStatus = '';
     this.portfolioService.getWatchlist().pipe(
       tap(items => {
         this.watchlist = items.map(({ ticker }) => ({ ticker, quotePending: true }));
@@ -69,6 +113,8 @@ export class WatchlistComponent implements OnInit {
           ticker,
           name: profile?.name,
           currency: typeof profile?.currency === 'string' && /^[A-Z]{3}$/.test(profile.currency) ? profile.currency : undefined,
+          quotedAt: quote?.t && Number.isSafeInteger(quote.t) && quote.t > 0 && quote.t <= Date.now() / 1000 + 60
+            ? quote.t * 1000 : undefined,
           quote: quote && Number.isFinite(quote.c) && quote.c > 0 ? {
             c: quote.c,
             d: Number.isFinite(quote.d) ? quote.d : null,
@@ -83,7 +129,9 @@ export class WatchlistComponent implements OnInit {
       }),
     ).subscribe({
       next: enriched => this.watchlist = this.watchlist.map(item => item.ticker === enriched.ticker ? enriched : item),
-      error: () => this.loadError = 'We couldn’t load your watchlist. Try again in a moment.',
+      error: () => this.loadError = this.hasLoaded
+        ? 'We couldn’t refresh your watchlist. Showing the last loaded list.'
+        : 'We couldn’t load your watchlist. Try again in a moment.',
     });
   }
 

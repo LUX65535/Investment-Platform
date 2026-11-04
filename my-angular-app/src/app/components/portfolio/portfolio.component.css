@@ -32,7 +32,10 @@
 }
 
 .portfolio-metric:first-child { border-left: 0; }
-.portfolio-metric.primary-metric { border-radius: var(--radius) 0 0 var(--radius); background: var(--brand); }
+.portfolio-metric.primary-metric {
+  border-radius: var(--radius) 0 0 var(--radius);
+  background: linear-gradient(135deg, var(--brand), var(--accent-hover));
+}
 
 .portfolio-metric dt {
   margin-bottom: .28rem;
@@ -249,7 +252,12 @@
 }
 
 .modal-body .trade-summary { margin-top: 0; }
+.modal-header .page-eyebrow { margin-bottom: .25rem; }
 .modal-body .form-control:focus { box-shadow: none; }
+.quantity-field { display: flex; gap: .5rem; }
+.quantity-field input { min-width: 0; }
+.quantity-field .state-action { flex-shrink: 0; }
+.quantity-field input[aria-invalid='true'] { border-color: var(--negative); }
 
 @media (max-width: 900px) {
   .positions-table,
