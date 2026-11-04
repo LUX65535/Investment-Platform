@@ -48,6 +48,11 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.btn[aria-disabled='true'] {
+  opacity: .65;
+  cursor: not-allowed;
+}
+
 .page-heading {
   margin-bottom: clamp(1.25rem, 3vw, 2rem);
 }
