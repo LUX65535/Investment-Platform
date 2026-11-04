@@ -23,6 +23,8 @@ interface Holding extends Omit<Stock, 'price' | 'change'> {
   quotedAt?: number;
 }
 
+type PositionSort = 'ticker' | 'quantity' | 'price' | 'dayChange' | 'marketValue' | 'weight' | 'unrealized';
+
 @Component({
   selector: 'app-portfolio',
   templateUrl: './portfolio.component.html',
@@ -39,6 +41,7 @@ export class PortfolioComponent implements OnInit {
   @ViewChild('tradeDialog', { static: true }) private tradeDialog!: TemplateRef<unknown>;
   readonly visibleAllocationEntries = 5;
   portfolio: Holding[] = [];
+  private positionSort: { key: PositionSort; ascending: boolean } = { key: 'marketValue', ascending: false };
   cashBalance: number | null = null;
   walletInitialized: boolean | null = null;
   holdingsCurrent = false;
@@ -86,24 +89,59 @@ export class PortfolioComponent implements OnInit {
     return marketValue === null || this.cashBalance === null ? null : this.cashBalance + marketValue;
   }
 
+  holdingWeight(stock: Holding): number | null {
+    const equity = this.accountValue;
+    return equity !== null && equity > 0 && stock.price !== null ? stock.quantity * stock.price / equity : null;
+  }
+
+  holdingReturn(stock: Holding): number | null {
+    return stock.totalCost > 0 && stock.price !== null ? stock.quantity * stock.price / stock.totalCost - 1 : null;
+  }
+
+  get sortedPortfolio(): Holding[] {
+    const { key, ascending } = this.positionSort;
+    const direction = ascending ? 1 : -1;
+    const rows = this.portfolio.map(stock => ({ stock, value: this.positionValue(stock, key) }));
+    rows.sort((first, second) => {
+      const a = first.value;
+      const b = second.value;
+      if (a === null && b !== null) return 1;
+      if (b === null && a !== null) return -1;
+      const order = typeof a === 'string' && typeof b === 'string' ? a.localeCompare(b)
+        : typeof a === 'number' && typeof b === 'number' ? a - b : 0;
+      return order * direction || first.stock.ticker.localeCompare(second.stock.ticker);
+    });
+    return rows.map(({ stock }) => stock);
+  }
+
+  sortPositions(key: PositionSort): void {
+    const previous = this.positionSort;
+    this.positionSort = { key, ascending: previous.key === key ? !previous.ascending : key === 'ticker' };
+  }
+
+  sortState(key: PositionSort): 'ascending' | 'descending' | null {
+    return this.positionSort.key !== key ? null : this.positionSort.ascending ? 'ascending' : 'descending';
+  }
+
+  private positionValue(stock: Holding, key: PositionSort): string | number | null {
+    const market = stock.price === null ? null : stock.quantity * stock.price;
+    switch (key) {
+      case 'ticker': return stock.ticker;
+      case 'quantity': return stock.quantity;
+      case 'price': return stock.price;
+      case 'dayChange': return stock.change;
+      case 'marketValue': return market;
+      case 'weight': return this.holdingWeight(stock);
+      case 'unrealized': return market === null ? null : market - stock.totalCost;
+    }
+  }
+
   get portfolioPrepared(): boolean {
     return this.performance?.prepared === true || this.receipts.some(receipt => receipt.source === 'prepared');
   }
 
   get showcaseClaimError(): string {
     return this.portfolioService.showcaseClaimError;
-  }
-
-  get benchmarkSnapshot(): { date: string; portfolio: number; spy: number; differencePoints: number } | null {
-    const shared = (this.performance?.points ?? []).flatMap(({ date, nav, spyClose }) =>
-      nav !== null && Number.isFinite(nav) && nav >= 0 && spyClose !== null && Number.isFinite(spyClose) && spyClose > 0
-        ? [{ date, nav, spyClose }] : []);
-    const start = shared.find(point => point.nav > 0);
-    const last = shared.at(-1);
-    if (!start || !last || start.date >= last.date) return null;
-    const portfolio = last.nav / start.nav - 1;
-    const spy = last.spyClose / start.spyClose - 1;
-    return { date: `${last.date}T00:00:00Z`, portfolio, spy, differencePoints: (portfolio - spy) * 100 };
   }
 
   get allocation(): { entries: AllocationEntry[]; message?: string } {

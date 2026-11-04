@@ -1,12 +1,15 @@
 <section class="performance-panel" aria-labelledby="portfolio-performance-title" [attr.aria-busy]="loading">
   <header class="performance-header">
-    <div>
-      <h2 id="portfolio-performance-title" #performanceHeading tabindex="-1">Portfolio performance</h2>
-      <p>Daily marks · 30-day window</p>
-    </div>
-    <div class="latest-valuation" *ngIf="!loading && !failed && chart as series">
-      <span>Last valued close · {{ series.lastValuation.time | date:'MMM d, yyyy':'+0000' }}</span>
-      <strong>{{ series.lastValuation.nav | currency:'USD' }}</strong>
+    <h2 id="portfolio-performance-title" #performanceHeading tabindex="-1">Portfolio performance</h2>
+    <div class="performance-controls" *ngIf="!loading && !failed && hasHistory">
+      <div class="performance-modes" *ngIf="canCompare" role="group" aria-label="Performance chart view">
+        <button type="button" aria-label="Compare with SPY" [attr.aria-pressed]="chart?.compared" (click)="selectChart(true)">vs SPY</button>
+        <button type="button" aria-label="Account value" [attr.aria-pressed]="!chart?.compared" (click)="selectChart(false)">Value</button>
+      </div>
+      <div class="performance-ranges" *ngIf="canSelectRange" role="group" aria-label="Performance date range">
+        <button *ngFor="let option of ranges" type="button" [title]="'Last ' + option.days + ' calendar days'"
+                [attr.aria-pressed]="range === option.days" (click)="selectRange(option.days)">{{ option.label }}</button>
+      </div>
     </div>
   </header>
 
@@ -16,31 +19,32 @@
     <button type="button" class="state-action" (click)="retryHistory(performanceHeading, $event)">Retry history</button>
   </div>
   <p *ngIf="!loading && !failed && !chart" class="performance-state" role="status">
-    {{ message || 'Portfolio history will appear when there is an available closing valuation for your paper account.' }}
+    {{ message || (hasHistory ? 'No priced portfolio close in this window. Choose a longer range.' : 'Portfolio history appears after your first available closing valuation.') }}
   </p>
 
   <ng-container *ngIf="!loading && !failed && chart as series">
-    <div class="performance-basis">
-      <p *ngIf="series.compared; else dollarBasis">
-        Price return since the shared close on <time [attr.datetime]="series.first.date">{{ series.first.time | date:'MMM d, yyyy':'+0000' }}</time>
-      </p>
-      <ng-template #dollarBasis>
-        <p>Closing account value in USD.<ng-container *ngIf="!canCompare"> The SPY comparison needs two shared closing dates.</ng-container></p>
-      </ng-template>
-      <div *ngIf="canCompare" class="performance-modes" role="group" aria-label="Performance chart view">
-        <button type="button" [attr.aria-pressed]="series.compared" (click)="selectChart(true)">Compare with SPY</button>
-        <button type="button" [attr.aria-pressed]="!series.compared" (click)="selectChart(false)">Account value</button>
-      </div>
-    </div>
     <figure class="performance-figure" [class.performance-figure--comparison]="series.compared" *ngIf="selectedPoint as point">
-      <div class="chart-toolbar">
-        <ul class="chart-legend" aria-label="Chart series">
-          <li><span class="swatch" aria-hidden="true"></span> Portfolio <strong *ngIf="series.compared">{{ returnLabel(point.navReturn) }}</strong></li>
-          <li *ngIf="series.compared"><span class="swatch swatch--spy" aria-hidden="true"></span> SPY <strong>{{ returnLabel(point.spyReturn) }}</strong></li>
-        </ul>
+      <dl *ngIf="series.compared; else dollarMetrics" class="chart-metrics" aria-label="Price returns on the selected date">
+        <div><dt><span class="swatch" aria-hidden="true"></span>Portfolio</dt><dd>{{ returnLabel(point.navReturn) }}</dd></div>
+        <div><dt><span class="swatch swatch--spy" aria-hidden="true"></span>SPY</dt><dd>{{ returnLabel(point.spyReturn) }}</dd></div>
+        <div class="chart-relative"><dt aria-label="Portfolio return minus SPY return">Difference</dt><dd>{{ selectedDifference }}</dd></div>
+      </dl>
+      <ng-template #dollarMetrics>
+        <dl class="chart-metrics chart-metrics--value" aria-label="Closing account value on the selected date">
+          <div><dt><span class="swatch" aria-hidden="true"></span>Closing value</dt><dd>{{ point.nav === null ? '—' : (point.nav | currency:'USD') }}</dd></div>
+          <div><dt>Change since first close</dt><dd>{{ selectedValueChange }}</dd></div>
+        </dl>
+      </ng-template>
+      <div class="chart-context">
+        <p class="performance-basis" *ngIf="series.compared; else dollarBasis">
+          Since shared close <time [attr.datetime]="series.first.date">{{ series.first.time | date:'MMM d':'+0000' }}</time>
+        </p>
+        <ng-template #dollarBasis>
+          <p class="performance-basis">Closing value in USD.<ng-container *ngIf="!canCompare"> SPY comparison needs two shared closing dates.</ng-container></p>
+        </ng-template>
         <div class="chart-readout">
           <time [attr.datetime]="point.date">{{ point.time | date:'MMM d, yyyy':'+0000' }}</time>
-          <strong>{{ point.nav === null ? 'Value unavailable' : (point.nav | currency:'USD') }}</strong>
+          <strong *ngIf="series.compared">{{ point.nav === null ? '—' : (point.nav | currency:'USD') }}</strong>
         </div>
       </div>
       <div class="performance-plot">
@@ -52,12 +56,12 @@
                [attr.aria-label]="series.compared ? 'Portfolio and SPY price returns from the same closing date' : 'Portfolio closing value in U.S. dollars'">
             <defs>
               <linearGradient id="portfolio-area-fade" x2="0" y2="1" gradientUnits="objectBoundingBox">
-                <stop stop-color="var(--trace)" stop-opacity=".21"/>
+                <stop stop-color="var(--trace)" stop-opacity=".13"/>
                 <stop offset="100%" stop-color="var(--trace)" stop-opacity=".015"/>
               </linearGradient>
             </defs>
-            <line *ngFor="let gridX of [8, 164, 320, 476, 632]" class="grid-line grid-line--vertical"
-                  [attr.x1]="gridX" [attr.x2]="gridX" y1="12" [attr.y2]="height - 16" vector-effect="non-scaling-stroke"/>
+            <line *ngFor="let tick of series.dateTicks" class="grid-line grid-line--vertical"
+                  [attr.x1]="tick.x" [attr.x2]="tick.x" y1="12" [attr.y2]="height - 16" vector-effect="non-scaling-stroke"/>
             <line *ngFor="let tick of series.ticks" class="grid-line" [class.grid-line--zero]="series.compared && tick.value === 0"
                   x1="8" [attr.x2]="width - 8" [attr.y1]="tick.y" [attr.y2]="tick.y" vector-effect="non-scaling-stroke"/>
             <path class="valuation-area" fill="url(#portfolio-area-fade)" [attr.d]="series.nav.area"/>
@@ -84,21 +88,23 @@
         </div>
       </div>
       <figcaption class="chart-dates">
-        <time [attr.datetime]="series.first.date">{{ series.first.time | date:'MMM d, yyyy':'+0000' }}</time>
-        <time *ngIf="series.first.date !== series.last.date" [attr.datetime]="series.last.date">{{ series.last.time | date:'MMM d, yyyy':'+0000' }}</time>
+        <time *ngFor="let tick of series.dateTicks; let index = index; let first = first; let last = last"
+              [class.chart-date--first]="first && !last" [class.chart-date--last]="last && !first"
+              [class.chart-date--secondary]="!first && !last && index !== (series.dateTicks.length - 1) / 2"
+              [style.left.%]="tick.x / width * 100" [attr.datetime]="tick.date">{{ tick.time | date:'MMM d':'+0000' }}</time>
       </figcaption>
     </figure>
-    <div *ngIf="series.gaps.length || missingSessions || missingBenchmarkSessions || message" class="performance-coverage" role="status">
+    <div *ngIf="series.gaps.length || windowMissingSessions || windowMissingBenchmarkSessions || message" class="performance-coverage" role="status">
       <p *ngIf="message">{{ message }}</p>
       <p *ngIf="series.gaps.length"><span class="gap-key" aria-hidden="true"></span> Breaks mark missing closing values.</p>
-      <p *ngIf="missingSessions">{{ missingSessions }} {{ missingSessions === 1 ? 'session is' : 'sessions are' }} missing a portfolio valuation.</p>
-      <p *ngIf="missingBenchmarkSessions">{{ missingBenchmarkSessions }} {{ missingBenchmarkSessions === 1 ? 'session is' : 'sessions are' }} missing a SPY close.</p>
+      <p *ngIf="windowMissingSessions">{{ windowMissingSessions }} {{ windowMissingSessions === 1 ? 'session is' : 'sessions are' }} missing a portfolio valuation.</p>
+      <p *ngIf="windowMissingBenchmarkSessions">{{ windowMissingBenchmarkSessions }} {{ windowMissingBenchmarkSessions === 1 ? 'session is' : 'sessions are' }} missing a SPY close.</p>
     </div>
     <footer class="performance-footer">
       <span>Daily closes · Massive (Polygon)</span>
       <details>
         <summary>Methodology</summary>
-        <p>Up to 30 calendar days. Closing account value combines cash and holdings reconstructed from filled paper orders. Returns use price changes before distributions. Historical shares use recorded quantities without stock-split adjustments.</p>
+        <p>Each range ends on the newest date in the available history. SPY and portfolio returns start at zero on their first shared close in the selected range. Closing account value combines cash and holdings reconstructed from filled paper orders. Returns exclude distributions. Historical shares use recorded quantities without stock-split adjustments.</p>
       </details>
     </footer>
   </ng-container>

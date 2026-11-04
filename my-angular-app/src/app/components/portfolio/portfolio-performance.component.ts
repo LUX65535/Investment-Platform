@@ -23,8 +23,8 @@ interface Series {
 interface PerformanceChart {
   points: PlotPoint[];
   first: PlotPoint;
-  last: PlotPoint;
-  lastValuation: ClosingPoint;
+  firstValuation: ClosingPoint;
+  dateTicks: PlotPoint[];
   compared: boolean;
   nav: Series;
   spy: Series;
@@ -34,9 +34,18 @@ interface PerformanceChart {
 
 const width = 640;
 const height = 160;
+const day = 86_400_000;
+const ranges = [
+  { label: '1W', days: 7 },
+  { label: '2W', days: 14 },
+  { label: '1M', days: 30 },
+] as const;
+type PerformanceRange = typeof ranges[number]['days'];
 const dateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 const dollarFormat = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+const signedDollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', signDisplay: 'exceptZero' });
 const percentFormat = new Intl.NumberFormat('en-US', { style: 'percent', signDisplay: 'exceptZero', maximumFractionDigits: 2 });
+const pointFormat = new Intl.NumberFormat('en-US', { signDisplay: 'exceptZero', maximumFractionDigits: 2 });
 
 function validRows(points: readonly PortfolioPerformancePoint[]): ClosingPoint[] {
   const byDate = new Map<string, ClosingPoint>();
@@ -94,8 +103,8 @@ function plotScale(values: number[], compared: boolean): { low: number; high: nu
 }
 
 function makeChart(rows: ClosingPoint[], allowComparison: boolean): PerformanceChart | null {
-  const lastValuation = rows.filter(row => row.nav !== null).at(-1);
-  if (!lastValuation) return null;
+  const firstValuation = rows.find(row => row.nav !== null);
+  if (!firstValuation) return null;
 
   const baseline = allowComparison ? rows.find((row): row is ClosingPoint & { nav: number; spyClose: number } =>
     row.nav !== null && row.nav > 0 && row.spyClose !== null) : undefined;
@@ -123,9 +132,14 @@ function makeChart(rows: ClosingPoint[], allowComparison: boolean): PerformanceC
     const value = Number((low + index * step).toPrecision(10));
     return { value, y: y(value) };
   });
+  const tickCount = Math.min(points.length, 5);
+  const dateTicks = tickCount === 1 ? points : Array.from({ length: tickCount }, (_, index) => {
+    const target = 8 + (width - 16) * index / (tickCount - 1);
+    return points.reduce((nearest, point) => Math.abs(point.x - target) < Math.abs(nearest.x - target) ? point : nearest);
+  }).filter((point, index, candidates) => index === 0 || point !== candidates[index - 1]);
 
   return {
-    points, first: points[0], last: points.at(-1)!, lastValuation, compared,
+    points, first: points[0], firstValuation, dateTicks, compared,
     nav: lineSeries(points, 'navY'), spy: lineSeries(points, 'spyY'), ticks,
     gaps: points.filter(point => point.navY === null || compared && point.spyY === null),
   };
@@ -141,7 +155,11 @@ function makeChart(rows: ClosingPoint[], allowComparison: boolean): PerformanceC
 export class PortfolioPerformanceComponent {
   readonly width = width;
   readonly height = height;
+  readonly ranges = ranges;
+  range: PerformanceRange = 30;
   chart: PerformanceChart | null = null;
+  private rows: ClosingPoint[] = [];
+  private windowRows: ClosingPoint[] = [];
   private comparisonChart: PerformanceChart | null = null;
   private accountValueChart: PerformanceChart | null = null;
   private preferComparison = true;
@@ -154,12 +172,27 @@ export class PortfolioPerformanceComponent {
   @Output() retry = new EventEmitter<void>();
 
   @Input() set points(value: readonly PortfolioPerformancePoint[]) {
-    const rows = validRows(value);
-    const chart = makeChart(rows, true);
+    this.rows = validRows(value);
+    this.rebuildChart();
+  }
+
+  private rebuildChart(): void {
+    const end = this.rows.at(-1)?.time ?? 0;
+    const start = end - (this.range - 1) * day;
+    this.windowRows = this.rows.filter(row => row.time >= start);
+    const chart = makeChart(this.windowRows, true);
     this.comparisonChart = chart?.compared ? chart : null;
-    this.accountValueChart = this.comparisonChart ? makeChart(rows, false) : chart;
+    this.accountValueChart = this.comparisonChart ? makeChart(this.windowRows, false) : chart;
     this.chart = (this.preferComparison ? this.comparisonChart : null) ?? this.accountValueChart;
     this.pointIndex = this.chart ? this.chart.points.length - 1 : 0;
+  }
+
+  get hasHistory(): boolean {
+    return this.rows.length > 0;
+  }
+
+  get canSelectRange(): boolean {
+    return this.rows.length > 1;
   }
 
   get canCompare(): boolean {
@@ -168,6 +201,26 @@ export class PortfolioPerformanceComponent {
 
   get selectedPoint(): PlotPoint | undefined {
     return this.chart?.points[this.pointIndex];
+  }
+
+  get selectedDifference(): string {
+    const point = this.selectedPoint;
+    if (!point || point.navReturn === null || point.spyReturn === null) return '—';
+    return `${pointFormat.format((point.navReturn - point.spyReturn) * 100)} pp`;
+  }
+
+  get selectedValueChange(): string {
+    const nav = this.selectedPoint?.nav;
+    const baseline = this.chart?.firstValuation.nav;
+    return nav == null || baseline == null ? '—' : signedDollars.format(nav - baseline);
+  }
+
+  get windowMissingSessions(): number {
+    return this.range === 30 ? this.missingSessions : this.windowRows.filter(row => row.nav === null).length;
+  }
+
+  get windowMissingBenchmarkSessions(): number {
+    return this.range === 30 ? this.missingBenchmarkSessions : this.windowRows.filter(row => row.spyClose === null).length;
   }
 
   get selectedDescription(): string {
@@ -190,6 +243,12 @@ export class PortfolioPerformanceComponent {
     this.pointIndex = Math.max(0, nextChart.points.findIndex(point => point.date === selectedDate));
   }
 
+  selectRange(range: PerformanceRange): void {
+    if (this.range === range) return;
+    this.range = range;
+    this.rebuildChart();
+  }
+
   retryHistory(heading: HTMLHeadingElement, event: Event): void {
     if (heading.ownerDocument.activeElement === event.currentTarget) heading.focus({ preventScroll: true });
     this.retry.emit();
@@ -204,6 +263,7 @@ export class PortfolioPerformanceComponent {
   }
 
   inspectPointer(event: PointerEvent): void {
+    if (event.type === 'pointermove' && event.pointerType !== 'mouse') return;
     const points = this.chart?.points;
     if (!points?.length) return;
     const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();

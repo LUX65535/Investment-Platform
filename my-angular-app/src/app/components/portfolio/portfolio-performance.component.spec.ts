@@ -85,4 +85,56 @@ describe('PortfolioPerformanceComponent', () => {
     expect(area?.match(/Z/g)?.length).toBe(2);
     expect(element.querySelectorAll('.gap-tick').length).toBe(1);
   });
+
+  it('uses inclusive calendar ranges and rebases to the first shared close inside each window', () => {
+    fixture.componentRef.setInput('points', [
+      { date: '2026-01-06', nav: 100, spyClose: 480 },
+      { date: '2026-01-08', nav: 102, spyClose: 490 },
+      { date: '2026-01-30', nav: 103, spyClose: 495 },
+      { date: '2026-02-02', nav: 103, spyClose: null },
+      { date: '2026-02-03', nav: 104, spyClose: 500 },
+      { date: '2026-02-06', nav: 107, spyClose: 510 },
+    ]);
+    fixture.detectChanges();
+
+    const element: HTMLElement = fixture.nativeElement;
+    const [week, twoWeeks, month] = Array.from(element.querySelectorAll<HTMLButtonElement>('.performance-ranges button'));
+    const baselineDate = () => element.querySelector('.performance-basis time')?.getAttribute('datetime');
+    expect(month.getAttribute('aria-pressed')).toBe('true');
+    expect(baselineDate()).toBe('2026-01-08');
+    expect(Array.from(element.querySelectorAll('.chart-dates time')).some(tick => tick.getAttribute('datetime') === '2026-01-30')).toBeTrue();
+
+    twoWeeks.click();
+    fixture.detectChanges();
+    expect(baselineDate()).toBe('2026-01-30');
+
+    week.click();
+    fixture.detectChanges();
+    expect(week.getAttribute('aria-pressed')).toBe('true');
+    expect(baselineDate()).toBe('2026-02-03');
+    expect(element.querySelector('.chart-relative dd')?.textContent?.trim()).toBe('+0.88 pp');
+
+    element.querySelector<HTMLButtonElement>('[aria-label="Account value"]')!.click();
+    fixture.detectChanges();
+    expect(element.querySelector('.chart-dates time')?.getAttribute('datetime')).toBe('2026-02-02');
+    expect(element.querySelector('.chart-metrics--value div:last-child dd')?.textContent?.trim()).toBe('+$4.00');
+  });
+
+  it('keeps the date controls available when a shorter window has no priced portfolio close', () => {
+    fixture.componentRef.setInput('points', [
+      { date: '2026-01-21', nav: 25000, spyClose: 100 },
+      { date: '2026-02-04', nav: null, spyClose: 101 },
+    ]);
+    fixture.detectChanges();
+
+    const element: HTMLElement = fixture.nativeElement;
+    const [week, , month] = Array.from(element.querySelectorAll<HTMLButtonElement>('.performance-ranges button'));
+    week.click();
+    fixture.detectChanges();
+    expect(element.querySelector('.performance-state')?.textContent).toContain('Choose a longer range');
+
+    month.click();
+    fixture.detectChanges();
+    expect(element.querySelector('svg')?.getAttribute('aria-label')).toBe('Portfolio closing value in U.S. dollars');
+  });
 });

@@ -1,10 +1,15 @@
 <header class="portfolio-heading">
   <div>
-    <p class="account-type">Paper trading <span aria-hidden="true">/</span> USD</p>
+    <p class="account-type">Paper account <span aria-hidden="true">/</span> USD</p>
     <h1>Portfolio</h1>
   </div>
+  <nav *ngIf="walletInitialized !== false" class="portfolio-sections" aria-label="Portfolio sections">
+    <a href="/portfolio#account-title">Overview</a>
+    <a href="/portfolio#positions-title">Positions</a>
+    <a href="/portfolio#orders-title">Order activity</a>
+  </nav>
   <div class="portfolio-toolbar" aria-label="Portfolio actions">
-    <button type="button" class="state-action" [disabled]="isLoading || isInitializing || checkingOrderId !== null"
+    <button type="button" class="state-action" aria-label="Refresh portfolio" [disabled]="isLoading || isInitializing || checkingOrderId !== null"
             (click)="loadPortfolio()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -12,7 +17,7 @@
       </svg>
       <span>Refresh</span>
     </button>
-    <a class="state-action research-action" routerLink="/search-details">Find stocks</a>
+    <a class="state-action research-action" routerLink="/search-details">Research <span aria-hidden="true">↗</span></a>
   </div>
 </header>
 
@@ -33,12 +38,13 @@
   <p *ngIf="loadError" class="state-message state-message--error" role="alert">{{ loadError }}</p>
 </div>
 
-<div class="portfolio-analysis" [class.portfolio-analysis--with-allocation]="walletInitialized === true">
-<section *ngIf="walletInitialized !== false" class="portfolio-overview" aria-label="Portfolio overview" [attr.aria-busy]="isLoading">
+<div class="portfolio-sheet">
+<section *ngIf="walletInitialized !== false" id="account-title" class="portfolio-overview" tabindex="-1"
+         aria-label="Account overview" [attr.aria-busy]="isLoading">
   <dl class="portfolio-metrics">
     <div class="portfolio-metric primary-metric">
       <dt>Account value</dt>
-      <dd>{{ accountValue === null ? '—' : (accountValue | currency:'USD') }}</dd>
+      <dd>{{ accountValue === null ? '—' : (accountValue | currency:'USD') }}<span class="metric-source">Latest available quotes</span></dd>
     </div>
     <div class="portfolio-metric">
       <dt>Available cash</dt>
@@ -62,16 +68,16 @@
       {{ quotedCount }} of {{ portfolio.length }} positions priced.
     </p>
     <p *ngIf="holdingsCurrent && portfolio.length && marketValue !== null" class="mb-0">
-      Latest available quotes
       <ng-container *ngIf="oldestQuote as timestamp; else unknownQuoteTimes">
-        · Oldest {{ timestamp | date:'MMM d, HH:mm':'+0000' }} UTC
+        Oldest holding quote <time [attr.datetime]="timestamp | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ timestamp | date:'MMM d, HH:mm':'+0000' }} UTC</time>
       </ng-container>
-      <ng-template #unknownQuoteTimes>· Some quote times unavailable</ng-template>
+      <ng-template #unknownQuoteTimes>Some quote times are unavailable</ng-template>
     </p>
     <p *ngIf="portfolioPrepared" class="prepared-account-label mb-0">Includes historical fills</p>
   </div>
 </section>
 
+<div class="portfolio-analysis" [class.portfolio-analysis--with-allocation]="walletInitialized === true">
 <app-portfolio-performance [points]="performance?.points ?? []" [loading]="performanceLoading"
                            [failed]="performanceFailed" [message]="performance?.message ?? ''"
                            [missingSessions]="performance?.missingSessions ?? 0"
@@ -83,7 +89,7 @@
   <div class="panel-header">
     <div>
       <h2 id="allocation-title">Allocation</h2>
-      <p>Share of account value</p>
+      <p>Share of account value, including cash</p>
     </div>
   </div>
 
@@ -117,19 +123,6 @@
       </details>
     </div>
   </ng-template>
-  <section *ngIf="benchmarkSnapshot as snapshot" class="relative-performance" aria-labelledby="relative-performance-title">
-    <div class="panel-header">
-      <div>
-        <h3 id="relative-performance-title">Relative performance</h3>
-        <p>Through <time [attr.datetime]="snapshot.date">{{ snapshot.date | date:'MMM d, yyyy':'+0000' }}</time></p>
-      </div>
-    </div>
-    <dl class="allocation-body relative-values">
-      <div class="d-flex justify-content-between gap-2"><dt>Portfolio</dt><dd class="mb-0">{{ snapshot.portfolio > 0 ? '+' : '' }}{{ snapshot.portfolio | percent:'1.2-2' }}</dd></div>
-      <div class="d-flex justify-content-between gap-2"><dt>SPY</dt><dd class="mb-0">{{ snapshot.spy > 0 ? '+' : '' }}{{ snapshot.spy | percent:'1.2-2' }}</dd></div>
-      <div class="d-flex justify-content-between gap-2"><dt>Difference</dt><dd class="mb-0">{{ snapshot.differencePoints > 0 ? '+' : '' }}{{ snapshot.differencePoints | number:'1.2-2' }} pp</dd></div>
-    </dl>
-  </section>
 </section>
 </ng-container>
 </div>
@@ -138,11 +131,10 @@
 <section class="positions-panel" aria-labelledby="positions-title" [attr.aria-busy]="isLoading">
   <div class="panel-header">
     <div>
-      <h2 id="positions-title">Positions</h2>
-      <p *ngIf="holdingsCurrent">{{ portfolio.length }} open {{ portfolio.length === 1 ? 'position' : 'positions' }}</p>
+      <h2 id="positions-title" tabindex="-1">Positions</h2>
       <p *ngIf="!holdingsCurrent && !isLoading && portfolio.length">Showing the last loaded positions</p>
     </div>
-    <span class="panel-context" *ngIf="portfolio.length">USD · Quotes may be delayed</span>
+    <span class="panel-context" *ngIf="holdingsCurrent">{{ portfolio.length }} open · USD<ng-container *ngIf="portfolio.length"> · Quotes may be delayed</ng-container></span>
   </div>
 
   <div *ngIf="isLoading" class="status-loading" role="status">
@@ -158,64 +150,70 @@
     <a class="state-action" routerLink="/search-details">Explore stocks</a>
   </div>
 
+  <div *ngIf="portfolio.length > 1" class="mobile-sort" role="group" aria-label="Sort positions">
+    <span>Sort by</span>
+    <button type="button" [attr.aria-pressed]="sortState('marketValue') !== null"
+            [attr.aria-label]="sortState('marketValue') ? 'Value, ' + sortState('marketValue') : 'Value'"
+            (click)="sortPositions('marketValue')">Value <span *ngIf="sortState('marketValue') as direction" aria-hidden="true">{{ direction === 'ascending' ? '↑' : '↓' }}</span></button>
+    <button type="button" [attr.aria-pressed]="sortState('unrealized') !== null"
+            [attr.aria-label]="sortState('unrealized') ? 'P&L, ' + sortState('unrealized') : 'P&L'"
+            (click)="sortPositions('unrealized')">P&amp;L <span *ngIf="sortState('unrealized') as direction" aria-hidden="true">{{ direction === 'ascending' ? '↑' : '↓' }}</span></button>
+  </div>
+
   <table *ngIf="portfolio.length" class="positions-table" role="table">
     <caption class="visually-hidden">Open positions with prices, costs and unrealized returns</caption>
     <thead role="rowgroup">
       <tr role="row">
-        <th scope="col" role="columnheader">Symbol</th>
-        <th scope="col" role="columnheader">Shares</th>
-        <th scope="col" role="columnheader">Avg. cost</th>
-        <th scope="col" role="columnheader">Cost basis</th>
-        <th scope="col" role="columnheader">Last price</th>
-        <th scope="col" role="columnheader">Day change</th>
-        <th scope="col" role="columnheader">Market value</th>
-        <th scope="col" role="columnheader">Unrealized P&amp;L</th>
-        <th scope="col" role="columnheader"><span class="visually-hidden">Trade actions</span></th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortState('ticker')"><button type="button" (click)="sortPositions('ticker')">Symbol</button></th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortState('quantity')"><button type="button" (click)="sortPositions('quantity')">Shares</button></th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortState('price')"><button type="button" (click)="sortPositions('price')">Last price</button></th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortState('dayChange')"><button type="button" (click)="sortPositions('dayChange')">Day change</button></th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortState('marketValue')"><button type="button" (click)="sortPositions('marketValue')">Market value</button></th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortState('weight')"><button type="button" (click)="sortPositions('weight')">Weight</button></th>
+        <th scope="col" role="columnheader" [attr.aria-sort]="sortState('unrealized')"><button type="button" (click)="sortPositions('unrealized')">Unrealized P&amp;L</button></th>
+        <th scope="col" role="columnheader"><span class="visually-hidden">Trade and position details</span></th>
       </tr>
     </thead>
     <tbody role="rowgroup">
-      <tr *ngFor="let stock of portfolio; trackBy: trackByTicker" role="row">
+      <tr *ngFor="let stock of sortedPortfolio; trackBy: trackByTicker" role="row">
         <th scope="row" role="rowheader" class="holding-company">
           <a class="holding-link" [routerLink]="['/search-details', stock.ticker]">
             <span class="holding-ticker">{{ stock.ticker }}</span>
             <span *ngIf="stock.name" class="holding-name">{{ stock.name }}</span>
           </a>
+          <span class="holding-mobile-quantity">{{ stock.quantity | number }} {{ stock.quantity === 1 ? 'share' : 'shares' }}</span>
         </th>
-        <td role="cell">
-          <span class="mobile-label" aria-hidden="true">Shares</span>
+        <td role="cell" class="holding-desktop">
           <strong>{{ stock.quantity | number }}</strong>
         </td>
-        <td role="cell">
-          <span class="mobile-label" aria-hidden="true">Avg. cost</span>
-          <strong>{{ stock.quantity > 0 ? (stock.totalCost / stock.quantity | currency:'USD') : '—' }}</strong>
-        </td>
-        <td role="cell">
-          <span class="mobile-label" aria-hidden="true">Cost basis</span>
-          <strong>{{ stock.totalCost | currency:'USD' }}</strong>
-        </td>
-        <td role="cell">
-          <span class="mobile-label" aria-hidden="true">Last price</span>
+        <td role="cell" class="holding-desktop">
           <strong *ngIf="stock.price !== null; else unavailablePrice">{{ stock.price | currency:'USD':'symbol':'1.2-6' }}</strong>
           <ng-template #unavailablePrice><span class="unavailable">{{ stock.quotePending ? 'Loading…' : 'Unavailable' }}</span></ng-template>
         </td>
-        <td role="cell">
-          <span class="mobile-label" aria-hidden="true">Day change</span>
+        <td role="cell" class="holding-desktop">
           <strong *ngIf="stock.change !== null; else unavailableChange"
                   [class.positive]="stock.change > 0" [class.negative]="stock.change < 0">
             {{ stock.change > 0 ? '+' : '' }}{{ stock.change | number:'1.2-2' }}%
           </strong>
           <ng-template #unavailableChange><span class="unavailable" aria-label="Day change unavailable">—</span></ng-template>
         </td>
-        <td role="cell">
-          <span class="mobile-label" aria-hidden="true">Market value</span>
-          <strong>{{ stock.price === null ? '—' : (stock.quantity * stock.price | currency:'USD':'symbol':'1.2-6') }}</strong>
+        <td role="cell" class="holding-value">
+          <span class="mobile-label">Market value</span>
+          <strong>{{ stock.price === null ? '—' : (stock.quantity * stock.price | currency:'USD') }}</strong>
+        </td>
+        <td role="cell" class="holding-desktop">
+          <strong>{{ holdingWeight(stock) === null ? '—' : (holdingWeight(stock) | percent:'1.0-1') }}</strong>
         </td>
         <td role="cell" class="holding-profit">
-          <span class="mobile-label" aria-hidden="true">Unrealized P&amp;L</span>
+          <span class="mobile-label">Unrealized P&amp;L</span>
           <strong [class.positive]="stock.price !== null && stock.quantity * stock.price > stock.totalCost"
                   [class.negative]="stock.price !== null && stock.quantity * stock.price < stock.totalCost">
             {{ stock.price !== null && stock.quantity * stock.price > stock.totalCost ? '+' : '' }}{{ stock.price === null ? '—' : (stock.quantity * stock.price - stock.totalCost | currency:'USD') }}
           </strong>
+          <span class="holding-return" *ngIf="holdingReturn(stock) !== null"
+                [class.positive]="(holdingReturn(stock) ?? 0) > 0" [class.negative]="(holdingReturn(stock) ?? 0) < 0">
+            {{ (holdingReturn(stock) ?? 0) > 0 ? '+' : '' }}{{ holdingReturn(stock) | percent:'1.2-2' }}
+          </span>
         </td>
         <td class="holding-trades" role="cell">
           <div class="holding-actions">
@@ -224,19 +222,30 @@
             <button type="button" class="holding-action" [attr.aria-label]="'Sell ' + stock.ticker"
                     [disabled]="!canOpenTrade(stock, 'sell')" (click)="openTrade(stock, 'sell')">Sell</button>
           </div>
+          <details class="holding-detail">
+            <summary [attr.aria-label]="'Details for ' + stock.ticker">Details</summary>
+            <dl>
+              <div><dt>Shares</dt><dd>{{ stock.quantity | number }}</dd></div>
+              <div><dt>Last price</dt><dd>{{ stock.price === null ? '—' : (stock.price | currency:'USD':'symbol':'1.2-6') }}</dd></div>
+              <div><dt>Avg. cost</dt><dd>{{ stock.quantity > 0 ? (stock.totalCost / stock.quantity | currency:'USD') : '—' }}</dd></div>
+              <div><dt>Cost basis</dt><dd>{{ stock.totalCost | currency:'USD' }}</dd></div>
+              <div><dt>Day change</dt><dd>{{ stock.change === null ? '—' : ((stock.change > 0 ? '+' : '') + (stock.change | number:'1.2-2') + '%') }}</dd></div>
+              <div><dt>Weight</dt><dd>{{ holdingWeight(stock) === null ? '—' : (holdingWeight(stock) | percent:'1.0-1') }}</dd></div>
+            </dl>
+          </details>
         </td>
       </tr>
     </tbody>
   </table>
 
-  <footer *ngIf="portfolio.length" class="panel-footer">Unrealized P&amp;L compares market value with the cost of open shares.</footer>
+  <footer *ngIf="portfolio.length" class="panel-footer">Weight includes cash. Unrealized P&amp;L uses the cost of open shares.</footer>
 </section>
 
 <section class="orders-panel" aria-labelledby="orders-title" [attr.aria-busy]="receiptsLoading">
   <div class="panel-header">
     <div>
-      <h2 id="orders-title">Order activity</h2>
-      <p>Review fills, rejections, and orders awaiting confirmation.</p>
+      <h2 id="orders-title" tabindex="-1">Order activity</h2>
+      <p>Paper trades and historical fills</p>
     </div>
     <button type="button" class="state-action" [attr.aria-disabled]="receiptsLoading" (click)="!receiptsLoading && loadReceipts()">Refresh orders</button>
   </div>
@@ -257,18 +266,24 @@
               (click)="retryPendingOrder(order)">{{ checkingOrderId === order.orderId ? 'Checking…' : 'Retry same order' }}</button>
     </li>
   </ul>
+  <div *ngIf="receipts.length" class="order-columns" aria-hidden="true">
+    <span>Order</span><span>Submitted</span><span>Shares</span><span>Fill price</span><span>Order value</span><span>Status</span><span></span>
+  </div>
   <ul class="order-list" *ngIf="receipts.length">
     <li *ngFor="let receipt of receipts">
       <details class="order-receipt">
         <summary>
           <span class="receipt-symbol">
-            <strong>{{ receipt.side === 'buy' ? 'Buy' : 'Sell' }} {{ receipt.ticker }}</strong>
-            <span>{{ receipt.quantity }} {{ receipt.quantity === 1 ? 'share' : 'shares' }}<ng-container *ngIf="receipt.source === 'prepared'"> · Prepared</ng-container></span>
+            <strong><span class="receipt-side">{{ receipt.side === 'buy' ? 'Buy' : 'Sell' }}</span> {{ receipt.ticker }}</strong>
+            <span class="receipt-origin" *ngIf="receipt.source === 'prepared'">Historical fill</span>
           </span>
-          <time [attr.datetime]="receipt.submittedAt">
+          <time class="receipt-time" [attr.datetime]="receipt.submittedAt">
             <ng-container *ngIf="receipt.source === 'prepared'; else submittedTime">{{ receipt.submittedAt | date:'MMM d, yyyy':'+0000' }}</ng-container>
             <ng-template #submittedTime>{{ receipt.submittedAt | date:'MMM d, h:mm a':'+0000' }} UTC</ng-template>
           </time>
+          <span class="receipt-quantity"><span class="visually-hidden">Shares:</span> {{ receipt.quantity | number }}<span class="receipt-mobile-unit" aria-hidden="true"> {{ receipt.quantity === 1 ? 'share' : 'shares' }}</span></span>
+          <span class="receipt-price"><span class="visually-hidden">Fill price:</span><span class="receipt-mobile-unit" aria-hidden="true"> at </span> {{ receipt.price === null ? '—' : (receipt.price | currency:'USD':'symbol':'1.2-6') }}</span>
+          <strong class="receipt-total"><span class="visually-hidden">Order value:</span> {{ receipt.total === null ? '—' : (receipt.total | currency:'USD') }}</strong>
           <span class="receipt-status" [class.receipt-status--rejected]="receipt.status === 'rejected'">{{ receipt.status === 'filled' ? 'Filled' : 'Rejected' }}</span>
           <span class="receipt-caret" aria-hidden="true">⌄</span>
         </summary>
@@ -290,6 +305,7 @@
     </li>
   </ul>
 </section>
+</div>
 </div>
 
 <ng-template #tradeDialog let-dialog>
