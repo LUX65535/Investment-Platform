@@ -58,10 +58,12 @@ async function mutate(req, res, decide, initial) {
   return { status: 503, body: { message: 'This paper session is busy. Please retry the same request.' } };
 }
 
-function quoteInCents(quote) {
-  if (typeof quote?.c !== 'number' || !Number.isFinite(quote.c) || quote.c <= 0) return null;
-  const cents = Math.round((quote.c + quote.c * Number.EPSILON) * 100);
-  return Number.isSafeInteger(cents) && cents > 0 ? cents : null;
+function orderValue(quote, quantity) {
+  const unitPrice = quote?.c;
+  if (typeof unitPrice !== 'number' || !Number.isFinite(unitPrice) || unitPrice <= 0) return null;
+  const gross = unitPrice * quantity;
+  const totalCents = Math.round((gross + gross * Number.EPSILON) * 100);
+  return Number.isSafeInteger(totalCents) && totalCents > 0 ? { unitPrice, totalCents } : null;
 }
 
 function dollars(cents) {
@@ -76,7 +78,7 @@ function receiptBody(order) {
     quantity: order.quantity,
     status: order.status,
     submittedAt: order.submittedAt,
-    price: dollars(order.priceCents),
+    price: order.unitPrice ?? dollars(order.priceCents ?? null),
     total: dollars(order.totalCents),
     balance: dollars(order.balanceCents),
     message: order.message,
@@ -108,12 +110,12 @@ function proportionalCost(cost, remaining, originalQuantity) {
 function calculateFill(sandbox, intent, market) {
   if (sandbox.cashCents === null) return { status: 409, message: 'Initialize your paper wallet before placing an order.' };
   if (market.currency !== 'USD') return { status: 422, message: 'Paper trading is available only for USD quotes.' };
-  const priceCents = quoteInCents(market.quote);
-  const totalCents = priceCents === null ? null : priceCents * intent.quantity;
-  if (!Number.isSafeInteger(totalCents) || totalCents <= 0) {
+  const value = orderValue(market.quote, intent.quantity);
+  if (!value) {
     return { status: 422, message: 'A valid trading quote is unavailable for this ticker.' };
   }
 
+  const { unitPrice, totalCents } = value;
   const { side, ticker, quantity } = intent;
   const previous = sandbox.positions.find(position => position.ticker === ticker);
   const positions = sandbox.positions.filter(position => position.ticker !== ticker);
@@ -129,7 +131,7 @@ function calculateFill(sandbox, intent, market) {
     }
     positions.push({ ticker, quantity: shares, costCents });
     return {
-      status: 200, message: 'Paper buy filled.', priceCents, totalCents,
+      status: 200, message: 'Paper buy filled.', unitPrice, totalCents,
       positions, balanceCents: sandbox.cashCents - totalCents,
     };
   }
@@ -141,7 +143,7 @@ function calculateFill(sandbox, intent, market) {
   if (remaining) {
     positions.push({ ticker, quantity: remaining, costCents: proportionalCost(previous.costCents, remaining, previous.quantity) });
   }
-  return { status: 200, message: 'Paper sell filled.', priceCents, totalCents, positions, balanceCents };
+  return { status: 200, message: 'Paper sell filled.', unitPrice, totalCents, positions, balanceCents };
 }
 
 function decideOrder(sandbox, intent, market) {
@@ -151,6 +153,10 @@ function decideOrder(sandbox, intent, market) {
   if (sandbox.receipts.length >= limits.receipts) {
     return { status: 409, body: { message: 'This paper session has reached its order limit. Existing receipts remain available.' } };
   }
+  // An optimistic retry may observe a wallet initialized after the first read.
+  if (!market && sandbox.cashCents !== null) {
+    return { status: 503, body: { message: 'Paper wallet changed. Please retry the same order.' } };
+  }
   const fill = calculateFill(sandbox, intent, market);
   const order = {
     ...intent,
@@ -158,7 +164,7 @@ function decideOrder(sandbox, intent, market) {
     status: fill.status === 200 ? 'filled' : 'rejected',
     responseStatus: fill.status,
     message: fill.message,
-    priceCents: fill.priceCents ?? null,
+    unitPrice: fill.unitPrice ?? null,
     totalCents: fill.totalCents ?? null,
     balanceCents: fill.balanceCents ?? null,
   };
@@ -292,14 +298,7 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, s
           return sendMarketError(res, error, 'message');
         }
       }
-      return send(res, await mutate(req, res, sandbox => {
-        // A wallet can be initialized between an uninitialized snapshot and a retry.
-        // In that case a price is still needed before any execution.
-        if (!market && sandbox.cashCents !== null && sandbox.receipts.length < limits.receipts) {
-          return { status: 503, body: { message: 'Paper wallet changed. Please retry the same order.' } };
-        }
-        return decideOrder(sandbox, intent, market);
-      }, initial));
+      return send(res, await mutate(req, res, sandbox => decideOrder(sandbox, intent, market), initial));
     }));
   }
 

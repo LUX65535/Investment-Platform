@@ -13,6 +13,8 @@ const configuredDatabaseName = process.env.MONGO_DB_NAME?.trim();
 const databaseName = configuredDatabaseName || 'Assignment3';
 const maxMarketResponseBytes = 4_000_000;
 const maxHourlyRangeMs = 31 * 24 * 60 * 60 * 1000;
+const maxMarketRequests = 32;
+const marketRequests = new Map();
 const finnhub = {
   origin: 'https://finnhub.io/api/v1',
   key: process.env.API_KEY,
@@ -48,17 +50,32 @@ async function requestMarketData(provider, endpoint, params) {
   if (!provider.key) {
     throw Object.assign(new Error('Market data is unavailable'), { status: 503 });
   }
-  const response = await axios.get(provider.origin + endpoint, {
+  const requestKey = JSON.stringify([provider.origin, endpoint, params]);
+  const pending = marketRequests.get(requestKey);
+  if (pending) return pending;
+  if (marketRequests.size >= maxMarketRequests) {
+    throw Object.assign(new Error('Market data is busy'), { status: 503 });
+  }
+
+  const request = axios.get(provider.origin + endpoint, {
     params: { ...params, [provider.keyParameter]: provider.key },
     timeout: 8000,
     maxContentLength: maxMarketResponseBytes,
     responseType: 'json',
     transitional: { silentJSONParsing: false },
+  }).then(({ data }) => {
+    if (data === null || typeof data !== 'object' || (endpoint === '/company-news' && !Array.isArray(data))) {
+      throw new Error('Market provider returned an unexpected response');
+    }
+    return data;
   });
-  if (response.data === null || typeof response.data !== 'object') {
-    throw new Error('Market provider returned an unexpected response');
+
+  marketRequests.set(requestKey, request);
+  try {
+    return await request;
+  } finally {
+    marketRequests.delete(requestKey);
   }
-  return response.data;
 }
 
 function sendMarketError(res, error, key = 'error') {
@@ -66,14 +83,19 @@ function sendMarketError(res, error, key = 'error') {
   let status = 502;
   if (error.status === 503 || upstreamStatus === 429) status = 503;
   else if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') status = 504;
-  else if (upstreamStatus === 400 || upstreamStatus === 404) status = upstreamStatus;
+  // An upstream 4xx has no terminal paper receipt and must leave the order retryable.
+  else if (key === 'error' && (upstreamStatus === 400 || upstreamStatus === 404)) status = upstreamStatus;
   res.status(status).json({ [key]: 'Market data is temporarily unavailable. Please try again.' });
 }
 
 async function sendMarketData(res, provider, endpoint, params) {
   try {
-    res.json(await requestMarketData(provider, endpoint, params));
+    const data = await requestMarketData(provider, endpoint, params);
+    const sharedCacheSeconds = endpoint === '/quote' ? 10 : 30;
+    res.set('Cache-Control', `public, max-age=0, s-maxage=${sharedCacheSeconds}`);
+    res.json(data);
   } catch (error) {
+    res.set('Cache-Control', 'no-store');
     sendMarketError(res, error);
   }
 }
@@ -180,7 +202,11 @@ async function getTradeMarket(ticker) {
     requestMarketData(finnhub, '/quote', params),
     requestMarketData(finnhub, '/stock/profile2', params),
   ]);
-  return { quote, currency: profile.currency };
+  const currency = typeof profile.currency === 'string' ? profile.currency.trim().toUpperCase() : '';
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    throw Object.assign(new Error('Trading currency is unavailable'), { status: 503 });
+  }
+  return { quote, currency };
 }
 
 app.use('/api', createPaperRouter({ normalizeTicker, getTradeMarket, sendMarketError, sendDatabaseError }));

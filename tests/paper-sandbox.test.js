@@ -223,6 +223,26 @@ test('partial sales keep proportional cents, non-USD is rejected, and provider f
   assert.equal((await visitor.request('buy', 'POST', retry)).status, 200);
 });
 
+test('fractional-cent quotes round the order total once and preserve the quoted unit price', async t => {
+  const { browser, market } = await fixture(t);
+  const visitor = browser();
+  await visitor.initialize();
+  market.price = 0.015;
+  const order = { orderId: randomUUID(), ticker: 'AAPL', quantity: 1000 };
+  const fill = await visitor.request('buy', 'POST', order);
+  assert.equal(fill.status, 200);
+  assert.equal(fill.body.receipt.price, 0.015);
+  assert.equal(fill.body.receipt.total, 15);
+  assert.equal(fill.body.receipt.balance, 24985);
+
+  market.price = 0.004;
+  const sell = await visitor.request('sell', 'POST', { ...order, orderId: randomUUID(), quantity: 250 });
+  assert.equal(sell.status, 200);
+  assert.equal(sell.body.receipt.total, 1);
+  assert.deepEqual((await visitor.request('stocks')).body, [{ ticker: 'AAPL', quantity: 750, totalCost: 11.25 }]);
+  assert.deepEqual(await visitor.request('buy', 'POST', order), fill);
+});
+
 test('a full order log keeps earlier receipt IDs replayable', async t => {
   const { browser, collection, market } = await fixture(t);
   const visitor = browser();
@@ -230,7 +250,8 @@ test('a full order log keeps earlier receipt IDs replayable', async t => {
   const order = { orderId: randomUUID(), ticker: 'AAPL', quantity: 1 };
   const fill = await visitor.request('buy', 'POST', order);
   const stored = await collection.findOne({ _id: visitor.id });
-  const previous = stored.receipts[0];
+  const { unitPrice, ...receipt } = stored.receipts[0];
+  const previous = { ...receipt, priceCents: Math.round(unitPrice * 100) };
   const placeholders = Array.from({ length: 499 }, () => ({ ...previous, orderId: randomUUID() }));
   await collection.updateOne({ _id: visitor.id }, { $set: { receipts: [previous, ...placeholders] } });
   assert.equal((await visitor.request('buy', 'POST', { ...order, orderId: randomUUID() })).status, 409);
