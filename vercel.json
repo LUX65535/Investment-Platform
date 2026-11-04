@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "npm run build",
+  "outputDirectory": "my-angular-app/dist/my-angular-app/browser",
+  "routes": [
+    { "handle": "filesystem" },
+    {
+      "src": "^/(api(?:/.*)?|company_[A-Za-z_]+/?|Autocomplete_Search/?)$",
+      "dest": "/api/handler",
+      "check": true,
+      "transforms": [{ "type": "request.path", "op": "set", "args": "/$1" }]
+    },
+    {
+      "src": "^/(?:search-details(?:/[^/]+)?|watchlist|portfolio)/?$",
+      "dest": "/index.html"
+    }
+  ]
+}
