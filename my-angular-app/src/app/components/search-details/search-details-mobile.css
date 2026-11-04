@@ -44,10 +44,6 @@
     background: var(--surface);
   }
 
-  .history-ranges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-
-
-
   .security-header {
     grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr);
     align-items: start;
@@ -114,9 +110,30 @@
   .performance-stat { padding: .21rem .38rem; }
   .performance-stat .quote-movement { font-size: .9rem; }
 
-  .chart--history {
-    height: 23rem;
+  .security--charts .security-header {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .3rem .55rem;
+    padding: .5rem;
   }
+
+  .security--charts .security-quote p { line-height: 1.25; }
+  .security--charts .detail-tabs { margin-bottom: .35rem; }
+
+  .chart-panel--history { padding: .5rem; }
+  .chart-panel--history .panel-heading { margin-bottom: .45rem; }
+  .chart-panel--history .panel-heading p { font-size: .72rem; }
+  .chart-panel--history .history-ranges {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(2.75rem, 1fr));
+    gap: 0;
+    margin-bottom: .25rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface-subtle);
+  }
+
+  .chart-panel--history .history-ranges button { padding-inline: .12rem; }
+  .chart--history { height: 27rem; }
 
   .range-switch { margin-bottom: .4rem; }
   .range-switch button { min-width: 2.5rem; min-height: 2.75rem; padding-inline: .42rem; }

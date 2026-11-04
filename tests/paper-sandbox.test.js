@@ -63,7 +63,7 @@ async function fixture(t) {
     collection = memoryStore();
   }
 
-  const market = { price: 100.01, currency: 'USD', offline: false, calls: 0 };
+  const market = { price: 100.01, timestamp: Math.floor(Date.now() / 1000), currency: 'USD', offline: false, calls: 0 };
   const app = express();
   app.use(express.json());
   app.use('/api', (_req, res, next) => {
@@ -81,7 +81,7 @@ async function fixture(t) {
       market.calls++;
       await new Promise(resolve => setTimeout(resolve, 10));
       if (market.offline) throw new Error('Provider unavailable');
-      return { quote: { c: market.price }, currency: market.currency };
+      return { quote: { c: market.price, t: market.timestamp }, currency: market.currency };
     },
     sendMarketError(res) { res.status(503).json({ message: 'Market unavailable' }); },
     sendDatabaseError(_res, error) { throw error; },
@@ -243,6 +243,94 @@ test('fractional-cent quotes round the order total once and preserve the quoted 
   assert.deepEqual(await visitor.request('buy', 'POST', order), fill);
 });
 
+test('a stale quote requires exact explicit confirmation and fills only once', async t => {
+  const { browser, market } = await fixture(t);
+  const visitor = browser();
+  await visitor.initialize();
+  const order = { orderId: randomUUID(), ticker: 'AAPL', quantity: 2 };
+  market.timestamp -= 3 * 24 * 60 * 60;
+
+  const offer = await visitor.request('buy', 'POST', order);
+  assert.equal(offer.status, 409);
+  assert.equal(offer.body.code, 'PAPER_REFERENCE_QUOTE_REQUIRED');
+  assert.equal(offer.body.quoteKind, 'reference');
+  assert.deepEqual(offer.body.referenceQuote, {
+    price: 100.01, quotedAt: new Date(market.timestamp * 1000).toISOString(),
+  });
+  assert.equal((await visitor.request('orders/' + order.orderId)).status, 404);
+  assert.equal((await visitor.request('balance')).body.balance, 25000);
+
+  market.price = 101.11;
+  const changed = await visitor.request('buy', 'POST', { ...order, referenceQuote: offer.body.referenceQuote });
+  assert.equal(changed.status, 409);
+  assert.equal(changed.body.code, 'PAPER_REFERENCE_QUOTE_REQUIRED');
+  assert.equal(changed.body.quoteKind, 'reference');
+  assert.equal(changed.body.referenceQuote.price, 101.11);
+  assert.deepEqual((await visitor.request('stocks')).body, []);
+
+  const confirmation = { ...order, referenceQuote: changed.body.referenceQuote };
+  const [filled, repeated] = await Promise.all([
+    visitor.request('buy', 'POST', confirmation), visitor.request('buy', 'POST', confirmation),
+  ]);
+  assert.equal(filled.status, 200);
+  assert.deepEqual(repeated, filled);
+  assert.equal(filled.body.receipt.quoteKind, 'reference');
+  assert.equal(filled.body.receipt.quotedAt, changed.body.referenceQuote.quotedAt);
+  assert.equal(filled.body.receipt.price, changed.body.referenceQuote.price);
+  assert.equal((await visitor.request('balance')).body.balance, 24797.78);
+  assert.equal((await visitor.request('orders')).body.length, 1);
+
+  const calls = market.calls;
+  market.offline = true;
+  assert.deepEqual(await visitor.request('buy', 'POST', order), filled);
+  assert.equal(market.calls, calls);
+});
+
+test('a fresh quote cannot replace the reference price a user confirmed', async t => {
+  const { browser, market } = await fixture(t);
+  const visitor = browser();
+  await visitor.initialize();
+  const order = { orderId: randomUUID(), ticker: 'AAPL', quantity: 1 };
+  const recentTimestamp = market.timestamp;
+  market.timestamp -= 3600;
+  const offer = await visitor.request('buy', 'POST', order);
+
+  market.timestamp = recentTimestamp;
+  const changed = await visitor.request('buy', 'POST', { ...order, referenceQuote: offer.body.referenceQuote });
+  assert.equal(changed.status, 409);
+  assert.equal(changed.body.code, 'PAPER_REFERENCE_QUOTE_REQUIRED');
+  assert.equal(changed.body.quoteKind, 'recent');
+  assert.deepEqual(changed.body.referenceQuote, {
+    price: market.price, quotedAt: new Date(recentTimestamp * 1000).toISOString(),
+  });
+  assert.deepEqual((await visitor.request('orders')).body, []);
+  assert.equal((await visitor.request('balance')).body.balance, 25000);
+
+  const filled = await visitor.request('buy', 'POST', { ...order, referenceQuote: changed.body.referenceQuote });
+  assert.equal(filled.status, 200);
+  assert.equal(filled.body.receipt.quoteKind, 'recent');
+  assert.equal(filled.body.receipt.quotedAt, new Date(recentTimestamp * 1000).toISOString());
+});
+
+test('missing, future and expired quotes cannot fill paper orders', async t => {
+  const { browser, market } = await fixture(t);
+  const visitor = browser();
+  await visitor.initialize();
+  const recentTimestamp = market.timestamp;
+  for (const timestamp of [undefined, recentTimestamp + 120, recentTimestamp - 8 * 24 * 60 * 60]) {
+    market.timestamp = timestamp;
+    const order = { orderId: randomUUID(), ticker: 'AAPL', quantity: 1 };
+    const rejection = await visitor.request('buy', 'POST', order);
+    assert.equal(rejection.status, 422);
+    assert.equal(rejection.body.receipt.status, 'rejected');
+    assert.equal(rejection.body.receipt.quoteKind, null);
+    assert.equal(rejection.body.receipt.quotedAt, null);
+    assert.deepEqual(await visitor.request('orders/' + order.orderId), { ...rejection, status: 200, body: rejection.body.receipt });
+  }
+  assert.equal((await visitor.request('balance')).body.balance, 25000);
+  assert.deepEqual((await visitor.request('stocks')).body, []);
+});
+
 test('a full order log keeps earlier receipt IDs replayable', async t => {
   const { browser, collection, market } = await fixture(t);
   const visitor = browser();
@@ -250,12 +338,15 @@ test('a full order log keeps earlier receipt IDs replayable', async t => {
   const order = { orderId: randomUUID(), ticker: 'AAPL', quantity: 1 };
   const fill = await visitor.request('buy', 'POST', order);
   const stored = await collection.findOne({ _id: visitor.id });
-  const { unitPrice, ...receipt } = stored.receipts[0];
+  const { unitPrice, quotedAt, quoteKind, ...receipt } = stored.receipts[0];
   const previous = { ...receipt, priceCents: Math.round(unitPrice * 100) };
   const placeholders = Array.from({ length: 499 }, () => ({ ...previous, orderId: randomUUID() }));
   await collection.updateOne({ _id: visitor.id }, { $set: { receipts: [previous, ...placeholders] } });
   assert.equal((await visitor.request('buy', 'POST', { ...order, orderId: randomUUID() })).status, 409);
-  assert.deepEqual(await visitor.request('buy', 'POST', order), fill);
+  assert.deepEqual(await visitor.request('buy', 'POST', order), {
+    ...fill,
+    body: { ...fill.body, receipt: { ...fill.body.receipt, quotedAt: null, quoteKind: null } },
+  });
   assert.equal((await visitor.request('orders')).body.length, 500);
   assert.equal(market.calls, 1);
 });

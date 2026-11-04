@@ -4,7 +4,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 import { catchError, finalize, forkJoin, from, map, mergeMap, of, Subscription, switchMap, tap } from 'rxjs';
 import {
-  PaperOrderReceipt, PendingOrderError, PendingPaperOrder, PortfolioService, Stock, estimateOrderCents, paperOrderConfirmation,
+  PaperOrderReceipt, PendingOrderError, PendingPaperOrder, PortfolioService, ReferenceQuoteRequired, Stock, estimateOrderCents, paperOrderConfirmation,
 } from '../../services/portfolio.service';
 
 interface Holding extends Omit<Stock, 'price' | 'change'> {
@@ -38,6 +38,8 @@ export class PortfolioComponent implements OnInit {
   actionError = '';
   activeTrade?: { holding: Holding; side: 'buy' | 'sell'; price: number };
   tradeError = '';
+  tradeReference?: ReferenceQuoteRequired;
+  referenceAcknowledged = false;
   submittingTrade = false;
   quantity: number | null = 1;
   receipts: PaperOrderReceipt[] = [];
@@ -103,7 +105,7 @@ export class PortfolioComponent implements OnInit {
     let upper = selling ? trade.holding.quantity : Number.MAX_SAFE_INTEGER;
     while (lower < upper) {
       const middle = lower + Math.ceil((upper - lower) / 2);
-      if (estimateOrderCents(trade.price, middle) <= maxCents) lower = middle;
+      if (estimateOrderCents(this.tradeReference?.quote.price ?? trade.price, middle) <= maxCents) lower = middle;
       else upper = middle - 1;
     }
     return lower;
@@ -111,7 +113,7 @@ export class PortfolioComponent implements OnInit {
 
   get estimatedTotal(): number | null {
     if (!this.validQuantity || !this.activeTrade || this.quantity === null) return null;
-    const cents = estimateOrderCents(this.activeTrade.price, this.quantity);
+    const cents = estimateOrderCents(this.tradeReference?.quote.price ?? this.activeTrade.price, this.quantity);
     return Number.isSafeInteger(cents) ? cents / 100 : null;
   }
 
@@ -127,7 +129,7 @@ export class PortfolioComponent implements OnInit {
   }
 
   useMaximumQuantity(): void {
-    if (this.submittingTrade || this.pendingTrade) return;
+    if (this.submittingTrade || this.pendingTrade || this.tradeReference) return;
     const maximum = this.quantityLimit;
     if (maximum > 0) this.quantity = maximum;
   }
@@ -139,6 +141,7 @@ export class PortfolioComponent implements OnInit {
   get canSubmitTrade(): boolean {
     const trade = this.activeTrade;
     if (!trade || !this.validQuantity || this.submittingTrade || this.checkingOrderId || this.quantity === null) return false;
+    if (this.tradeReference && !this.referenceAcknowledged) return false;
     return Boolean(this.pendingTrade) || !this.quantityError;
   }
 
@@ -222,6 +225,8 @@ export class PortfolioComponent implements OnInit {
     this.statusMessage = '';
     const pending = this.portfolioService.getPendingOrder(side, holding.ticker);
     this.pendingTrade = pending;
+    this.tradeReference = undefined;
+    this.referenceAcknowledged = false;
     this.tradeError = pending ? 'This order is awaiting confirmation. Retry with the original order ID.' : '';
     this.quantity = pending?.quantity ?? 1;
     this.activeTrade = { holding, side, price: holding.price };
@@ -246,9 +251,11 @@ export class PortfolioComponent implements OnInit {
     this.submittingTrade = true;
     this.tradeError = '';
     const ticker = trade.holding.ticker;
-    const request = this.pendingTrade
-      ? this.portfolioService.retryOrder(this.pendingTrade)
-      : this.portfolioService.placeOrder(trade.side, ticker, quantity);
+    const request = this.tradeReference
+      ? this.portfolioService.confirmReferenceQuote(this.tradeReference)
+      : this.pendingTrade
+        ? this.portfolioService.retryOrder(this.pendingTrade)
+        : this.portfolioService.placeOrder(trade.side, ticker, quantity);
 
     request.pipe(
       takeUntilDestroyed(this.destroyRef),
@@ -259,15 +266,17 @@ export class PortfolioComponent implements OnInit {
         this.tradeRef?.close();
         this.loadPortfolio(true);
       },
-      error: (error: HttpErrorResponse | PendingOrderError) => {
+      error: (error: unknown) => {
+        this.tradeReference = error instanceof ReferenceQuoteRequired ? error : undefined;
+        this.referenceAcknowledged = false;
         this.pendingTrade = error instanceof PendingOrderError ? error.order : undefined;
         if (this.isRetryingTrade) {
           this.tradeError = 'This order is awaiting confirmation. Retry it here or close this ticket and check Order activity.';
-        } else {
+        } else if (!this.tradeReference) {
           this.tradeError = error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
             ? error.error.message : 'The order could not be sent. Please try again.';
         }
-        this.loadPortfolio();
+        if (!this.tradeReference) this.loadPortfolio();
       },
     });
   }
@@ -301,11 +310,13 @@ export class PortfolioComponent implements OnInit {
         this.statusMessage = paperOrderConfirmation(receipt);
         this.loadPortfolio(true);
       },
-      error: (error: HttpErrorResponse | PendingOrderError) => {
+      error: (error: unknown) => {
         this.pendingError = error instanceof PendingOrderError
           ? 'Order confirmation is still unavailable. You can retry again with the same ID.'
-          : error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
-            ? error.error.message : 'The order could not be sent. Please try again.';
+          : error instanceof ReferenceQuoteRequired
+            ? 'The order was not filled. Open a new trade ticket to review the available reference quote.'
+            : error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
+              ? error.error.message : 'The order could not be sent. Please try again.';
         this.loadPortfolio();
       },
     });

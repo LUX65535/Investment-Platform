@@ -64,7 +64,7 @@
   <button type="button" class="close-button" aria-label="Dismiss notification" (click)="closeConfirmation()">&times;</button>
 </div>
 
-<div *ngIf="searchResults as company" class="security">
+<div *ngIf="searchResults as company" class="security" [class.security--charts]="activeTab === 'charts'">
   <section class="security-header" aria-labelledby="security-title">
     <div class="security-identity">
       <div class="security-mark" aria-hidden="true">
@@ -273,7 +273,7 @@
       </ng-template>
     </section>
 
-    <section class="data-panel chart-panel" *ngIf="activeTab === 'charts' && !loadingTabs.has('charts') && !failedTabs.has('charts')" aria-labelledby="history-title">
+  <section class="data-panel chart-panel chart-panel--history" *ngIf="activeTab === 'charts' && !loadingTabs.has('charts') && !failedTabs.has('charts')" aria-labelledby="history-title">
       <div class="panel-heading"><div><h2 id="history-title">Price history</h2><p>Daily prices and volume<ng-container *ngIf="historyEnd as point"> · through {{ point | date:'MMM d, yyyy':'+0000' }}</ng-container></p></div></div>
       <div *ngIf="!bigChartOptions.series?.length" class="state-panel chart-state"><p>Historical prices are unavailable for this symbol.</p></div>
       <div *ngIf="bigChartOptions.series?.length" class="history-ranges" role="group" aria-label="Historical chart date range">
@@ -321,16 +321,25 @@
       </div>
       <div class="modal-body">
         <dl class="trade-summary">
-          <div><dt>Latest quote</dt><dd>{{ currentStock?.c | currency:(company.currency || 'USD'):'symbol':'1.2-6' }}</dd></div>
+          <div><dt>{{ tradeReference?.quoteKind === 'reference' ? 'Reference price' : 'Latest quote' }}</dt><dd>{{ (tradeReference?.quote?.price ?? currentStock?.c) | currency:(company.currency || 'USD'):'symbol':'1.2-6' }}</dd></div>
           <div *ngIf="tradeSide === 'buy'"><dt>Buying power</dt><dd>{{ walletLoading ? 'Loading…' : (userWalletBalance | currency:'USD') }}</dd></div>
           <div *ngIf="tradeSide === 'sell'"><dt>Shares available</dt><dd>{{ ownedStockQuantity }}</dd></div>
         </dl>
         <label for="research-trade-quantity" class="form-label">Number of shares</label>
         <input id="research-trade-quantity" name="quantity" class="form-control" type="number" min="1" step="1"
                [attr.aria-describedby]="tradeLimitMessage ? 'research-trade-limit' : null" [attr.aria-invalid]="!!tradeLimitMessage"
-               [(ngModel)]="tradeQuantity" [readonly]="tradePending || tradeNeedsRefresh" ngbAutofocus required>
+               [(ngModel)]="tradeQuantity" [readonly]="tradePending || tradeNeedsRefresh || !!tradeReference" ngbAutofocus required>
         <dl class="trade-summary"><div><dt>Estimated total</dt><dd>{{ estimatedTradeTotal | currency:(company.currency || 'USD') }}</dd></div></dl>
-        <p class="panel-note">Paper orders use the latest quote when they execute.</p>
+        <p class="panel-note" *ngIf="!tradeReference">Paper orders check the quote when you submit.</p>
+        <p class="panel-note" *ngIf="tradeReference as reference" role="status">
+          {{ reference.quoteKind === 'reference' ? 'A recent quote is unavailable. Review the reference quote from' : 'The quote changed. Review the updated price from' }}
+          <time [attr.datetime]="reference.quote.quotedAt">{{ reference.quote.quotedAt | date:'MMM d, y, h:mm a':'+0000' }} UTC</time>.
+        </p>
+        <label *ngIf="tradeReference" class="d-flex gap-2 align-items-start mt-2">
+          <input class="form-check-input flex-shrink-0" type="checkbox" name="referenceAcknowledged"
+                 [(ngModel)]="referenceAcknowledged" [disabled]="tradePending">
+          {{ tradeReference.quoteKind === 'reference' ? 'Use this older quote for this paper order.' : 'Use this updated quote for this paper order.' }}
+        </label>
         <p *ngIf="tradeSide === 'buy' && walletInitialized === false" class="mt-2 mb-0">Start by initializing your paper wallet in <a routerLink="/portfolio" (click)="modal.dismiss()">Portfolio</a>.</p>
         <p *ngIf="tradeLimitMessage" id="research-trade-limit" class="error-message" role="status">{{ tradeLimitMessage }}</p>
         <p *ngIf="tradeError" class="error-message" role="alert">{{ tradeError }}</p>
@@ -340,7 +349,7 @@
           {{ tradeNeedsRefresh ? 'Close' : 'Cancel' }}
         </button>
         <button type="submit" class="btn btn-primary" [attr.aria-disabled]="!canSubmitTrade">
-          {{ tradePending ? 'Submitting…' : tradeNeedsRefresh ? 'Retry same order' : (tradeSide === 'buy' ? 'Confirm buy' : 'Confirm sell') }}
+          {{ tradePending ? 'Submitting…' : tradeNeedsRefresh ? 'Retry same order' : tradeReference ? (tradeReference.quoteKind === 'reference' ? 'Simulate at reference price' : 'Simulate at updated price') : (tradeSide === 'buy' ? 'Confirm buy' : 'Confirm sell') }}
         </button>
       </div>
     </form>

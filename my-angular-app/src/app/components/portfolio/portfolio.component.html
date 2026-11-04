@@ -205,6 +205,10 @@
           <p>{{ receipt.message }}</p>
           <dl>
             <div *ngIf="receipt.price !== null"><dt>Execution price</dt><dd>{{ receipt.price | currency:'USD':'symbol':'1.2-6' }}</dd></div>
+            <div *ngIf="receipt.quotedAt as quotedAt">
+              <dt>{{ receipt.quoteKind === 'reference' ? 'Reference quote time' : 'Quote time' }}</dt>
+              <dd><time [attr.datetime]="quotedAt">{{ quotedAt | date:'MMM d, y, h:mm a':'+0000' }} UTC</time></dd>
+            </div>
             <div *ngIf="receipt.total !== null"><dt>Order value</dt><dd>{{ receipt.total | currency:'USD' }}</dd></div>
             <div *ngIf="receipt.balance !== null"><dt>Cash after order</dt><dd>{{ receipt.balance | currency:'USD' }}</dd></div>
             <div><dt>Receipt ID</dt><dd><code>{{ receipt.orderId }}</code></dd></div>
@@ -229,7 +233,7 @@
     </div>
     <div class="modal-body">
       <dl class="trade-summary">
-        <div><dt>Last quote</dt><dd>{{ trade.price | currency:'USD':'symbol':'1.2-6' }}</dd></div>
+        <div><dt>{{ tradeReference?.quoteKind === 'reference' ? 'Reference price' : 'Last quote' }}</dt><dd>{{ (tradeReference?.quote?.price ?? trade.price) | currency:'USD':'symbol':'1.2-6' }}</dd></div>
         <div *ngIf="trade.side === 'buy'"><dt>Available cash</dt><dd>{{ cashBalance | currency:'USD' }}</dd></div>
         <div *ngIf="trade.side === 'sell'"><dt>Shares owned</dt><dd>{{ trade.holding.quantity }}</dd></div>
         <div><dt>Estimated total</dt><dd>{{ estimatedTotal === null ? '—' : (estimatedTotal | currency:'USD') }}</dd></div>
@@ -238,15 +242,26 @@
       <div class="quantity-field">
         <input id="portfolio-trade-quantity" name="quantity" type="number" inputmode="numeric" min="1" step="1"
                required ngbAutofocus class="form-control" [(ngModel)]="quantity"
-               [readonly]="submittingTrade || isRetryingTrade" [attr.aria-invalid]="quantityError ? 'true' : null"
+               [readonly]="submittingTrade || isRetryingTrade || !!tradeReference" [attr.aria-invalid]="quantityError ? 'true' : null"
                [attr.aria-describedby]="quantityError ? 'portfolio-trade-estimate portfolio-quantity-error' : 'portfolio-trade-estimate'">
-        <button *ngIf="!isRetryingTrade" type="button" class="state-action" [disabled]="submittingTrade || quantityLimit === 0"
+        <button *ngIf="!isRetryingTrade && !tradeReference" type="button" class="state-action" [disabled]="submittingTrade || quantityLimit === 0"
                 (click)="useMaximumQuantity()">Use max</button>
       </div>
-      <p id="portfolio-trade-estimate" class="form-text">
-        <ng-container *ngIf="!isRetryingTrade">Up to {{ quantityLimit | number }} {{ quantityLimit === 1 ? 'share' : 'shares' }} at this quote. </ng-container>
-        The final price uses the latest quote at execution.
+      <p id="portfolio-trade-estimate" class="form-text" role="status">
+        <ng-container *ngIf="tradeReference as reference; else normalEstimate">
+          {{ reference.quoteKind === 'reference' ? 'A recent quote is unavailable. Review the reference quote from' : 'The quote changed. Review the updated price from' }}
+          <time [attr.datetime]="reference.quote.quotedAt">{{ reference.quote.quotedAt | date:'MMM d, y, h:mm a':'+0000' }} UTC</time>.
+        </ng-container>
+        <ng-template #normalEstimate>
+          <ng-container *ngIf="!isRetryingTrade">Up to {{ quantityLimit | number }} {{ quantityLimit === 1 ? 'share' : 'shares' }} at this quote. </ng-container>
+          Paper orders check the quote when you submit.
+        </ng-template>
       </p>
+      <label *ngIf="tradeReference" class="d-flex gap-2 align-items-start mt-2">
+        <input class="form-check-input flex-shrink-0" type="checkbox" name="referenceAcknowledged"
+               [(ngModel)]="referenceAcknowledged" [disabled]="submittingTrade">
+        {{ tradeReference.quoteKind === 'reference' ? 'Use this older quote for this paper order.' : 'Use this updated quote for this paper order.' }}
+      </label>
       <p *ngIf="quantityError" id="portfolio-quantity-error" class="text-danger">{{ quantityError }}</p>
       <p *ngIf="tradeError" class="state-message state-message--error" role="alert">{{ tradeError }}</p>
     </div>
@@ -255,7 +270,7 @@
         {{ isRetryingTrade ? 'Close' : 'Cancel' }}
       </button>
       <button type="submit" class="btn btn-primary" [attr.aria-disabled]="!canSubmitTrade">
-        {{ submittingTrade ? 'Submitting…' : isRetryingTrade ? 'Retry same order' : (trade.side === 'buy' ? 'Place buy order' : 'Place sell order') }}
+        {{ submittingTrade ? 'Submitting…' : isRetryingTrade ? 'Retry same order' : tradeReference ? (tradeReference.quoteKind === 'reference' ? 'Simulate at reference price' : 'Simulate at updated price') : (trade.side === 'buy' ? 'Place buy order' : 'Place sell order') }}
       </button>
     </div>
   </form>

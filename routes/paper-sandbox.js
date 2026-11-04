@@ -6,6 +6,9 @@ const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
 const startingCashCents = 2_500_000;
 const limits = { watchlist: 50, positions: 100, receipts: 500, writes: 2500 };
 const maxMutationAttempts = 12;
+const recentQuoteSeconds = 20 * 60;
+const referenceQuoteSeconds = 7 * 24 * 60 * 60;
+const quoteClockSkewSeconds = 60;
 const uuidPattern = /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
 
 function cookieToken(req) {
@@ -66,6 +69,34 @@ function orderValue(quote, quantity) {
   return Number.isSafeInteger(totalCents) && totalCents > 0 ? { unitPrice, totalCents } : null;
 }
 
+function checkQuoteTime(timestamp, price, submittedAt, confirmation) {
+  const submittedSeconds = Math.floor(submittedAt.getTime() / 1000);
+  if (!Number.isSafeInteger(timestamp) || timestamp <= 0 || timestamp > submittedSeconds + quoteClockSkewSeconds) {
+    return { status: 422, message: 'The provider did not return a valid trading quote time.' };
+  }
+  const age = submittedSeconds - timestamp;
+  if (age > referenceQuoteSeconds) {
+    return { status: 422, message: 'The available quote is more than seven days old. Wait for a newer quote to trade.' };
+  }
+
+  const quotedAt = new Date(timestamp * 1000);
+  const quoteKind = age > recentQuoteSeconds ? 'reference' : 'recent';
+  const confirmed = confirmation?.quotedAt === quotedAt.toISOString() && confirmation.price === price;
+  if (confirmed || (!confirmation && quoteKind === 'recent')) return { quotedAt, quoteKind };
+
+  return {
+    status: 409,
+    body: {
+      code: 'PAPER_REFERENCE_QUOTE_REQUIRED',
+      message: quoteKind === 'reference'
+        ? 'A recent quote is unavailable. Confirm this reference price to simulate the trade.'
+        : 'A new quote is available. Confirm this updated price to simulate the trade.',
+      quoteKind,
+      referenceQuote: { price, quotedAt },
+    },
+  };
+}
+
 function dollars(cents) {
   return cents === null ? null : cents / 100;
 }
@@ -78,6 +109,8 @@ function receiptBody(order) {
     quantity: order.quantity,
     status: order.status,
     submittedAt: order.submittedAt,
+    quotedAt: order.quotedAt ?? null,
+    quoteKind: order.quoteKind ?? null,
     price: order.unitPrice ?? dollars(order.priceCents ?? null),
     total: dollars(order.totalCents),
     balance: dollars(order.balanceCents),
@@ -107,7 +140,7 @@ function proportionalCost(cost, remaining, originalQuantity) {
   return Number((BigInt(cost) * BigInt(remaining) + divisor / 2n) / divisor);
 }
 
-function calculateFill(sandbox, intent, market) {
+function calculateFill(sandbox, intent, market, submittedAt, confirmation) {
   if (sandbox.cashCents === null) return { status: 409, message: 'Initialize your paper wallet before placing an order.' };
   if (market.currency !== 'USD') return { status: 422, message: 'Paper trading is available only for USD quotes.' };
   const value = orderValue(market.quote, intent.quantity);
@@ -116,6 +149,9 @@ function calculateFill(sandbox, intent, market) {
   }
 
   const { unitPrice, totalCents } = value;
+  const quote = checkQuoteTime(market.quote.t, unitPrice, submittedAt, confirmation);
+  if (!quote.quotedAt) return quote;
+
   const { side, ticker, quantity } = intent;
   const previous = sandbox.positions.find(position => position.ticker === ticker);
   const positions = sandbox.positions.filter(position => position.ticker !== ticker);
@@ -131,7 +167,7 @@ function calculateFill(sandbox, intent, market) {
     }
     positions.push({ ticker, quantity: shares, costCents });
     return {
-      status: 200, message: 'Paper buy filled.', unitPrice, totalCents,
+      status: 200, message: 'Paper buy filled.', unitPrice, totalCents, ...quote,
       positions, balanceCents: sandbox.cashCents - totalCents,
     };
   }
@@ -143,10 +179,10 @@ function calculateFill(sandbox, intent, market) {
   if (remaining) {
     positions.push({ ticker, quantity: remaining, costCents: proportionalCost(previous.costCents, remaining, previous.quantity) });
   }
-  return { status: 200, message: 'Paper sell filled.', unitPrice, totalCents, positions, balanceCents };
+  return { status: 200, message: 'Paper sell filled.', unitPrice, totalCents, ...quote, positions, balanceCents };
 }
 
-function decideOrder(sandbox, intent, market) {
+function decideOrder(sandbox, intent, market, confirmation) {
   const replay = existingOrder(sandbox, intent);
   if (replay) return replay;
   // Never remove earlier receipts to make space, as doing so would permit a replay.
@@ -157,10 +193,15 @@ function decideOrder(sandbox, intent, market) {
   if (!market && sandbox.cashCents !== null) {
     return { status: 503, body: { message: 'Paper wallet changed. Please retry the same order.' } };
   }
-  const fill = calculateFill(sandbox, intent, market);
+  const submittedAt = new Date();
+  const fill = calculateFill(sandbox, intent, market, submittedAt, confirmation);
+  if (fill.body) return fill;
+
   const order = {
     ...intent,
-    submittedAt: new Date(),
+    submittedAt,
+    quotedAt: fill.quotedAt ?? null,
+    quoteKind: fill.quoteKind ?? null,
     status: fill.status === 200 ? 'filled' : 'rejected',
     responseStatus: fill.status,
     message: fill.message,
@@ -279,13 +320,19 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, s
     router.post('/' + side, withSandbox(async (req, res, initial) => {
       const ticker = parseTicker(res, req.body?.ticker);
       if (!ticker) return;
-      const { quantity, orderId } = req.body;
+      const { quantity, orderId, referenceQuote } = req.body;
       if (!Number.isSafeInteger(quantity) || quantity < 1 || typeof orderId !== 'string' || !uuidPattern.test(orderId)) {
         return res.status(400).json({ message: 'Enter a positive whole number of shares and a valid order ID.' });
       }
       const intent = { side, ticker, quantity, orderId: orderId.toLowerCase() };
       const replay = existingOrder(initial, intent);
       if (replay) return send(res, replay);
+      if (referenceQuote !== undefined && (
+        typeof referenceQuote?.price !== 'number' || !Number.isFinite(referenceQuote.price) || referenceQuote.price <= 0
+        || typeof referenceQuote.quotedAt !== 'string'
+      )) {
+        return res.status(400).json({ message: 'Provide the reference price and quote time to confirm this order.' });
+      }
 
       let market;
       if (initial.cashCents !== null && initial.receipts.length < limits.receipts) {
@@ -298,7 +345,7 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, s
           return sendMarketError(res, error, 'message');
         }
       }
-      return send(res, await mutate(req, res, sandbox => decideOrder(sandbox, intent, market), initial));
+      return send(res, await mutate(req, res, sandbox => decideOrder(sandbox, intent, market, referenceQuote), initial));
     }));
   }
 

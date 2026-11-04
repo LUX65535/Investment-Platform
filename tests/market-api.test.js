@@ -36,7 +36,7 @@ test('public market reads share requests and provider failures leave paper order
     if (quoteStatus !== 200) {
       throw Object.assign(new Error('Upstream exception with test-token'), { response: { status: quoteStatus } });
     }
-    return { data: { c: params.symbol === 'MSFT' ? 125 : 100 } };
+    return { data: { c: params.symbol === 'MSFT' ? 125 : 100, t: Math.floor(Date.now() / 1000) } };
   });
   const server = require('../app').listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -85,6 +85,8 @@ test('public market reads share requests and provider failures leave paper order
   assert.equal(quoteCalls - beforeReads, 2, 'Paper fills cannot use a completed read cache entry.');
   assert.equal(filled.body.receipt.orderId, order.orderId);
   assert.equal(filled.body.receipt.balance, 24900);
+  assert.equal(filled.body.receipt.quoteKind, 'recent');
+  assert.ok(Date.parse(filled.body.receipt.quotedAt));
 
   const [apple, microsoft] = await Promise.all([
     request('/company_quote?symbol=AAPL'), request('/company_quote?symbol=MSFT'),

@@ -19,7 +19,7 @@ import volumeByPrice from 'highcharts/indicators/volume-by-price';
 import indicators from 'highcharts/indicators/indicators';
 indicators(Highcharts);
 volumeByPrice(Highcharts);
-import { estimateOrderCents, paperOrderConfirmation, PendingOrderError, PendingPaperOrder, PortfolioService } from '../../services/portfolio.service';
+import { estimateOrderCents, paperOrderConfirmation, PendingOrderError, PendingPaperOrder, PortfolioService, ReferenceQuoteRequired } from '../../services/portfolio.service';
 import { MarketBar as AggregateBarResponse, MarketHistoryService, utcDayMonthsBefore, validClosingBars } from '../../services/market-history.service';
 
 export interface QuoteResponse {
@@ -218,6 +218,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   tradeSide: 'buy' | 'sell' = 'buy';
   tradeQuantity: number | null = 1;
   tradeError = '';
+  tradeReference?: ReferenceQuoteRequired;
+  referenceAcknowledged = false;
   tradePending = false;
   tradeNeedsRefresh = false;
   walletLoading = false;
@@ -292,6 +294,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const ticker = this.lastSuccessfulSearch;
     const pending = ticker ? this.portfolioService.getPendingOrder(side, ticker) : undefined;
     this.pendingTrade = pending;
+    this.tradeReference = undefined;
+    this.referenceAcknowledged = false;
     this.tradeSide = side;
     this.tradeQuantity = pending?.quantity ?? 1;
     this.tradeError = pending ? uncertainOrderMessage : '';
@@ -334,7 +338,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   private get estimatedTradeCents(): number {
-    return estimateOrderCents(this.currentStock?.c ?? 0, this.tradeQuantity ?? 0);
+    return estimateOrderCents(this.tradeReference?.quote.price ?? this.currentStock?.c ?? 0, this.tradeQuantity ?? 0);
   }
 
   get tradeLimitMessage(): string {
@@ -354,6 +358,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const quantity = this.tradeQuantity ?? 0;
     if (this.tradePending || !Number.isSafeInteger(quantity) || quantity < 1) return false;
     if (this.tradeNeedsRefresh) return true;
+    if (this.tradeReference && !this.referenceAcknowledged) return false;
     return this.supportsPaperTrade && !this.walletLoading && !this.tradeLimitMessage
       && (this.tradeSide === 'sell' || this.walletInitialized === true);
   }
@@ -367,9 +372,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const context = this.searchSubscription;
     this.tradePending = true;
     this.tradeError = '';
-    const trade = this.pendingTrade
-      ? this.portfolioService.retryOrder(this.pendingTrade)
-      : this.portfolioService.placeOrder(side, ticker, quantity);
+    const trade = this.tradeReference
+      ? this.portfolioService.confirmReferenceQuote(this.tradeReference)
+      : this.pendingTrade
+        ? this.portfolioService.retryOrder(this.pendingTrade)
+        : this.portfolioService.placeOrder(side, ticker, quantity);
     trade.pipe(
       takeUntilDestroyed(this.destroyRef),
       finalize(() => this.tradePending = false)
@@ -380,14 +387,16 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         this.tradeModal?.close();
         this.showConfirmationMessage(paperOrderConfirmation(receipt));
       },
-      error: (error: HttpErrorResponse | PendingOrderError) => {
+      error: (error: unknown) => {
         if (this.searchSubscription !== context) return;
+        this.tradeReference = error instanceof ReferenceQuoteRequired ? error : undefined;
+        this.referenceAcknowledged = false;
         this.pendingTrade = error instanceof PendingOrderError ? error.order : undefined;
         this.tradeNeedsRefresh = Boolean(this.pendingTrade);
         if (this.tradeNeedsRefresh) {
           this.refreshHolding(ticker);
           this.tradeError = uncertainOrderMessage;
-        } else {
+        } else if (!this.tradeReference) {
           this.tradeError = error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
             ? error.error.message
             : 'The order did not go through. Please try again.';
