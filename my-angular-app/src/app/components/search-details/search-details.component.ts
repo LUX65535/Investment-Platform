@@ -3,11 +3,11 @@ import { CommonModule } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef, NgbModule } from '@ng-bootstrap/ng-bootstrap';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import {Observable, of, Subscription, interval, forkJoin} from 'rxjs';
-import { catchError, debounceTime, distinctUntilChanged, filter, finalize, map, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
+import { EMPTY, Observable, Subject, of, Subscription, interval, forkJoin, merge, timer } from 'rxjs';
+import { catchError, filter, finalize, map, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
 import { ActivatedRoute, NavigationEnd, Router, RouterModule } from '@angular/router';
 import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
-import { MatAutocompleteModule } from '@angular/material/autocomplete';
+import { MatAutocompleteModule, MatAutocompleteTrigger } from '@angular/material/autocomplete';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { HighchartsChartModule } from 'highcharts-angular';
@@ -109,7 +109,13 @@ type HistoryRange = typeof historyRanges[number];
 const overviewRanges = ['Hourly', '1M', '3M', '1Y'] as const;
 type OverviewRange = typeof overviewRanges[number];
 const uncertainOrderMessage = 'The order may have filled. Check your receipts in Portfolio or retry the same order.';
+const tickerPattern = /^[A-Z0-9][A-Z0-9.:-]{0,24}$/;
 
+interface SuggestionRequest {
+  term: string;
+  submitted: boolean;
+  openOptions?: () => void;
+}
 
 @Component({
   selector: 'app-search-details',
@@ -124,8 +130,11 @@ const uncertainOrderMessage = 'The order may have filled. Check your receipts in
 })
 export class SearchDetailsComponent implements OnInit, OnDestroy {
   tickerFormControl = new FormControl<string | StockResult>('', { nonNullable: true });
-  filteredOptions: Observable<StockResult[]> = of([]);
+  searchOptions: StockResult[] = [];
+  searchFeedback = '';
+  private readonly searchRequests = new Subject<SuggestionRequest>();
   isLoading = false;
+  searchSubmitting = false;
   DetailIsLoading = false;
   quoteLoading = false;
   searchError = '';
@@ -908,28 +917,56 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   setupSearch(): void {
-    this.filteredOptions = this.tickerFormControl.valueChanges.pipe(
+    const typedSearches = this.tickerFormControl.valueChanges.pipe(
       map(value => typeof value === 'string' ? value.trim() : ''),
-      debounceTime(250),
-      distinctUntilChanged(),
-      switchMap(term => {
-        this.suggestionsError = false;
-        if (!term) return of([]);
-        this.isLoading = true;
-        return this.getStocks(term).pipe(
-          catchError(() => {
-            this.suggestionsError = true;
-            return of([]);
-          }),
-          finalize(() => this.isLoading = false)
-        );
-      })
+      map((term): SuggestionRequest => ({ term, submitted: false })),
     );
+    let lastLookup: { term: string; options: StockResult[] } | undefined;
+    merge(typedSearches, this.searchRequests).pipe(
+      switchMap(request => {
+        const { term, submitted } = request;
+        this.searchOptions = [];
+        this.searchError = '';
+        this.searchFeedback = '';
+        this.suggestionsError = false;
+        if (!term || term.length > 80) {
+          lastLookup = undefined;
+          if (submitted) this.searchError = term ? 'Enter up to 80 characters.' : 'Enter a company name or ticker to start your search.';
+          return EMPTY;
+        }
+
+        const cached = lastLookup?.term === term ? lastLookup.options : undefined;
+        this.isLoading = !cached;
+        this.searchSubmitting = submitted && !cached;
+        const options = cached ? of(cached) : (submitted ? of(0) : timer(250)).pipe(switchMap(() => this.getStocks(term)));
+        return options.pipe(
+          tap(results => {
+            lastLookup = { term, options: results };
+            this.searchOptions = results.slice(0, 10);
+            if (submitted) this.resolveSubmittedSearch(request, results);
+          }),
+          catchError(() => {
+            if (submitted && tickerPattern.test(term)) this.navigateToTicker(term);
+            else this.suggestionsError = true;
+            return EMPTY;
+          }),
+          finalize(() => {
+            this.isLoading = false;
+            this.searchSubmitting = false;
+          })
+        );
+      }),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe();
   }
 
   getStocks(term: string): Observable<StockResult[]> {
     return this.http.get<{ result: StockResult[] }>('/Autocomplete_Search', { params: { symbol: term } }).pipe(
-      map(response => (response.result ?? []).slice(0, 10))
+      map(response => Array.isArray(response?.result)
+        ? response.result.filter(option => typeof option?.symbol === 'string'
+          && typeof option.displaySymbol === 'string' && typeof option.description === 'string'
+          && tickerPattern.test(option.symbol.trim().toUpperCase()))
+        : [])
     );
   }
 
@@ -937,12 +974,49 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     return this.http.get<CompanyProfile>('/company_profile', { params: { symbol: ticker } });
   }
 
-  submitSearch(selection: StockResult | string = this.tickerFormControl.value): void {
-    const ticker = this.displayFn(selection).trim().toUpperCase();
-    if (!/^[A-Z0-9][A-Z0-9.:-]{0,24}$/.test(ticker)) {
-      this.searchError = ticker ? 'Enter a valid ticker such as AAPL or BRK.B.' : 'Enter a ticker to start your search.';
+  submitSearch(selection: StockResult | string, input?: HTMLInputElement, trigger?: MatAutocompleteTrigger): void {
+    if (typeof selection !== 'string') {
+      this.navigateToTicker(selection.symbol.trim().toUpperCase());
       return;
     }
+    if (this.searchSubmitting) return;
+    const term = selection.trim();
+    this.searchRequests.next({
+      term,
+      submitted: true,
+      openOptions: input && trigger ? () => {
+        if (!input.isConnected) return;
+        input.focus();
+        if (!trigger.panelOpen) trigger.openPanel();
+      } : undefined,
+    });
+  }
+
+  private resolveSubmittedSearch(request: SuggestionRequest, options: StockResult[]): void {
+    const ticker = request.term.toUpperCase();
+    const normalizedName = (value: string) => value.toLowerCase().replace(/[.,]/g, '').trim().replace(/\s+/g, ' ');
+    const canonicalSymbol = (option: StockResult) => option.symbol.trim().toUpperCase();
+    if (options.some(option => canonicalSymbol(option) === ticker)) {
+      this.navigateToTicker(ticker);
+      return;
+    }
+
+    const companyName = normalizedName(request.term);
+    const exact = new Set(options.filter(option => option.displaySymbol.trim().toUpperCase() === ticker
+      || normalizedName(option.description) === companyName).map(canonicalSymbol));
+    if (exact.size === 1) {
+      this.navigateToTicker([...exact][0]);
+    } else if (options.length) {
+      this.searchFeedback = 'Choose a matching symbol from the suggestions.';
+      request.openOptions?.();
+    } else if (tickerPattern.test(ticker)) {
+      this.navigateToTicker(ticker);
+    } else {
+      this.searchError = 'No matching companies found. Try another name or ticker.';
+    }
+  }
+
+  private navigateToTicker(ticker: string): void {
     if (this.route.snapshot.paramMap.get('ticker') === ticker) {
       this.loadSearch(ticker);
       this.syncResearchView();
@@ -997,10 +1071,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   private loadSearch(value: string): void {
+    this.searchRequests.next({ term: '', submitted: false });
     this.resetSearch();
     const ticker = value.trim().toUpperCase();
     this.tickerFormControl.setValue(ticker, { emitEvent: false });
-    if (!/^[A-Z0-9][A-Z0-9.:-]{0,24}$/.test(ticker)) {
+    if (!tickerPattern.test(ticker)) {
       this.searchError = 'Enter a valid ticker such as AAPL or BRK.B.';
       return;
     }
@@ -1048,7 +1123,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
   private loadSummary(ticker: string): void {
     this.searchSubscription.add(this.getCompanyPeers(ticker).subscribe({
-      next: peers => this.companyPeers = Array.isArray(peers) ? peers : [],
+      next: peers => {
+        const profileTicker = this.searchResults?.ticker;
+        const current = typeof profileTicker === 'string' ? profileTicker.trim().toUpperCase() : ticker;
+        this.companyPeers = Array.isArray(peers) ? [...new Set(peers
+          .filter(peer => typeof peer === 'string')
+          .map(peer => peer.trim().toUpperCase())
+          .filter(peer => peer !== ticker && peer !== current && tickerPattern.test(peer)))] : [];
+      },
       error: () => this.companyPeers = [],
     }));
   }

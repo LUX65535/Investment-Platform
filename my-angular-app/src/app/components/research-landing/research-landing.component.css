@@ -211,77 +211,12 @@
 }
 .featured-footer a:hover { color: #fff; text-decoration: underline; }
 
-.next-actions { margin-top: clamp(1.25rem, 3.2vw, 2.15rem); }
-
-.actions-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: .2rem 1rem;
-  margin: 0 0 .75rem;
-}
-
-.actions-heading h2 {
-  margin: 0;
-  color: var(--ink);
-  font-size: clamp(1.22rem, 2.7vw, 1.52rem);
-  font-weight: 710;
-  letter-spacing: -.03em;
-}
-
-.actions-heading p { margin: 0; color: var(--muted); font-size: .88rem; }
-
-.action-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: .7rem;
-}
-
-.workspace-action {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: .75rem;
-  padding: clamp(.72rem, 2vw, 1.1rem);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--ink);
-  text-decoration: none;
-}
-
-.workspace-action:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
-  color: var(--ink);
-}
-
-.workspace-action > span:nth-child(2) { display: grid; gap: .15rem; }
-.workspace-action strong { font-size: .95rem; }
-.workspace-action > span:nth-child(2) span { color: var(--muted); font-size: .82rem; }
-
-.action-icon {
-  display: grid;
-  width: 2.5rem;
-  aspect-ratio: 1;
-  place-items: center;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.action-icon svg { width: 1.15rem; }
-.action-arrow { color: var(--accent); }
-
 @media (max-width: 820px) {
   .market-hero { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
-  .hero-break { display: none; }
   .hero-copy h1 { max-width: 17ch; }
 }
 
 @media (max-width: 530px) {
-  .action-grid { grid-template-columns: minmax(0, 1fr); }
   .quick-symbols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .quick-symbols > span { grid-column: 1 / -1; }
   .quick-symbols a { justify-content: center; padding-inline: .25rem; }

@@ -1,27 +1,34 @@
 <ng-template #symbolSearch let-landing="landing">
-  <form class="search-form" [class.search-form--landing]="landing" role="search" (ngSubmit)="submitSearch()">
+  <form class="search-form" [class.search-form--landing]="landing" role="search"
+        (ngSubmit)="submitSearch(tickerFormControl.value, tickerInput, searchTrigger)">
     <label for="ticker-search" class="visually-hidden">Stock ticker or company</label>
     <div class="search-field" matAutocompleteOrigin #searchOrigin="matAutocompleteOrigin">
       <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <circle cx="10.5" cy="10.5" r="5.5" stroke="currentColor" stroke-width="1.75"/>
         <path d="m15 15 4 4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
       </svg>
-      <input #tickerInput matInput id="ticker-search" [formControl]="tickerFormControl" [matAutocomplete]="auto"
+      <input #tickerInput #searchTrigger="matAutocompleteTrigger" matInput id="ticker-search"
+             [formControl]="tickerFormControl" [matAutocomplete]="auto"
              [matAutocompleteConnectedTo]="searchOrigin"
-             placeholder="Symbol or company" autocomplete="off" spellcheck="false">
+             placeholder="Symbol or company" maxlength="80" autocomplete="off" spellcheck="false">
       <button type="button" class="clear-search" aria-label="Clear search" *ngIf="tickerFormControl.value"
               (click)="clearSearch(); tickerInput.focus()">&times;</button>
-      <button type="submit" class="submit-search">Search</button>
+      <button type="submit" class="submit-search" [disabled]="searchSubmitting" [attr.aria-busy]="searchSubmitting">
+        {{ searchSubmitting ? 'Searching…' : 'Search' }}
+      </button>
     </div>
     <mat-autocomplete #auto="matAutocomplete" class="ticker-options" [displayWith]="displayFn"
                       (optionSelected)="submitSearch($event.option.value)">
-      <mat-option *ngIf="isLoading" disabled>Searching symbols…</mat-option>
-      <mat-option *ngFor="let option of filteredOptions | async" [value]="option">
-        <strong>{{ option.displaySymbol }}</strong>
-        <span class="ticker-option-name">{{ option.description }}</span>
-      </mat-option>
+      <mat-option *ngIf="isLoading && !searchSubmitting" disabled>Searching symbols…</mat-option>
+      <mat-optgroup *ngIf="searchOptions.length" [label]="searchFeedback || 'Matching symbols'">
+        <mat-option *ngFor="let option of searchOptions" [value]="option">
+          <strong>{{ option.displaySymbol }}</strong>
+          <span class="ticker-option-name">{{ option.description }}</span>
+        </mat-option>
+      </mat-optgroup>
     </mat-autocomplete>
-    <p *ngIf="suggestionsError" class="search-help" role="status">Suggestions unavailable. Enter a ticker to search directly.</p>
+    <p *ngIf="suggestionsError" class="search-help" role="status">Suggestions unavailable. Enter an uppercase ticker to search directly.</p>
+    <p *ngIf="searchFeedback" class="visually-hidden" role="status">Choose a listed symbol with the arrow keys or pointer.</p>
     <p *ngIf="searchError" class="search-error" role="alert">{{ searchError }}</p>
   </form>
 </ng-template>

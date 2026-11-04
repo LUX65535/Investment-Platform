@@ -1,8 +1,8 @@
 <section class="market-hero" aria-labelledby="research-title">
   <div class="hero-copy">
     <p class="hero-kicker"><span></span> Market research</p>
-    <h1 id="research-title">Research stocks<br class="hero-break"> with clarity.</h1>
-    <p class="hero-summary">Look up a company, put its price moves in context, and build a watchlist for your next idea.</p>
+    <h1 id="research-title">Research a stock</h1>
+    <p class="hero-summary">Search by company or ticker to see price history, recent news, and analyst ratings.</p>
     <ng-content></ng-content>
     <div class="quick-symbols" aria-label="Example stocks">
       <span>Try a symbol</span>
@@ -55,27 +55,4 @@
       <a [routerLink]="['/search-details','AAPL']" [queryParams]="{range:'3m'}">Open AAPL <span aria-hidden="true">↗</span></a>
     </div>
   </section>
-</section>
-
-<section class="next-actions" aria-labelledby="actions-title">
-  <div class="actions-heading">
-    <h2 id="actions-title">Your workspace</h2>
-    <p>Open your saved list or simulated account.</p>
-  </div>
-  <div class="action-grid">
-    <a class="workspace-action" routerLink="/watchlist">
-      <span class="action-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none"><path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8L12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
-      </span>
-      <span><strong>Watchlist</strong><span>Check saved companies and daily moves.</span></span>
-      <span class="action-arrow" aria-hidden="true">→</span>
-    </a>
-    <a class="workspace-action" routerLink="/portfolio">
-      <span class="action-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="8" width="15" height="11" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M9 8V6.5c0-.8.7-1.5 1.5-1.5h3c.8 0 1.5.7 1.5 1.5V8m-10 5h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-      </span>
-      <span><strong>Paper portfolio</strong><span>Review simulated orders, cash, and positions.</span></span>
-      <span class="action-arrow" aria-hidden="true">→</span>
-    </a>
-  </div>
 </section>
