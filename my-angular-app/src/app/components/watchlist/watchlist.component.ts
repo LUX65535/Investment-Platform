@@ -1,4 +1,4 @@
-import { Component, DestroyRef, OnInit, inject } from '@angular/core';
+import { Component, DestroyRef, ElementRef, OnInit, ViewChild, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { catchError, finalize, forkJoin, from, map, mergeMap, of, switchMap, tap } from 'rxjs';
@@ -23,9 +23,11 @@ interface WatchlistItem {
 })
 export class WatchlistComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
+  @ViewChild('listTitle', { static: true }) private listTitle!: ElementRef<HTMLElement>;
   readonly removing = new Set<string>();
   watchlist: WatchlistItem[] = [];
   loading = false;
+  hasLoaded = false;
   private enriching = false;
   loadError = '';
   actionError = '';
@@ -37,13 +39,18 @@ export class WatchlistComponent implements OnInit {
     this.loadWatchlist();
   }
 
+  get canRefresh(): boolean {
+    return !this.loading && !this.enriching && this.removing.size === 0;
+  }
+
   loadWatchlist(): void {
-    if (this.loading || this.enriching || this.removing.size) return;
+    if (!this.canRefresh) return;
     this.loading = true;
     this.loadError = '';
     this.http.get<WatchlistItem[]>('/api/watchlist').pipe(
       tap(items => {
         this.watchlist = items.map(({ ticker }) => ({ ticker, quotePending: true }));
+        this.hasLoaded = true;
         this.loading = false;
         this.enriching = items.length > 0;
       }),
@@ -77,7 +84,7 @@ export class WatchlistComponent implements OnInit {
     });
   }
 
-  removeStock(ticker: string): void {
+  removeStock(ticker: string, button: HTMLButtonElement): void {
     if (this.loading || this.removing.has(ticker)) return;
     this.actionError = '';
     this.actionStatus = '';
@@ -87,6 +94,12 @@ export class WatchlistComponent implements OnInit {
       finalize(() => this.removing.delete(ticker)),
     ).subscribe({
       next: () => {
+        if (button.ownerDocument.activeElement === button) {
+          const row = button.closest('tr');
+          const sibling = row?.nextElementSibling ?? row?.previousElementSibling;
+          const nextTarget = sibling?.querySelector('a') ?? this.listTitle.nativeElement;
+          nextTarget.focus({ preventScroll: true });
+        }
         this.watchlist = this.watchlist.filter(item => item.ticker !== ticker);
         this.actionStatus = `${ticker} removed from your watchlist.`;
       },

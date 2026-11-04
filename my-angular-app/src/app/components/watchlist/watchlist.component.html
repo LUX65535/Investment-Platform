@@ -1,56 +1,110 @@
 <header class="page-heading">
   <p class="page-eyebrow">Market workspace</p>
   <h1>Watchlist</h1>
-  <p>Keep the companies you’re following in one place.</p>
+  <p>Follow prices and daily moves for your saved stocks.</p>
 </header>
 
-<section class="watchlist-container" aria-label="Saved symbols" [attr.aria-busy]="loading">
+<section class="watchlist-panel" aria-labelledby="saved-symbols-title" [attr.aria-busy]="loading">
+  <div class="panel-header">
+    <div>
+      <h2 id="saved-symbols-title" tabindex="-1" #listTitle>Saved symbols</h2>
+      <p>{{ hasLoaded ? watchlist.length + (watchlist.length === 1 ? ' symbol' : ' symbols') : 'Your market shortlist' }}</p>
+    </div>
+    <div class="panel-actions">
+      <button type="button" class="state-action" [attr.aria-disabled]="!canRefresh" (click)="loadWatchlist()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 7v5h-5M4 17v-5h5m10.6 0a7.6 7.6 0 0 0-13-5.4L4 9m16 6-2.6 2.4a7.6 7.6 0 0 1-13-5.4"/>
+        </svg>
+        <span>Refresh</span>
+      </button>
+      <a class="state-action browse-action" routerLink="/search-details">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg>
+        <span>Find stocks</span>
+      </a>
+    </div>
+  </div>
+
   <div *ngIf="loading" class="status-loading" role="status">
-    <mat-spinner diameter="26" aria-hidden="true"></mat-spinner>
-    Loading watchlist…
+    <mat-spinner diameter="22" aria-hidden="true"></mat-spinner>
+    {{ hasLoaded ? 'Refreshing watchlist…' : 'Loading watchlist…' }}
   </div>
 
-  <div *ngIf="loadError" class="state-message state-message--error">
-    <p role="alert">{{ loadError }}</p>
-    <button type="button" class="state-action" [disabled]="removing.size > 0"
-            (click)="loadWatchlist()">Try again</button>
+  <div *ngIf="loadError" class="panel-message">
+    <p class="state-message state-message--error" role="alert">{{ loadError }}</p>
   </div>
 
-  <p *ngIf="actionError" class="state-message state-message--error" role="alert">{{ actionError }}</p>
+  <div *ngIf="actionError" class="panel-message">
+    <p class="state-message state-message--error" role="alert">{{ actionError }}</p>
+  </div>
   <p class="visually-hidden" role="status">{{ actionStatus }}</p>
 
-  <ul *ngIf="!loading && watchlist.length" class="watchlist">
-    <li *ngFor="let item of watchlist; trackBy: trackByTicker" class="watchlist-item">
-      <a class="watchlist-details watchlist-link" [routerLink]="['/search-details', item.ticker]">
-        <span class="watchlist-ticker">{{ item.ticker }}</span>
-        <span class="watchlist-company">{{ item.name || 'View market details' }}</span>
-      </a>
-      <div class="price-change-container">
-        <ng-container *ngIf="item.quote as quote; else unavailableQuote">
-          <span class="watchlist-price">{{ quote.c | currency:'USD' }}</span>
-          <span *ngIf="quote.d !== null && quote.dp !== null" class="watchlist-percentage"
-                [class.positive]="quote.dp > 0" [class.negative]="quote.dp < 0">
-            {{ quote.dp > 0 ? '+' : '' }}{{ quote.d | number:'1.2-2' }}
-            ({{ quote.dp > 0 ? '+' : '' }}{{ quote.dp | number:'1.2-2' }}%)
-          </span>
-        </ng-container>
-        <ng-template #unavailableQuote>
-          <span class="watchlist-unavailable">{{ item.quotePending ? 'Loading quote…' : 'Quote unavailable' }}</span>
-        </ng-template>
-      </div>
-      <button type="button" class="close-btn"
-              [attr.aria-label]="'Remove ' + item.ticker + ' from watchlist'"
-              [disabled]="removing.has(item.ticker)"
-              (click)="removeStock(item.ticker)">
-        <span aria-hidden="true">{{ removing.has(item.ticker) ? '…' : '×' }}</span>
-      </button>
-    </li>
-  </ul>
+  <table *ngIf="watchlist.length" class="watchlist" role="table">
+    <caption class="visually-hidden">Saved stocks with latest price and daily change</caption>
+    <thead role="rowgroup">
+      <tr role="row">
+        <th scope="col" role="columnheader">Company</th>
+        <th scope="col" role="columnheader">Last price</th>
+        <th scope="col" role="columnheader">Day change</th>
+        <th scope="col" role="columnheader"><span class="visually-hidden">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody role="rowgroup">
+      <tr *ngFor="let item of watchlist; trackBy: trackByTicker" role="row">
+        <th scope="row" role="rowheader" class="company-cell">
+          <a class="watchlist-link" [routerLink]="['/search-details', item.ticker]">
+            <span class="watchlist-ticker">{{ item.ticker }}</span>
+            <span *ngIf="item.name" class="watchlist-company">{{ item.name }}</span>
+          </a>
+        </th>
+        <td role="cell" class="price-cell">
+          <ng-container *ngIf="item.quote as quote; else unavailableQuote">
+            <span class="watchlist-price">{{ quote.c | currency:'USD' }}</span>
+          </ng-container>
+          <ng-template #unavailableQuote>
+            <span class="watchlist-unavailable">{{ item.quotePending ? 'Loading quote…' : 'Quote unavailable' }}</span>
+          </ng-template>
+        </td>
+        <td role="cell" class="change-cell">
+          <ng-container *ngIf="item.quote as quote">
+            <span *ngIf="quote.dp !== null; else missingChange" class="watchlist-change"
+                  [class.positive]="quote.dp > 0" [class.negative]="quote.dp < 0">
+              <span *ngIf="quote.d !== null" class="absolute-change">
+                {{ quote.d > 0 ? '+' : '' }}{{ quote.d | currency:'USD' }}
+              </span>
+              <span class="percent-change">{{ quote.dp > 0 ? '+' : '' }}{{ quote.dp | number:'1.2-2' }}%</span>
+            </span>
+          </ng-container>
+          <ng-template #missingChange><span class="watchlist-unavailable" aria-label="Day change unavailable">—</span></ng-template>
+        </td>
+        <td role="cell" class="remove-cell">
+          <button type="button" class="remove-button" #removeButton
+                  [attr.aria-label]="'Remove ' + item.ticker + ' from watchlist'"
+                  [attr.aria-disabled]="loading || removing.has(item.ticker)"
+                  (click)="removeStock(item.ticker, removeButton)">
+            <span *ngIf="removing.has(item.ticker); else removeIcon" aria-hidden="true">…</span>
+            <ng-template #removeIcon>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/>
+              </svg>
+            </ng-template>
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
 
-  <div *ngIf="!loading && !loadError && !watchlist.length" class="empty-state">
-    <span class="empty-state-icon" aria-hidden="true">☆</span>
-    <h2>Your watchlist is empty</h2>
-    <p>Search for a company and select its star to save it here.</p>
+  <div *ngIf="!loading && !loadError && !watchlist.length" class="empty-state watchlist-empty">
+    <span class="empty-state-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+           stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9Z"/></svg>
+    </span>
+    <h3>Your watchlist is empty</h3>
+    <p>Find a company and select the star next to its name to save it here.</p>
     <a class="state-action" routerLink="/search-details">Explore stocks</a>
   </div>
+
+  <footer *ngIf="watchlist.length" class="panel-footer">Prices in USD. Quotes may be delayed.</footer>
 </section>

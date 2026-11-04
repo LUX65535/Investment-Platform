@@ -50,9 +50,27 @@ export class PortfolioComponent implements OnInit {
   }
 
   get marketValue(): number | null {
-    return this.portfolio.some(stock => stock.price === null)
+    return !this.holdingsCurrent || this.portfolio.some(stock => stock.price === null)
       ? null
       : this.portfolio.reduce((total, stock) => total + stock.quantity * (stock.price ?? 0), 0);
+  }
+
+  get accountValue(): number | null {
+    const marketValue = this.marketValue;
+    return marketValue === null || this.cashBalance === null ? null : this.cashBalance + marketValue;
+  }
+
+  get unrealizedProfit(): number | null {
+    const marketValue = this.marketValue;
+    return marketValue === null ? null : marketValue - this.portfolio.reduce((total, stock) => total + stock.totalCost, 0);
+  }
+
+  get quotesPending(): boolean {
+    return this.portfolio.some(stock => stock.quotePending);
+  }
+
+  get quotedCount(): number {
+    return this.portfolio.filter(stock => stock.price !== null).length;
   }
 
   get estimatedTotal(): number {
@@ -133,8 +151,13 @@ export class PortfolioComponent implements OnInit {
     });
   }
 
+  canOpenTrade(holding: Holding, side: 'buy' | 'sell'): boolean {
+    if (this.isLoading || this.isInitializing || !this.holdingsCurrent || !this.walletInitialized || holding.price === null) return false;
+    return side === 'buy' ? this.cashBalance !== null && this.cashBalance > 0 : holding.quantity > 0;
+  }
+
   openTrade(holding: Holding, side: 'buy' | 'sell'): void {
-    if (this.tradeRef || holding.price === null || this.isLoading || !this.holdingsCurrent || !this.walletInitialized) return;
+    if (this.tradeRef || holding.price === null || !this.canOpenTrade(holding, side)) return;
     this.actionError = '';
     this.statusMessage = '';
     this.tradeError = '';

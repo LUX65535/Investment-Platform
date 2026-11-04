@@ -5,6 +5,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import * as Highcharts from 'highcharts/highstock';
+import HighchartsAccessibility from 'highcharts/modules/accessibility';
 import { HighchartsChartModule } from 'highcharts-angular';
 import { catchError, distinctUntilChanged, map, merge, of, Subject, switchMap } from 'rxjs';
 
@@ -33,12 +34,14 @@ const quoteTimeFormat = new Intl.DateTimeFormat('en-US', {
 });
 
 const chartRanges = [
-  { label: '1M', days: 30 },
-  { label: '3M', days: 90 },
-  { label: '1Y', days: 365 },
+  { label: '1M', description: '1 month', days: 30 },
+  { label: '3M', description: '3 months', days: 90 },
+  { label: '1Y', description: '1 year', days: 365 },
 ] as const;
 
 type ChartRange = typeof chartRanges[number];
+
+HighchartsAccessibility(Highcharts);
 
 @Component({
   selector: 'app-research-embed',
@@ -64,12 +67,19 @@ export class ResearchEmbedComponent implements OnInit {
   history: DailyPrice[] = [];
   quoteLoading = true;
   historyLoading = true;
+  quoteFailed = false;
+  historyFailed = false;
   activeRange: ChartRange = chartRanges[1];
   chartOptions: Highcharts.Options = {};
   chartPoints = 0;
+  historyReturn: number | null = null;
 
   get quoteTime(): string {
     return this.quote ? quoteTimeFormat.format(this.quote.t * 1000) : '';
+  }
+
+  get quoteIsoTime(): string | null {
+    return this.quote ? new Date(this.quote.t * 1000).toISOString() : null;
   }
 
   ngOnInit(): void {
@@ -84,16 +94,18 @@ export class ResearchEmbedComponent implements OnInit {
                 d: Number.isFinite(quote.d) ? quote.d : null,
                 dp: Number.isFinite(quote.dp) ? quote.dp : null,
               } : null,
+            failed: false,
           })),
-          catchError(() => of({ quote: null })),
+          catchError(() => of({ quote: null, failed: true })),
         ),
         this.http.get<{ results?: DailyPrice[] }>('/company_data', { params: { symbol } }).pipe(
           map(response => ({
             history: (Array.isArray(response?.results) ? response.results : [])
               .filter(point => Number.isFinite(point?.t) && point.t > 0 && Number.isFinite(point.c) && point.c > 0)
               .sort((first, second) => first.t - second.t),
+            failed: false,
           })),
-          catchError(() => of({ history: [] })),
+          catchError(() => of({ history: [], failed: true })),
         ),
       )),
       takeUntilDestroyed(this.destroyRef),
@@ -101,9 +113,11 @@ export class ResearchEmbedComponent implements OnInit {
       if ('quote' in result) {
         this.quote = result.quote;
         this.quoteLoading = false;
+        this.quoteFailed = result.failed;
       } else {
         this.history = result.history;
         this.historyLoading = false;
+        this.historyFailed = result.failed;
         this.setRange(this.activeRange);
       }
     });
@@ -132,14 +146,16 @@ export class ResearchEmbedComponent implements OnInit {
 
     this.inputError = '';
     this.tickerInput = symbol;
-    if (symbol === this.ticker) {
-      this.load(symbol);
+    const linkedSymbol = this.route.snapshot.queryParamMap.get('ticker')?.trim().toUpperCase() || defaultTicker;
+    if (symbol === linkedSymbol) {
+      this.refresh();
     } else {
       void this.router.navigate([], { relativeTo: this.route, queryParams: { ticker: symbol } });
     }
   }
 
   refresh(): void {
+    if (this.quoteLoading || this.historyLoading) return;
     this.load(this.ticker);
   }
 
@@ -149,29 +165,40 @@ export class ResearchEmbedComponent implements OnInit {
     const start = latest - range.days * 86400000;
     const data = this.history.filter(point => point.t >= start).map(point => [point.t, point.c]);
     this.chartPoints = data.length;
+    this.historyReturn = data.length > 1 ? (data[data.length - 1][1] / data[0][1] - 1) * 100 : null;
     this.chartOptions = {
       chart: { type: 'area', backgroundColor: 'transparent', spacing: [12, 6, 5, 6], animation: false },
       title: { text: undefined },
       credits: { enabled: false },
+      exporting: { enabled: false },
       legend: { enabled: false },
+      lang: { accessibility: { defaultChartTitle: this.ticker + ' daily closing prices' } },
+      accessibility: {
+        description: this.ticker + ' daily closing prices in U.S. dollars over ' + range.description + '.',
+        point: { valueDecimals: 2, valuePrefix: '$' },
+      },
       xAxis: {
         type: 'datetime',
-        tickPixelInterval: 95,
-        lineColor: '#dce4f0',
-        labels: { style: { color: '#53637d' } },
+        tickPixelInterval: 80,
+        lineColor: '#dce4df',
+        labels: { style: { color: '#50635b' } },
       },
       yAxis: {
         title: { text: undefined },
-        gridLineColor: '#e8edf5',
-        labels: { style: { color: '#53637d' }, format: '${value}' },
+        opposite: true,
+        gridLineColor: '#dce4df',
+        labels: { style: { color: '#50635b' }, format: '${value}' },
       },
       tooltip: { valueDecimals: 2, valuePrefix: '$' },
       plotOptions: { series: { animation: false, marker: { enabled: false } } },
       series: [{
         type: 'area',
         name: this.ticker + ' close',
-        color: '#315ad3',
-        fillColor: '#ebf0ff',
+        color: '#116b50',
+        fillColor: {
+          linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+          stops: [[0, '#dcefe5'], [1, '#ffffff']],
+        },
         threshold: null,
         data,
       }],
@@ -179,9 +206,14 @@ export class ResearchEmbedComponent implements OnInit {
   }
 
   private load(symbol: string): void {
+    if (this.ticker !== symbol) {
+      this.quote = null;
+      this.history = [];
+      this.historyReturn = null;
+    }
     this.ticker = symbol;
-    this.quote = null;
-    this.history = [];
+    this.quoteFailed = false;
+    this.historyFailed = false;
     this.quoteLoading = true;
     this.historyLoading = true;
     this.requests.next(symbol);

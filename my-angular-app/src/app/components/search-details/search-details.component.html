@@ -1,102 +1,260 @@
-<section [class.search-hero]="showSearchHero" [class.search-container]="!showSearchHero"
-         [attr.aria-labelledby]="showSearchHero ? 'research-title' : null">
-  <ng-container *ngIf="showSearchHero">
-    <div class="search-eyebrow page-eyebrow">Market research</div>
-    <h1 id="research-title">Research stocks with clarity</h1>
-    <p class="search-intro">Find a company, compare market data, and practice investing with a simulated portfolio.</p>
-  </ng-container>
-  <form class="search-bar-auto-complete" role="search" (ngSubmit)="submitSearch()">
-    <div class="input-container">
-      <input matInput id="ticker-search" aria-label="Stock ticker or company"
-             [formControl]="tickerFormControl" [matAutocomplete]="auto"
-             placeholder="Search ticker or company" autocomplete="off" spellcheck="false">
-      <button type="button" aria-label="Clear search" *ngIf="tickerFormControl.value" (click)="clearSearch()">
-        <img src="assets/images/icon2.svg" alt="" class="input-icon">
-      </button>
-      <button type="submit" aria-label="Search stock">
-        <img src="assets/images/icon1.svg" alt="" class="input-icon">
-      </button>
+<header class="research-header" [class.research-header--landing]="showSearchHero">
+  <div *ngIf="showSearchHero; else sectionLabel">
+    <p class="research-kicker">Research workspace</p>
+    <h1 id="research-title">Market research</h1>
+    <p class="research-intro">Look up a stock to explore its price history, company news, and fundamentals.</p>
+  </div>
+  <ng-template #sectionLabel>
+    <a class="research-back" routerLink="/search-details"><span aria-hidden="true">‹</span> All symbols</a>
+  </ng-template>
+
+  <form class="search-form" role="search" (ngSubmit)="submitSearch()">
+    <label for="ticker-search" class="visually-hidden">Stock ticker or company</label>
+    <div class="search-field" matAutocompleteOrigin #searchOrigin="matAutocompleteOrigin">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="10.5" cy="10.5" r="5.5" stroke="currentColor" stroke-width="1.75"/>
+        <path d="m15 15 4 4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+      </svg>
+      <input #tickerInput matInput id="ticker-search" [formControl]="tickerFormControl" [matAutocomplete]="auto"
+             [matAutocompleteConnectedTo]="searchOrigin"
+             placeholder="Search by symbol or company" autocomplete="off" spellcheck="false">
+      <button type="button" class="clear-search" aria-label="Clear search" *ngIf="tickerFormControl.value"
+              (click)="clearSearch(); tickerInput.focus()">&times;</button>
+      <button type="submit" class="submit-search">Search</button>
     </div>
-    <mat-autocomplete #auto="matAutocomplete" [displayWith]="displayFn" (optionSelected)="submitSearch($event.option.value)">
+    <mat-autocomplete #auto="matAutocomplete" class="ticker-options" [displayWith]="displayFn"
+                      (optionSelected)="submitSearch($event.option.value)">
       <mat-option *ngIf="isLoading" disabled>Searching symbols…</mat-option>
       <mat-option *ngFor="let option of filteredOptions | async" [value]="option">
-        <strong>{{ option.displaySymbol }}</strong> · {{ option.description }}
+        <strong>{{ option.displaySymbol }}</strong>
+        <span class="ticker-option-name">{{ option.description }}</span>
       </mat-option>
     </mat-autocomplete>
-    <p *ngIf="suggestionsError" class="search-hint" role="status">Suggestions are unavailable. You can still search by ticker.</p>
+    <p *ngIf="suggestionsError" class="search-help" role="status">Suggestions unavailable. Enter a ticker to search directly.</p>
   </form>
-  <div *ngIf="showSearchHero" class="search-suggestions" aria-label="Example symbols">
-    <span>Try a symbol</span>
-    <button type="button" *ngFor="let ticker of exampleTickers" (click)="submitSearch(ticker)">{{ ticker }}</button>
-  </div>
-</section>
+</header>
 
-<div *ngIf="DetailIsLoading" class="spinner-container" role="status">
-  <mat-spinner diameter="32"></mat-spinner>
-  <span>Loading company data…</span>
+<div *ngIf="DetailIsLoading" class="state-panel" role="status">
+  <mat-spinner diameter="24"></mat-spinner>
+  <p>Loading company data…</p>
 </div>
 
 <div *ngIf="searchError" class="error-message" role="alert">{{ searchError }}</div>
+
+<section *ngIf="showSearchHero" class="starter-panel" aria-labelledby="starter-title">
+  <div class="panel-heading">
+    <div>
+      <h2 id="starter-title">Explore a symbol</h2>
+      <p>Start with one of these companies or search above.</p>
+    </div>
+  </div>
+  <div class="starter-grid">
+    <button type="button" class="starter-symbol" *ngFor="let item of exampleTickers" (click)="submitSearch(item.ticker)">
+      <span class="starter-label"><strong>{{ item.ticker }}</strong><span>{{ item.name }}</span></span>
+      <span class="starter-arrow" aria-hidden="true">↗</span>
+    </button>
+  </div>
+</section>
 
 <div *ngIf="showConfirmation" class="confirmation-alert" [ngClass]="confirmationStyle" role="status">
   <span>{{ confirmationMessage }}</span>
   <button type="button" class="close-button" aria-label="Dismiss notification" (click)="closeConfirmation()">&times;</button>
 </div>
 
-<div *ngIf="searchResults as company" class="stock-container">
-  <div class="stock-upper">
-    <div class="stock-info">
-      <h1>{{ company.ticker }}
-        <button type="button" class="star" [class.yellow]="isFavorited"
-                [attr.aria-pressed]="isFavorited" [attr.aria-label]="isFavorited ? 'Remove from watchlist' : 'Add to watchlist'"
-                [disabled]="watchlistPending || watchlistLoading || watchlistUnavailable" (click)="toggleFavorite()">&#9733;</button>
-      </h1>
-      <h2>{{ company.name }}</h2>
-      <p>{{ company.exchange }}</p>
-      <button type="button" class="btn btn-success" [disabled]="!currentStock || !supportsPaperTrade || tradePending" (click)="openTrade(tradeDialog, 'buy')">Buy</button>
-      <button type="button" class="btn btn-outline-secondary" *ngIf="ownedStockQuantity > 0" [disabled]="!currentStock || !supportsPaperTrade || tradePending"
-              (click)="openTrade(tradeDialog, 'sell')">Sell</button>
-      <p *ngIf="!supportsPaperTrade">Paper trading is available for USD quotes.</p>
-      <div *ngIf="watchlistUnavailable" class="mt-2">
-        <span role="status">Watchlist status unavailable.</span>
-        <button type="button" class="state-action ms-2" (click)="checkWatchlistStatus()">Retry watchlist</button>
+<div *ngIf="searchResults as company" class="security">
+  <section class="security-header" aria-labelledby="security-title">
+    <div class="security-identity">
+      <div class="security-mark" aria-hidden="true">{{ company.ticker | slice:0:2 }}</div>
+      <div>
+        <p class="security-symbol">{{ company.ticker }} <ng-container *ngIf="company.exchange">· {{ company.exchange }}</ng-container></p>
+        <h1 id="security-title">{{ company.name || company.ticker }}</h1>
       </div>
     </div>
 
-    <div class="stock-logo" aria-hidden="true">
-      <img *ngIf="company.logo; else tickerMark" [src]="company.logo" alt="">
-      <ng-template #tickerMark><strong>{{ company.ticker | slice:0:2 }}</strong></ng-template>
+    <div class="security-actions">
+      <button type="button" class="btn btn-outline-secondary save-action" [class.saved]="isFavorited"
+              [attr.aria-pressed]="isFavorited" [attr.aria-label]="isFavorited ? 'Remove from watchlist' : 'Add to watchlist'"
+              [attr.aria-disabled]="watchlistPending || watchlistLoading || watchlistUnavailable" (click)="toggleFavorite()">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8L12 4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+        </svg>
+        {{ watchlistPending ? 'Saving…' : isFavorited ? 'Saved' : 'Watchlist' }}
+      </button>
+      <button type="button" class="btn btn-outline-secondary" *ngIf="ownedStockQuantity > 0"
+              [disabled]="!currentStock || !supportsPaperTrade || tradePending" (click)="openTrade(tradeDialog, 'sell')">Sell</button>
+      <button type="button" class="btn btn-primary"
+              [disabled]="!currentStock || !supportsPaperTrade || tradePending" (click)="openTrade(tradeDialog, 'buy')">Paper buy</button>
     </div>
 
-    <div class="stock-financials" *ngIf="currentStock as quote; else quoteUnavailable">
-      <span class="stock-price">{{ quote.c | currency:(company.currency || 'USD') }}</span>
-      <div class="stock-change" [ngStyle]="{'color': getChangeColor(quote)}">
-        <span aria-hidden="true" [ngClass]="{'triangle-up': quote.dp > 0, 'triangle-down': quote.dp < 0}"></span>
-        <span>{{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})</span>
+    <div class="security-quote" *ngIf="currentStock as quote; else quoteUnavailable">
+      <div class="quote-values">
+        <span class="quote-price">{{ quote.c | currency:(company.currency || 'USD') }}</span>
+        <span class="quote-movement" [class.quote-up]="quote.dp > 0" [class.quote-down]="quote.dp < 0">
+          {{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})
+        </span>
       </div>
-      <span class="current-time">Last quote {{ quote.t * 1000 | date:'MMM d, h:mm a z' }}</span>
+      <p>Latest quote · {{ quote.t * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC</p>
     </div>
-    <ng-template #quoteUnavailable><p class="stock-financials current-time">Latest quote unavailable</p></ng-template>
+    <ng-template #quoteUnavailable>
+      <p class="security-quote quote-note" role="status">{{ quoteLoading ? 'Loading latest quote…' : 'Latest quote unavailable. Historical prices and company details may still be available.' }}</p>
+    </ng-template>
+
+    <p class="quote-note" *ngIf="!supportsPaperTrade">Paper trading is available for USD quotes.</p>
+    <div *ngIf="watchlistUnavailable" class="quote-note watchlist-retry">
+      <span role="status">Watchlist status unavailable.</span>
+      <button type="button" class="state-action" (click)="checkWatchlistStatus()">Retry watchlist</button>
+    </div>
+  </section>
+
+  <div class="detail-tabs" role="tablist" aria-label="Company details">
+    <button *ngFor="let tab of detailTabs; let index = index" type="button" role="tab"
+            [id]="'research-tab-' + tab.id" [attr.aria-selected]="activeTab === tab.id"
+            aria-controls="research-panel" [attr.tabindex]="activeTab === tab.id ? 0 : -1"
+            [class.active]="activeTab === tab.id" (keydown)="handleTabKey($event, index)"
+            (click)="setActiveTab(tab.id)">{{ tab.label }}</button>
   </div>
+
+  <section id="research-panel" class="detail-content" role="tabpanel" tabindex="0"
+           [attr.aria-labelledby]="'research-tab-' + activeTab">
+    <div *ngIf="loadingTabs.has(activeTab)" class="state-panel" role="status">
+      <mat-spinner diameter="22"></mat-spinner>
+      <p>Loading {{ activeTab === 'news' ? 'news' : activeTab === 'charts' ? 'price history' : 'insights' }}…</p>
+    </div>
+    <div *ngIf="failedTabs.has(activeTab)" class="state-panel">
+      <p role="alert">This section is temporarily unavailable.</p>
+      <button type="button" class="state-action" (click)="setActiveTab(activeTab)">Try again</button>
+    </div>
+
+    <div class="overview-grid" *ngIf="activeTab === 'summary'">
+      <section class="data-panel chart-panel" aria-labelledby="intraday-title">
+        <div class="panel-heading">
+          <div>
+            <h2 id="intraday-title">Intraday price</h2>
+            <p>Hourly closes<ng-container *ngIf="lastHourlyPoint as point"> · through {{ point | date:'MMM d, h:mm a':'+0000' }} UTC</ng-container></p>
+          </div>
+        </div>
+        <div id="company-chart">
+          <div *ngIf="hourlyLoading || quoteLoading" class="state-panel chart-state" role="status"><p>Loading hourly prices…</p></div>
+          <div *ngIf="!hourlyLoading && !quoteLoading && !chartOptions.series?.length" class="state-panel chart-state">
+            <p>{{ hourlyFailed ? 'Hourly prices could not load.' : 'No hourly prices are available for this symbol.' }}</p>
+            <button *ngIf="hourlyFailed" type="button" class="state-action" (click)="retryHourly()">Retry hourly prices</button>
+          </div>
+          <highcharts-chart *ngIf="chartOptions.series?.length" [Highcharts]="Highcharts"
+                            [options]="chartOptions" class="chart chart--intraday"></highcharts-chart>
+        </div>
+        <button type="button" class="state-action" (click)="openHistory()">Price history</button>
+      </section>
+
+      <aside class="overview-sidebar" aria-label="Market statistics and company profile">
+        <section class="data-panel facts-panel" aria-labelledby="session-title">
+          <h2 id="session-title">Session statistics</h2>
+          <dl class="facts">
+            <div><dt>Open</dt><dd>{{ (currentStock?.o | number:'1.2-2') ?? '—' }}</dd></div>
+            <div><dt>Previous close</dt><dd>{{ (currentStock?.pc | number:'1.2-2') ?? '—' }}</dd></div>
+            <div><dt>Day high</dt><dd>{{ (currentStock?.h | number:'1.2-2') ?? '—' }}</dd></div>
+            <div><dt>Day low</dt><dd>{{ (currentStock?.l | number:'1.2-2') ?? '—' }}</dd></div>
+          </dl>
+        </section>
+
+        <section class="data-panel facts-panel" aria-labelledby="company-title">
+          <h2 id="company-title">Company profile</h2>
+          <dl class="facts">
+            <div><dt>Industry</dt><dd>{{ company.finnhubIndustry || '—' }}</dd></div>
+            <div><dt>IPO date</dt><dd>{{ company.ipo || '—' }}</dd></div>
+          </dl>
+          <a class="company-site" *ngIf="company.weburl" [href]="company.weburl" target="_blank" rel="noopener noreferrer">Company website <span aria-hidden="true">↗</span></a>
+          <ng-container *ngIf="companyPeers.length">
+            <h3>Related symbols</h3>
+            <div class="peer-links">
+              <a *ngFor="let peer of companyPeers" [routerLink]="['/search-details', peer]" class="peer-link">{{ peer }}</a>
+            </div>
+          </ng-container>
+        </section>
+      </aside>
+    </div>
+
+    <section class="data-panel news-panel" *ngIf="activeTab === 'news' && !loadingTabs.has('news') && !failedTabs.has('news')" aria-labelledby="news-title">
+      <div class="panel-heading"><div><h2 id="news-title">Top News</h2><p>Recent coverage for {{ company.ticker }} · via Finnhub</p></div></div>
+      <div *ngIf="!topNews.length" class="state-panel"><p>No recent articles are available for this symbol.</p></div>
+      <ul class="news-list" *ngIf="topNews.length">
+        <li *ngFor="let item of topNews | slice:0:visibleNewsCount">
+          <button type="button" class="news-row" (click)="openNews(newsDialog, item)">
+            <span class="news-copy">
+              <span class="news-meta">{{ item.source }} <ng-container *ngIf="item.datetime">· {{ item.datetime * 1000 | date:'MMM d, h:mm a' }}</ng-container></span>
+              <span class="news-headline">{{ item.headline }}</span>
+            </span>
+            <img *ngIf="item.image" [src]="item.image" [class.news-image--ready]="item.imageReady" alt=""
+                 loading="lazy" decoding="async" referrerpolicy="no-referrer" class="news-image"
+                 (load)="validateNewsImage($event, item)" (error)="discardNewsImage(item)">
+            <svg class="news-arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </li>
+      </ul>
+      <div class="news-more" *ngIf="topNews.length > visibleNewsCount">
+        <button type="button" class="state-action" (click)="showMoreNews()">Show more articles</button>
+      </div>
+    </section>
+
+    <section class="data-panel chart-panel" *ngIf="activeTab === 'charts' && !loadingTabs.has('charts') && !failedTabs.has('charts')" aria-labelledby="history-title">
+      <div class="panel-heading"><div><h2 id="history-title">Price history</h2><p>Daily prices and volume<ng-container *ngIf="historyEnd as point"> · through {{ point | date:'MMM d, yyyy':'+0000' }}</ng-container></p></div></div>
+      <div *ngIf="!bigChartOptions.series?.length" class="state-panel chart-state"><p>Historical prices are unavailable for this symbol.</p></div>
+      <div *ngIf="bigChartOptions.series?.length" class="history-ranges" role="group" aria-label="Historical chart date range">
+        <button *ngFor="let range of historyRanges" type="button" class="state-action"
+                [attr.aria-pressed]="historyRange === range" (click)="selectHistoryRange(range)">{{ range }}</button>
+      </div>
+      <highcharts-chart *ngIf="bigChartOptions.series?.length" [Highcharts]="Highcharts"
+                        [constructorType]="'stockChart'" [options]="bigChartOptions" class="chart chart--history"></highcharts-chart>
+      <p *ngIf="bigChartOptions.series?.length" class="panel-note">Candles show daily prices. Horizontal bars show volume by price. The lower panel shows daily volume.</p>
+    </section>
+
+    <div class="insights-grid" *ngIf="activeTab === 'insights' && !loadingTabs.has('insights') && !failedTabs.has('insights')">
+      <section class="data-panel facts-panel sentiment-panel" aria-labelledby="sentiment-title">
+        <div class="panel-heading"><div><h2 id="sentiment-title">Insider sentiment</h2><p>Reported activity · via Finnhub</p></div></div>
+        <p *ngIf="!sentiments?.data?.length" class="panel-note">Insider data is unavailable for this symbol.</p>
+        <table *ngIf="sentiments?.data?.length" class="sentiment-table">
+          <thead><tr><th scope="col">Activity</th><th scope="col">MSPR</th><th scope="col">Change</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Total</th><td>{{ calculatedSentiments.totalMspr | number }}</td><td>{{ calculatedSentiments.totalChange | number }}</td></tr>
+            <tr><th scope="row">Positive</th><td>{{ calculatedSentiments.positiveMspr | number }}</td><td>{{ calculatedSentiments.positiveChange | number }}</td></tr>
+            <tr><th scope="row">Negative</th><td>{{ calculatedSentiments.negativeMspr | number }}</td><td>{{ calculatedSentiments.negativeChange | number }}</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <section class="data-panel chart-panel" aria-labelledby="recommendations-title">
+        <div class="panel-heading"><div><h2 id="recommendations-title">Analyst recommendations</h2><p>Rating distribution by month</p></div></div>
+        <p *ngIf="!recommendations.length" class="panel-note">Analyst recommendations are unavailable.</p>
+        <highcharts-chart *ngIf="recommendations.length" [Highcharts]="Highcharts"
+                          [options]="trendChartOptions" class="chart chart--insight"></highcharts-chart>
+      </section>
+      <section class="data-panel chart-panel" aria-labelledby="earnings-title">
+        <div class="panel-heading"><div><h2 id="earnings-title">Quarterly earnings</h2><p>Actual and estimated earnings per share</p></div></div>
+        <p *ngIf="!earnings.length" class="panel-note">Quarterly earnings are unavailable.</p>
+        <highcharts-chart *ngIf="earnings.length" [Highcharts]="Highcharts"
+                          [options]="earningChartOptions" class="chart chart--insight"></highcharts-chart>
+      </section>
+    </div>
+  </section>
 
   <ng-template #tradeDialog let-modal>
     <form (ngSubmit)="submitTrade()">
       <div class="modal-header">
-        <div>
-          <p class="page-eyebrow">Paper trade</p>
-          <h2 class="modal-title" id="trade-dialog-title">{{ tradeSide === 'buy' ? 'Buy' : 'Sell' }} {{ company.ticker }}</h2>
-        </div>
+        <div><p class="research-kicker">Paper order</p><h2 class="modal-title" id="trade-dialog-title">{{ tradeSide === 'buy' ? 'Buy' : 'Sell' }} {{ company.ticker }}</h2></div>
         <button type="button" class="btn-close" aria-label="Close trade dialog" [disabled]="tradePending" (click)="modal.dismiss()"></button>
       </div>
       <div class="modal-body">
-        <p>Latest quote <strong>{{ currentStock?.c | currency:(company.currency || 'USD') }}</strong></p>
-        <p *ngIf="tradeSide === 'buy'">Buying power <strong>{{ walletLoading ? 'Loading…' : (userWalletBalance | currency:'USD') }}</strong></p>
-        <p *ngIf="tradeSide === 'sell'">Shares available <strong>{{ ownedStockQuantity }}</strong></p>
+        <dl class="trade-summary">
+          <div><dt>Latest quote</dt><dd>{{ currentStock?.c | currency:(company.currency || 'USD') }}</dd></div>
+          <div *ngIf="tradeSide === 'buy'"><dt>Buying power</dt><dd>{{ walletLoading ? 'Loading…' : (userWalletBalance | currency:'USD') }}</dd></div>
+          <div *ngIf="tradeSide === 'sell'"><dt>Shares available</dt><dd>{{ ownedStockQuantity }}</dd></div>
+        </dl>
         <label for="research-trade-quantity" class="form-label">Number of shares</label>
         <input id="research-trade-quantity" name="quantity" class="form-control" type="number" min="1" step="1"
                [(ngModel)]="tradeQuantity" [readonly]="tradePending" ngbAutofocus required>
-        <p class="mt-3 mb-1">Estimated total <strong>{{ estimatedTradeTotal | currency:(company.currency || 'USD') }}</strong></p>
-        <p class="small text-muted">Simulated orders use the latest quote at execution.</p>
+        <dl class="trade-summary"><div><dt>Estimated total</dt><dd>{{ estimatedTradeTotal | currency:(company.currency || 'USD') }}</dd></div></dl>
+        <p class="panel-note">Paper orders use the latest quote when they execute.</p>
+        <p *ngIf="tradeSide === 'buy' && walletInitialized === false" class="mt-2 mb-0">Start by initializing your paper wallet in <a routerLink="/portfolio" (click)="modal.dismiss()">Portfolio</a>.</p>
         <p *ngIf="tradeError" class="error-message" role="alert">{{ tradeError }}</p>
       </div>
       <div class="modal-footer">
@@ -108,146 +266,23 @@
     </form>
   </ng-template>
 
-  <div class="stock-lower">
-    <div class="tabs" role="group" aria-label="Company details">
-      <button type="button" class="tab" [class.active]="activeTab === 'summary'" [attr.aria-pressed]="activeTab === 'summary'" (click)="setActiveTab('summary')">Summary</button>
-      <button type="button" class="tab" [class.active]="activeTab === 'news'" [attr.aria-pressed]="activeTab === 'news'" (click)="setActiveTab('news')">Top News</button>
-      <button type="button" class="tab" [class.active]="activeTab === 'charts'" [attr.aria-pressed]="activeTab === 'charts'" (click)="setActiveTab('charts')">Charts</button>
-      <button type="button" class="tab" [class.active]="activeTab === 'insights'" [attr.aria-pressed]="activeTab === 'insights'" (click)="setActiveTab('insights')">Insights</button>
-    </div>
-
-    <p *ngIf="loadingTabs.has(activeTab)" class="tab-content search-hint" role="status">Loading this section…</p>
-    <div *ngIf="failedTabs.has(activeTab)" class="tab-content">
-      <p class="search-hint" role="alert">This section is temporarily unavailable.</p>
-      <button type="button" class="state-action" (click)="setActiveTab(activeTab)">Try again</button>
-    </div>
-
-    <div class="tab-content" *ngIf="activeTab === 'summary'">
-      <div class="summary-container">
-        <div class="left-column">
-          <div class="price-info">
-            <p class="ConstantSummarySet">High Price: <span class="SpanSummarySet">{{ currentStock?.h | number:'1.2-2' }}</span></p>
-            <p class="ConstantSummarySet">Low Price: <span class="SpanSummarySet">{{ currentStock?.l | number:'1.2-2' }}</span></p>
-            <p class="ConstantSummarySet">Open Price: <span class="SpanSummarySet">{{ currentStock?.o | number:'1.2-2' }}</span></p>
-            <p class="ConstantSummarySet">Prev. Close: <span class="SpanSummarySet">{{ currentStock?.pc | number:'1.2-2' }}</span></p>
-          </div>
-
-          <div class="company-info">
-            <h3>About the company</h3>
-            <p class="ConstantSummarySet">IPO Start Date: <span class="SpanSummarySet">{{ company.ipo || '—' }}</span></p>
-            <p class="ConstantSummarySet">Industry: <span>{{ company.finnhubIndustry || '—' }}</span></p>
-            <p class="ConstantSummarySet" *ngIf="company.weburl"><a [href]="company.weburl" id="SummaryWebPageLink" target="_blank" rel="noopener noreferrer">Company website</a></p>
-            <p class="ConstantSummarySet">Company peers:</p>
-            <a *ngFor="let peer of companyPeers" [routerLink]="['/search-details', peer]" class="peer-link">{{ peer }}</a>
-          </div>
+  <ng-template #newsDialog let-modal>
+    <ng-container *ngIf="selectedNewsItem as article">
+      <div class="modal-header">
+        <div>
+          <p class="research-kicker">{{ article.source }} <ng-container *ngIf="article.datetime">· {{ article.datetime * 1000 | date:'MMM d, yyyy' }}</ng-container></p>
+          <h2 class="modal-title" id="news-dialog-title">{{ article.headline }}</h2>
         </div>
-        <div class="right-column">
-          <div id="company-chart">
-            <p *ngIf="hourlyLoading" class="search-hint" role="status">Loading hourly prices…</p>
-            <p *ngIf="!hourlyLoading && !chartOptions.series?.length" class="search-hint">No hourly prices are available for this symbol.</p>
-            <highcharts-chart
-              *ngIf="chartOptions.series?.length"
-              [Highcharts]="Highcharts"
-              [options]="chartOptions"
-              style="width: 100%; height: 400px; display: block;">
-            </highcharts-chart>
-          </div>
-        </div>
+        <button type="button" class="btn-close" aria-label="Close news article" (click)="modal.dismiss()"></button>
       </div>
-    </div>
-    <div class="tab-content" *ngIf="activeTab === 'news' && !loadingTabs.has('news') && !failedTabs.has('news')">
-      <p *ngIf="!topNews.length" class="search-hint">No recent articles are available for this symbol.</p>
-      <div class="news-grid" *ngIf="topNews.length">
-        <button type="button" *ngFor="let newsItem of topNews" class="news-card" (click)="openNews(newsDialog, newsItem)">
-          <img [src]="newsItem.image" alt="" loading="lazy" class="news-image">
-          <span class="news-text">{{ newsItem.headline }}</span>
-        </button>
+      <div class="modal-body">
+        <p class="news-summary">{{ article.summary || 'Read the article at the publisher for the full story.' }}</p>
       </div>
-    </div>
-
-    <ng-template #newsDialog let-modal>
-      <ng-container *ngIf="selectedNewsItem as article">
-        <div class="modal-header">
-          <div>
-            <p class="page-eyebrow">{{ article.source }} · {{ article.datetime * 1000 | date:'MMM d, yyyy' }}</p>
-            <h2 class="modal-title" id="news-dialog-title">{{ article.headline }}</h2>
-          </div>
-          <button type="button" class="btn-close" aria-label="Close news article" (click)="modal.dismiss()"></button>
-        </div>
-        <div class="modal-body">
-          <p class="news-summary">{{ article.summary }}</p>
-          <a [href]="article.url" target="_blank" rel="noopener noreferrer">Read full article</a>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-outline-secondary" (click)="shareOnPlatform(article, 'twitter')">Share on X</button>
-          <button type="button" class="btn btn-outline-secondary" (click)="shareOnPlatform(article, 'facebook')">Share on Facebook</button>
-        </div>
-      </ng-container>
-    </ng-template>
-
-    <div class="tab-content" *ngIf="activeTab === 'charts' && !loadingTabs.has('charts') && !failedTabs.has('charts')">
-      <p *ngIf="!bigChartOptions.series?.length" class="search-hint">Historical chart data is unavailable for this symbol.</p>
-      <highcharts-chart
-        *ngIf="bigChartOptions.series?.length"
-        [Highcharts]="Highcharts"
-        [constructorType]="'stockChart'"
-        [options]="bigChartOptions"
-        style="width: 100%; height: 600px; display: block;">
-      </highcharts-chart>
-    </div>
-    <div class="tab-content" *ngIf="activeTab === 'insights' && !loadingTabs.has('insights') && !failedTabs.has('insights')">
-      <p *ngIf="!sentiments" class="search-hint">Insider data is unavailable for this symbol.</p>
-      <div class="insights-sentiments" *ngIf="sentiments">
-        <div class="insights-sentiments-table">
-          <h3>Insider Sentiments</h3>
-          <table class="table">
-            <thead>
-            <tr>
-              <th scope="col">{{ company.name }}</th>
-              <th scope="col">MSPR</th>
-              <th scope="col">Change</th>
-            </tr>
-            </thead>
-            <tbody>
-            <tr>
-              <td><strong>Total</strong></td>
-              <td>{{ calculatedSentiments.totalMspr | number }}</td>
-              <td>{{ calculatedSentiments.totalChange | number }}</td>
-            </tr>
-            <tr>
-              <td><strong>Positive</strong></td>
-              <td>{{ calculatedSentiments.positiveMspr | number }}</td>
-              <td>{{ calculatedSentiments.positiveChange | number }}</td>
-            </tr>
-            <tr>
-              <td><strong>Negative</strong></td>
-              <td>{{ calculatedSentiments.negativeMspr | number }}</td>
-              <td>{{ calculatedSentiments.negativeChange | number }}</td>
-            </tr>
-            </tbody>
-          </table>
-        </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" (click)="shareOnPlatform(article, 'twitter')">Share on X</button>
+        <button type="button" class="btn btn-outline-secondary" (click)="shareOnPlatform(article, 'facebook')">Share on Facebook</button>
+        <a class="btn btn-primary" [href]="article.url" target="_blank" rel="noopener noreferrer">Read at publisher ↗</a>
       </div>
-
-      <div class="insights-charts">
-        <div class="insights-chart" id="recommendation-trends-chart">
-          <highcharts-chart
-            *ngIf="recommendations.length"
-            [Highcharts]="Highcharts"
-            [options]="trendChartOptions"
-            style="width: 100%; height: 400px; display: block;">
-          </highcharts-chart>
-        </div>
-
-        <div class="insights-chart" id="historical-eps-chart">
-          <highcharts-chart
-            *ngIf="earnings.length"
-            [Highcharts]="Highcharts"
-            [options]="earningChartOptions"
-            style="width: 100%; height: 400px; display: block;">
-          </highcharts-chart>
-        </div>
-      </div>
-    </div>
-  </div>
+    </ng-container>
+  </ng-template>
 </div>

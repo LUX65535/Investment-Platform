@@ -7,12 +7,10 @@ import { catchError, debounceTime, distinctUntilChanged, finalize, map, switchMa
 import {Router} from '@angular/router';
 import {FormControl} from "@angular/forms";
 import * as Highcharts from 'highcharts/highstock';
-import HC_exporting from 'highcharts/modules/exporting';
-HC_exporting(Highcharts);
+import HC_accessibility from 'highcharts/modules/accessibility';
+HC_accessibility(Highcharts);
 import { ActivatedRoute } from '@angular/router';
-import {format, subDays} from "date-fns";
-import StockModule from 'highcharts/modules/stock';
-StockModule(Highcharts);
+import { format, subDays, subMonths } from 'date-fns';
 import volumeByPrice from 'highcharts/indicators/volume-by-price';
 import indicators from 'highcharts/indicators/indicators';
 indicators(Highcharts);
@@ -63,6 +61,7 @@ export interface CompanyProfile {
 
 export interface TopNews {
   image: string;
+  imageReady: boolean;
   headline: string;
   source: string;
   datetime: number;
@@ -102,14 +101,16 @@ export interface InsiderSummary {
 }
 
 export interface Earning {
-  actual: number;
-  estimate: number;
+  actual: number | null;
+  estimate: number | null;
   period: string;
   symbol: string;
-  surprise: number;
+  surprise: number | null;
 }
 
 type DetailTab = 'summary' | 'news' | 'charts' | 'insights';
+const historyRanges = ['1M', '3M', '6M', 'YTD', '1Y', 'All'] as const;
+type HistoryRange = typeof historyRanges[number];
 
 @Component({
   selector: 'app-search-details',
@@ -121,16 +122,30 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   filteredOptions: Observable<StockResult[]> = of([]);
   isLoading = false;
   DetailIsLoading = false;
+  quoteLoading = false;
   searchError = '';
   suggestionsError = false;
   watchlistPending = false;
   watchlistLoading = false;
   watchlistUnavailable = false;
   hourlyLoading = false;
+  hourlyFailed = false;
+  lastHourlyPoint: number | null = null;
   readonly loadingTabs = new Set<DetailTab>();
   readonly failedTabs = new Set<DetailTab>();
   private readonly loadedTabs = new Set<DetailTab>();
-  readonly exampleTickers = ['AAPL', 'MSFT', 'NVDA', 'AMZN'];
+  readonly exampleTickers = [
+    { ticker: 'AAPL', name: 'Apple' },
+    { ticker: 'MSFT', name: 'Microsoft' },
+    { ticker: 'NVDA', name: 'NVIDIA' },
+    { ticker: 'AMZN', name: 'Amazon' },
+  ];
+  readonly detailTabs: ReadonlyArray<{ id: DetailTab; label: string }> = [
+    { id: 'summary', label: 'Overview' },
+    { id: 'news', label: 'Top News' },
+    { id: 'charts', label: 'Charts' },
+    { id: 'insights', label: 'Insights' },
+  ];
   private readonly destroyRef = inject(DestroyRef);
   private searchSubscription = new Subscription();
   activeTab: DetailTab = 'summary';
@@ -154,9 +169,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
 
   topNews: TopNews[] = [];
+  visibleNewsCount = 12;
   selectedNewsItem: TopNews | null = null;
 
   bigChartOptions: Highcharts.Options = {};
+  readonly historyRanges = historyRanges;
+  historyRange: HistoryRange | null = '1M';
+  historyEnd: number | null = null;
+  private historyStart: number | null = null;
 
   earnings: Earning[] = [];
   sentiments: InsiderInsightsResponse | null = null;
@@ -182,6 +202,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   tradePending = false;
   tradeNeedsRefresh = false;
   walletLoading = false;
+  walletInitialized: boolean | undefined;
   userWalletBalance = 0;
   ownedStockQuantity = 0;
   private tradeModal?: NgbModalRef;
@@ -243,6 +264,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.tradeError = '';
     this.tradeNeedsRefresh = false;
     this.userWalletBalance = 0;
+    this.walletInitialized = undefined;
     this.walletLoading = side === 'buy';
     const tradeModal = this.modal.open(template, {
       ariaLabelledBy: 'trade-dialog-title',
@@ -261,7 +283,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         takeUntil(tradeModal.hidden),
         finalize(() => { if (this.tradeModal === tradeModal) this.walletLoading = false; })
       ).subscribe({
-        next: ({ balance }) => { if (this.tradeModal === tradeModal) this.userWalletBalance = balance; },
+        next: ({ balance, initialized }) => {
+          if (this.tradeModal !== tradeModal) return;
+          this.userWalletBalance = balance;
+          this.walletInitialized = initialized;
+        },
         error: () => {
           if (this.tradeModal === tradeModal) this.tradeError = 'Could not load your balance. Close this dialog and try again.';
         }
@@ -278,7 +304,9 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const price = this.currentStock?.c ?? 0;
     return this.supportsPaperTrade && !this.tradePending && !this.tradeNeedsRefresh && !this.walletLoading && price > 0
       && Number.isSafeInteger(quantity) && quantity > 0
-      && (this.tradeSide === 'buy' ? this.estimatedTradeTotal <= this.userWalletBalance : quantity <= this.ownedStockQuantity);
+      && (this.tradeSide === 'buy'
+        ? this.walletInitialized !== false && this.estimatedTradeTotal <= this.userWalletBalance
+        : quantity <= this.ownedStockQuantity);
   }
 
   submitTrade(): void {
@@ -320,141 +348,140 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   createInsightChart(): void {
-    const earningsData = this.earnings;
-    const earningPeriods = earningsData.map(earn => earn.period);
-    const actualData = earningsData.map(earn => earn.actual);
-    const estimateData = earningsData.map(earn => earn.estimate);
+    const earnings = [...this.earnings].sort((a, b) => a.period.localeCompare(b.period)).slice(-6);
+    const trends = [...this.recommendations].sort((a, b) => a.period.localeCompare(b.period)).slice(-6);
+    const ticker = this.lastSuccessfulSearch ?? '';
+    const shared: Highcharts.Options = {
+      chart: { backgroundColor: 'transparent', animation: false, style: { fontFamily: 'inherit' } },
+      title: { text: '' },
+      legend: { enabled: true, itemStyle: { fontSize: '11px', color: '#50635b' } },
+      plotOptions: { series: { animation: false } },
+      tooltip: { shared: true },
+      exporting: { enabled: false },
+    };
+    const monthLabel = (value: string) => {
+      const date = new Date(value + 'T00:00:00Z');
+      return Number.isFinite(date.getTime())
+        ? new Intl.DateTimeFormat('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' }).format(date)
+        : value;
+    };
+    const quarterLabel = (value: string) => {
+      const month = Number(value.slice(5, 7));
+      return `Q${Math.ceil(month / 3)} ’${value.slice(2, 4)}`;
+    };
+
     this.earningChartOptions = {
-      chart: {
-        backgroundColor: '#f8f9fa',
-        type: 'spline'
-      },
-      title: {
-        text: `Historical EPS Surprises`
-      },
-
-      xAxis: {
-        categories: earningPeriods,
-        labels: {
-          align: 'center',
-          formatter: function () {
-            const earning = earningsData.find(earn => earn.period === this.value);
-            return `${this.value}<br/>Surprise: ${earning ? earning.surprise : 'N/A'}`;
-          },
-          useHTML: true
-        }
-      },
-      legend: {
-        enabled: true
-      },
-
-      yAxis: {
-        title: {
-          text: 'Quarterly EPS'
-        }
-      },
-      exporting: {
-        enabled: false,
-      },
-      series: [{
-        type: 'spline',
-        name: 'Actual',
-        data: actualData,
-        color: '#7cb5ec'
-      }, {
-        type: 'spline',
-        name: 'Estimate',
-        data: estimateData,
-        color: '#434348'
-      }]
-    };
-
-
-    // Below left chart
-    const colors = {
-      'Strong Buy': '#186f37',
-      'Buy': '#1fba55',
-      'Hold': '#ba8b1d',
-      'Sell': '#f45b5d',
-      'Strong Sell': '#702f30'
-    };
-    const trendCategories = this.recommendations.map(trend => trend.period);
-    interface CategoryData {
-      'Strong Buy': number[];
-      'Buy': number[];
-      'Hold': number[];
-      'Sell': number[];
-      'Strong Sell': number[];
-    }
-    const categoryData: CategoryData = {
-      'Strong Buy': [],
-      'Buy': [],
-      'Hold': [],
-      'Sell': [],
-      'Strong Sell': []
-    };
-
-    this.recommendations.forEach(trend => {
-      categoryData['Strong Buy'].push(trend.strongBuy);
-      categoryData['Buy'].push(trend.buy);
-      categoryData['Hold'].push(trend.hold);
-      categoryData['Sell'].push(trend.sell);
-      categoryData['Strong Sell'].push(trend.strongSell);
-    });
-    const series = Object.entries(categoryData).map(([categoryName, data]) => {
-      return {
-        name: categoryName,
-        data: data,
-        color: colors[categoryName as keyof typeof colors]
-      };
-    });
-
-    this.trendChartOptions = {
-      chart: {
-        backgroundColor: '#f8f9fa',
-        type: 'column'
-      },
-      rangeSelector: {
-        selected: 1
-      },
-      title: {
-        text: `Recommendation Trends`
-      },
-      xAxis: {
-        categories: trendCategories
-      },
-      legend: {
-        enabled: true
-      },
-
-      yAxis: {
-        min: 0,
-        title: {
-          text: '#Analysis'
+      ...shared,
+      accessibility: { landmarkVerbosity: 'one', description: `Quarterly reported and estimated earnings per share for ${ticker}.` },
+      lang: { accessibility: { chartContainerLabel: 'Quarterly earnings chart' } },
+      xAxis: { categories: earnings.map(earning => quarterLabel(earning.period)), labels: { autoRotation: [] } },
+      yAxis: { title: { text: '' }, gridLineColor: '#e7ede9' },
+      tooltip: { shared: true, valueDecimals: 2 },
+      series: [
+        {
+          type: 'line', name: 'Actual EPS', color: '#116b50',
+          data: earnings.map(earning => ({
+            y: earning.actual,
+            custom: { surprise: earning.surprise?.toFixed(2) ?? '—' },
+          })),
+          tooltip: { pointFormat: '{series.name}: <b>{point.y}</b> · Surprise: {point.custom.surprise}<br/>' },
         },
+        { type: 'line', name: 'Estimated EPS', color: '#687d78', dashStyle: 'ShortDash', data: earnings.map(earning => earning.estimate) },
+      ],
+    };
 
-      },
-      plotOptions: {
-        column: {
-          stacking: 'normal',
-          dataLabels: {
-            enabled: true
-          }
-        }
-      },
-      exporting: {
-        enabled: false,
-      },
-      series: series as Highcharts.SeriesOptionsType[],
+    const ratings = [
+      { name: 'Strong buy', color: '#116b50', values: trends.map(trend => trend.strongBuy) },
+      { name: 'Buy', color: '#4f947b', values: trends.map(trend => trend.buy) },
+      { name: 'Hold', color: '#be8a40', values: trends.map(trend => trend.hold) },
+      { name: 'Sell', color: '#ba6368', values: trends.map(trend => trend.sell) },
+      { name: 'Strong sell', color: '#893d4b', values: trends.map(trend => trend.strongSell) },
+    ];
+    this.trendChartOptions = {
+      ...shared,
+      accessibility: { landmarkVerbosity: 'one', description: `Monthly distribution of analyst ratings for ${ticker}.` },
+      lang: { accessibility: { chartContainerLabel: 'Analyst recommendations chart' } },
+      xAxis: { categories: trends.map(trend => monthLabel(trend.period)), labels: { autoRotation: [] } },
+      yAxis: { min: 0, allowDecimals: false, title: { text: '' }, gridLineColor: '#e7ede9' },
+      plotOptions: { ...shared.plotOptions, column: { stacking: 'normal', borderWidth: 0 } },
+      series: ratings.map(rating => ({ type: 'column', name: rating.name, color: rating.color, data: rating.values })),
     };
   }
-
 
   getTopNews(ticker: string): Observable<TopNews[]> {
-    const url = `/company_news?symbol=${ticker}`;
-    return this.http.get<TopNews[]>(url);
+    return this.http.get<unknown>('/company_news', { params: { symbol: ticker } }).pipe(
+      map(payload => {
+        if (!Array.isArray(payload)) throw new Error('Unexpected news response');
+
+        const seenUrls = new Set<string>();
+        const seenHeadlines = new Set<string>();
+        const imageCounts = new Map<string, number>();
+        const articles: TopNews[] = [];
+        for (const item of payload) {
+          const headline = this.newsText(item?.headline);
+          const url = this.httpsUrl(item?.url);
+          const key = headline.toLowerCase();
+          if (!headline || !url || seenUrls.has(url) || seenHeadlines.has(key)) continue;
+          seenUrls.add(url);
+          seenHeadlines.add(key);
+
+          const image = this.httpsUrl(item.image);
+          if (image) imageCounts.set(image, (imageCounts.get(image) ?? 0) + 1);
+          articles.push({
+            headline, url, image, imageReady: false,
+            source: this.newsText(item.source) || new URL(url).hostname,
+            summary: this.newsText(item.summary),
+            datetime: Number.isFinite(item.datetime) && item.datetime > 0 && item.datetime < 4_102_444_800
+              ? item.datetime : 0,
+          });
+        }
+
+        return articles.sort((a, b) => b.datetime - a.datetime).slice(0, 40).map(article => {
+          if ((imageCounts.get(article.image) ?? 0) > 2) article.image = '';
+          return article;
+        });
+      })
+    );
+  }
+
+  private newsText(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private httpsUrl(value: unknown): string {
+    if (typeof value !== 'string' || !value.trim()) return '';
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' && !url.username && !url.password ? url.href : '';
+    } catch {
+      return '';
+    }
+  }
+
+  validateNewsImage(event: Event, article: TopNews): void {
+    const image = event.target as HTMLImageElement;
+    const ratio = image.naturalWidth / image.naturalHeight;
+    if (image.naturalWidth < 160 || image.naturalHeight < 90 || ratio > 3.5 || ratio < .65) {
+      this.discardNewsImage(article);
+    } else {
+      article.imageReady = true;
+    }
+  }
+
+  discardNewsImage(article: TopNews): void {
+    article.image = '';
+    article.imageReady = false;
+  }
+
+  showMoreNews(): void {
+    const firstNewItem = this.visibleNewsCount + 1;
+    this.visibleNewsCount += 12;
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLButtonElement>(`.news-list li:nth-child(${firstNewItem}) .news-row`)?.focus();
+    });
   }
   openNews(template: TemplateRef<unknown>, newsItem: TopNews): void {
+    if (this.newsModal) return;
     this.selectedNewsItem = newsItem;
     this.newsModal = this.modal.open(template, {
       ariaLabelledBy: 'news-dialog-title',
@@ -479,17 +506,13 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   getEarnings(ticker: string): Observable<Earning[]> {
-    const url = `/company_Earning?symbol=${ticker}`;
-    return this.http.get<Earning[]>(url).pipe(
-      map(earningsArray =>
-        earningsArray.map(earning => ({
-          actual: earning.actual === null ? 0 : earning.actual,
-          estimate: earning.estimate === null ? 0 : earning.estimate,
-          period: earning.period,
-          symbol: earning.symbol,
-          surprise: earning.surprise,
-        }))
-      )
+    return this.http.get<Earning[]>('/company_Earning', { params: { symbol: ticker } }).pipe(
+      map(rows => rows.filter(row => /^\d{4}-\d{2}-\d{2}$/.test(row?.period)).map(row => ({
+        ...row,
+        actual: Number.isFinite(row.actual) ? row.actual : null,
+        estimate: Number.isFinite(row.estimate) ? row.estimate : null,
+        surprise: Number.isFinite(row.surprise) ? row.surprise : null,
+      }))),
     );
   }
 
@@ -532,10 +555,15 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     return this.http.get<Trend[]>(url);
   }
   getBigChartData(ticker: string): Observable<{ results: AggregateBarResponse[] }> {
-    return this.http.get<{ results: AggregateBarResponse[] }>(`/company_data?symbol=${ticker}`);
+    return this.http.get<{ results: AggregateBarResponse[] }>('/company_data', { params: { symbol: ticker } });
   }
   createBigChart(data: { results: AggregateBarResponse[] }, ticker: string): Highcharts.Options {
-    const ohlc = data.results.map(bar => [
+    const bars = data.results.filter(bar => bar && [bar.t, bar.o, bar.h, bar.l, bar.c, bar.v].every(Number.isFinite))
+      .sort((a, b) => a.t - b.t);
+    if (!bars.length) return {};
+    this.historyStart = bars[0].t;
+    this.historyEnd = bars[bars.length - 1].t;
+    const ohlc = bars.map(bar => [
       bar.t,
       bar.o,
       bar.h,
@@ -543,49 +571,27 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       bar.c
     ]);
 
-    const volume = data.results.map(bar => [bar.t, bar.v]);
+    const volume = bars.map(bar => [bar.t, bar.v]);
 
     const chartOptions: Highcharts.Options = {
-      rangeSelector: {
-        buttons: [{
-          type: 'month',
-          count: 1,
-          text: '1m'
-        },{
-          type: 'month',
-          count: 3,
-          text: '3m'
-        },{
-          type: 'month',
-          count: 6,
-          text: '6m'
-        },{
-          type: 'ytd',
-          text: 'YTD',
-        }, {
-          type: 'year',
-          count: 1,
-          text: '1y'
-        },
-          {
-            type: 'all',
-            text: 'All'
-          }],
-        selected: 5,
-        inputEnabled: true,
-        enabled: true
+      chart: {
+        animation: false,
+        backgroundColor: 'transparent',
+        marginRight: 54,
+        style: { fontFamily: 'inherit' },
+        events: { load() { this.container.querySelector('svg')?.setAttribute('aria-label', `${ticker} historical prices and trading volume`); } },
       },
-      title: {
-        text: `${ticker} Historical`
-      },
-      subtitle: {
-        text: 'With SMA and Volume by Price technical indicators'
-      },
+      rangeSelector: { enabled: false },
+      title: { text: '' },
+      plotOptions: { series: { animation: false } },
       legend: {
         enabled: false
       },
       xAxis: {
         type: 'datetime',
+        min: this.historyRangeStart('1M'),
+        max: this.historyEnd,
+        events: { afterSetExtremes: event => { if (event.trigger === 'navigator') this.historyRange = null; } },
         dateTimeLabelFormats: {
           month: '%b \'%y',
           day: '%e %b',
@@ -595,11 +601,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         startOnTick: false,
         endOnTick: false,
         labels: {
-          align: 'right',
-          x: -3
+          align: 'left',
+          x: 5
         },
         title: {
-          text: 'OHLC'
+          text: undefined
         },
         height: '60%',
         lineWidth: 2,
@@ -608,11 +614,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         }
       }, {
         labels: {
-          align: 'right',
-          x: -3
+          align: 'left',
+          x: 5
         },
         title: {
-          text: 'Volume'
+          text: undefined
         },
         top: '65%',
         height: '35%',
@@ -621,7 +627,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       }],
 
       tooltip: {
-        split: true,
+        split: false,
         xDateFormat: '%A, %d %b %Y',
       },
       exporting: {
@@ -633,15 +639,21 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         name: `${ticker}`,
         id: 'aapl',
         zIndex: 2,
+        color: '#a43c47',
+        upColor: '#116b50',
+        lineColor: '#a43c47',
+        upLineColor: '#116b50',
         data: ohlc
       }, {
         type: 'column',
         name: 'Volume',
         id: 'volume',
+        color: '#87b6a3',
         data: volume,
         yAxis: 1
       }, {
         type: 'vbp',
+        name: 'Volume by price',
         linkedTo: 'aapl',
         params: {
           volumeSeriesID: 'volume'
@@ -651,11 +663,18 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         },
         zoneLines: {
           enabled: false
+        },
+        volumeDivision: {
+          styles: {
+            positiveColor: 'rgba(17, 107, 80, .24)',
+            negativeColor: 'rgba(164, 60, 71, .20)',
+          },
         }
       }, {
         type: 'sma',
         linkedTo: 'aapl',
         zIndex: 1,
+        color: '#677a72',
         marker: {
           enabled: false
         }
@@ -663,20 +682,42 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       navigator: {
         enabled: true,
         series: {
-          color: 'blue',
+          color: '#116b50',
           fillColor: {
             linearGradient: {
               x1: 0, y1: 0, x2: 0, y2: 1
             },
             stops: [
-              [0, 'rgba(124, 181, 236, 1)'],
-              [1, 'rgba(124, 181, 236, 0.1)']
+              [0, 'rgba(17, 107, 80, .32)'],
+              [1, 'rgba(17, 107, 80, .06)']
             ]
           },
         },
       },
+      responsive: {
+        rules: [{ condition: { maxWidth: 425 }, chartOptions: { navigator: { enabled: false }, scrollbar: { enabled: false } } }],
+      },
     };
     return chartOptions;
+  }
+
+  private historyRangeStart(range: HistoryRange): number | undefined {
+    if (this.historyStart === null || this.historyEnd === null) return undefined;
+    const end = new Date(this.historyEnd);
+    const months = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12 };
+    const start = range === 'All' ? this.historyStart
+      : range === 'YTD' ? Date.UTC(end.getUTCFullYear(), 0, 1)
+      : subMonths(end, months[range]).getTime();
+    return Math.max(this.historyStart, start);
+  }
+
+  selectHistoryRange(range: HistoryRange): void {
+    if (this.historyEnd === null) return;
+    this.historyRange = range;
+    this.bigChartOptions = {
+      ...this.bigChartOptions,
+      xAxis: { ...this.bigChartOptions.xAxis, min: this.historyRangeStart(range), max: this.historyEnd },
+    };
   }
 
   getHistoricalData(ticker: string, quote: QuoteResponse): Observable<AggregateBarResponse[]> {
@@ -691,22 +732,18 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   createChart(data: AggregateBarResponse[]): void {
-    const seriesData = data.map(point => [point.t, point.c]);
-
-    const stockColor = this.currentStock ? this.getChangeColor(this.currentStock) : 'black';
+    const seriesData = data.map(point => [point.t, point.c]).sort((a, b) => a[0] - b[0]);
+    const ticker = this.lastSuccessfulSearch ?? '';
+    this.lastHourlyPoint = seriesData.at(-1)?.[0] ?? null;
 
     this.chartOptions = {
-      rangeSelector: {
-        selected: 1
-      },
-      title: {
-        text: `${this.lastSuccessfulSearch} hourly price`
-      },
+      title: { text: '' },
       legend: {
         enabled: false
       },
       plotOptions: {
         series: {
+          animation: false,
           marker: {
             enabled: false
           }
@@ -714,6 +751,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       },
       xAxis: {
         type: 'datetime',
+        tickPixelInterval: 96,
         dateTimeLabelFormats: {
           hour: '%H:%M',
         }
@@ -721,19 +759,30 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       yAxis: {
         title: {
           text: null
-        }
+        },
+        gridLineColor: '#e7ede9',
+        opposite: true,
+        labels: { x: 6 },
       },
       chart: {
-        backgroundColor: '#F5F5F5',
+        animation: false,
+        backgroundColor: 'transparent',
+        style: { fontFamily: 'inherit' },
+        events: { load() { this.container.querySelector('svg')?.setAttribute('aria-label', `${ticker} hourly closing price chart`); } },
       },
       exporting: {
         enabled: false,
       },
       series: [{
-        name: `${this.lastSuccessfulSearch}`,
+        name: ticker,
         data: seriesData,
-        type: 'spline',
-        color: stockColor,
+        type: 'area',
+        color: '#116b50',
+        fillColor: {
+          linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+          stops: [[0, 'rgba(17, 107, 80, .20)'], [1, 'rgba(17, 107, 80, .01)']],
+        },
+        threshold: null,
         tooltip: {
           valueDecimals: 2
         }
@@ -820,6 +869,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.failedTabs.clear();
     this.lastSuccessfulSearch = null;
     this.DetailIsLoading = false;
+    this.quoteLoading = false;
     this.searchError = '';
     this.searchResults = null;
     this.currentStock = null;
@@ -827,7 +877,10 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.watchlistUnavailable = false;
     this.companyPeers = [];
     this.hourlyLoading = false;
+    this.hourlyFailed = false;
+    this.lastHourlyPoint = null;
     this.topNews = [];
+    this.visibleNewsCount = 12;
     this.earnings = [];
     this.recommendations = [];
     this.sentiments = null;
@@ -838,6 +891,9 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.selectedNewsItem = null;
     this.chartOptions = {};
     this.bigChartOptions = {};
+    this.historyRange = '1M';
+    this.historyStart = null;
+    this.historyEnd = null;
     this.trendChartOptions = {};
     this.earningChartOptions = {};
     this.closeConfirmation();
@@ -853,11 +909,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }
 
     this.DetailIsLoading = true;
-    this.searchSubscription.add(forkJoin({
-      profile: this.getStockDetails(ticker),
-      quote: this.getLatestQuote(ticker).pipe(catchError(() => of(null))),
-    }).pipe(finalize(() => this.DetailIsLoading = false)).subscribe({
-      next: ({ profile, quote }) => {
+    this.quoteLoading = true;
+    this.searchSubscription.add(this.getStockDetails(ticker).pipe(
+      finalize(() => this.DetailIsLoading = false),
+    ).subscribe({
+      next: profile => {
         if (!profile?.ticker) {
           this.searchError = `No company found for ${ticker}. Try another ticker.`;
           return;
@@ -865,7 +921,6 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
         this.lastSuccessfulSearch = ticker;
         this.searchResults = profile;
-        this.currentStock = quote;
         this.loadSummary(ticker);
         this.checkWatchlistStatus();
         this.refreshHolding(ticker);
@@ -875,6 +930,13 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
           ? `No company found for ${ticker}. Try another ticker.`
           : 'Company data is temporarily unavailable. Please try again.';
       }
+    }));
+    this.searchSubscription.add(this.getLatestQuote(ticker).pipe(
+      catchError(() => of(null)),
+      finalize(() => this.quoteLoading = false),
+    ).subscribe(quote => {
+      this.currentStock = quote;
+      if (quote && this.lastSuccessfulSearch === ticker) this.loadHourly(ticker);
     }));
   }
 
@@ -887,14 +949,37 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   private loadHourly(ticker: string): void {
-    if (!this.currentStock) return;
+    if (!this.currentStock || this.hourlyLoading) return;
     this.hourlyLoading = true;
+    this.hourlyFailed = false;
     this.searchSubscription.add(this.getHistoricalData(ticker, this.currentStock).pipe(
       finalize(() => this.hourlyLoading = false),
     ).subscribe({
       next: hourly => { if (hourly.length) this.createChart(hourly); },
-      error: () => this.chartOptions = {},
+      error: () => this.hourlyFailed = true,
     }));
+  }
+
+  retryHourly(): void {
+    if (this.lastSuccessfulSearch) this.loadHourly(this.lastSuccessfulSearch);
+  }
+
+  handleTabKey(event: KeyboardEvent, index: number): void {
+    const count = this.detailTabs.length;
+    const next = event.key === 'ArrowRight' ? (index + 1) % count
+      : event.key === 'ArrowLeft' ? (index + count - 1) % count
+      : event.key === 'Home' ? 0
+      : event.key === 'End' ? count - 1 : null;
+    if (next === null) return;
+    event.preventDefault();
+    this.setActiveTab(this.detailTabs[next].id);
+    const tab = event.currentTarget as HTMLButtonElement;
+    tab.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+  }
+
+  openHistory(): void {
+    this.setActiveTab('charts');
+    document.getElementById('research-tab-charts')?.focus();
   }
 
   setActiveTab(tabName: DetailTab): void {
@@ -907,13 +992,11 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     let request: Observable<unknown>;
     switch (tabName) {
       case 'news':
-        request = this.getTopNews(ticker).pipe(tap(news => {
-          this.topNews = news.filter(article => article.image).slice(0, 20);
-        }));
+        request = this.getTopNews(ticker).pipe(tap(news => this.topNews = news));
         break;
       case 'charts':
         request = this.getBigChartData(ticker).pipe(tap(daily => {
-          if (daily?.results?.length) this.bigChartOptions = this.createBigChart(daily, ticker);
+          if (Array.isArray(daily?.results) && daily.results.length) this.bigChartOptions = this.createBigChart(daily, ticker);
         }));
         break;
       case 'insights':
@@ -940,9 +1023,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   clearSearch(): void {
-    this.resetSearch();
     this.tickerFormControl.setValue('');
-    void this.router.navigate(['/search-details']);
+    this.searchError = '';
   }
 
   checkWatchlistStatus(): void {

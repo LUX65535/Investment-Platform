@@ -1,107 +1,162 @@
-<header class="page-heading">
-  <p class="page-eyebrow">Paper trading</p>
-  <h1>Portfolio</h1>
-  <p>Track positions, cash, and performance in a simulated portfolio.</p>
+<header class="page-heading portfolio-heading">
+  <div>
+    <p class="page-eyebrow">Paper trading</p>
+    <h1>Portfolio</h1>
+    <p>Monitor your positions, buying power and unrealized returns.</p>
+  </div>
+  <span class="demo-badge">Simulated account · USD</span>
 </header>
 
-<section class="portfolio-metrics" aria-label="Portfolio overview">
-  <div class="portfolio-metric">
-    <span>Cash balance</span>
-    <strong>{{ cashBalance === null ? (isLoading ? 'Loading…' : 'Unavailable') : (cashBalance | currency:'USD') }}</strong>
-  </div>
-  <div class="portfolio-metric">
-    <span>Market value</span>
-    <strong>{{ marketValue === null || (isLoading && !portfolio.length) || (loadError && !portfolio.length) ? '—' : (marketValue | currency:'USD') }}</strong>
-  </div>
-  <div class="portfolio-metric">
-    <span>Open positions</span>
-    <strong>{{ (isLoading || loadError) && !portfolio.length ? '—' : portfolio.length }}</strong>
-  </div>
+<section class="portfolio-overview" aria-label="Portfolio overview" [attr.aria-busy]="isLoading">
+  <dl class="portfolio-metrics">
+    <div class="portfolio-metric primary-metric">
+      <dt>Account value</dt>
+      <dd>{{ accountValue === null ? '—' : (accountValue | currency:'USD') }}</dd>
+    </div>
+    <div class="portfolio-metric">
+      <dt>Available cash</dt>
+      <dd>{{ cashBalance === null ? '—' : (cashBalance | currency:'USD') }}</dd>
+    </div>
+    <div class="portfolio-metric">
+      <dt>Holdings value</dt>
+      <dd>{{ marketValue === null ? '—' : (marketValue | currency:'USD') }}</dd>
+    </div>
+    <div class="portfolio-metric">
+      <dt>Unrealized P&amp;L</dt>
+      <dd [class.positive]="unrealizedProfit !== null && unrealizedProfit > 0"
+          [class.negative]="unrealizedProfit !== null && unrealizedProfit < 0">
+        {{ unrealizedProfit !== null && unrealizedProfit > 0 ? '+' : '' }}{{ unrealizedProfit === null ? '—' : (unrealizedProfit | currency:'USD') }}
+      </dd>
+    </div>
+  </dl>
+  <p *ngIf="holdingsCurrent && portfolio.length && marketValue === null" class="quote-coverage" role="status">
+    {{ quotesPending ? 'Valuation in progress.' : 'Some quotes are unavailable.' }}
+    {{ quotedCount }} of {{ portfolio.length }} positions priced.
+  </p>
 </section>
 
-<section aria-label="Positions" [attr.aria-busy]="isLoading">
-  <div class="top-bar">
-    <h2>Positions</h2>
+<section class="positions-panel" aria-labelledby="positions-title" [attr.aria-busy]="isLoading">
+  <div class="panel-header">
+    <div>
+      <h2 id="positions-title">Positions</h2>
+      <p *ngIf="holdingsCurrent">{{ portfolio.length }} open {{ portfolio.length === 1 ? 'position' : 'positions' }}</p>
+    </div>
     <div class="portfolio-toolbar">
-      <button type="button" class="state-action" [disabled]="isLoading || isInitializing"
-              (click)="loadPortfolio()">Refresh</button>
-      <button *ngIf="walletInitialized === false" type="button" class="btn-primary-lg"
-              [disabled]="isLoading || isInitializing" (click)="onInitializeWallet()">
-        {{ isInitializing ? 'Initializing…' : 'Initialize demo wallet' }}
+      <button type="button" class="state-action" [attr.aria-disabled]="isLoading || isInitializing"
+              (click)="!isInitializing && loadPortfolio()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 7v5h-5M4 17v-5h5m10.6 0a7.6 7.6 0 0 0-13-5.4L4 9m16 6-2.6 2.4a7.6 7.6 0 0 1-13-5.4"/>
+        </svg>
+        <span>Refresh</span>
       </button>
+      <a class="state-action research-action" routerLink="/search-details">Find stocks</a>
     </div>
   </div>
 
-  <p *ngIf="statusMessage" class="state-message" role="status">{{ statusMessage }}</p>
-  <p *ngIf="actionError" class="state-message state-message--error" role="alert">{{ actionError }}</p>
-  <p *ngIf="loadError" class="state-message state-message--error" role="alert">{{ loadError }}</p>
+  <div *ngIf="statusMessage || actionError || loadError" class="panel-messages">
+    <p *ngIf="statusMessage" class="state-message" role="status">{{ statusMessage }}</p>
+    <p *ngIf="actionError" class="state-message state-message--error" role="alert">{{ actionError }}</p>
+    <p *ngIf="loadError" class="state-message state-message--error" role="alert">{{ loadError }}</p>
+  </div>
+
   <div *ngIf="isLoading" class="status-loading" role="status">
-    <mat-spinner diameter="26" aria-hidden="true"></mat-spinner>
+    <mat-spinner diameter="22" aria-hidden="true"></mat-spinner>
     {{ portfolio.length ? 'Refreshing positions…' : 'Loading positions…' }}
   </div>
 
-  <div *ngIf="!isLoading && !loadError && !portfolio.length" class="empty-state">
-    <span class="empty-state-icon" aria-hidden="true">↗</span>
-    <h2>No positions yet</h2>
-    <p>Find a company and place a simulated buy to start building your portfolio.</p>
+  <div *ngIf="!isLoading && walletInitialized === false" class="wallet-setup">
+    <div>
+      <h3>Activate your demo wallet</h3>
+      <p>Start with simulated cash to practice placing orders.</p>
+    </div>
+    <button type="button" class="btn-primary-lg" [attr.aria-disabled]="isInitializing" (click)="onInitializeWallet()">
+      {{ isInitializing ? 'Initializing…' : 'Initialize demo wallet' }}
+    </button>
+  </div>
+
+  <div *ngIf="!isLoading && !loadError && !portfolio.length && walletInitialized !== false" class="empty-state portfolio-empty">
+    <span class="empty-state-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+           stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V4h8v3M3 12h18m-10 0v2h2v-2"/></svg>
+    </span>
+    <h3>No positions yet</h3>
+    <p>Open a company’s research page and place a simulated buy to add your first position.</p>
     <a class="state-action" routerLink="/search-details">Explore stocks</a>
   </div>
 
-  <div *ngIf="portfolio.length" class="portfolio-grid">
-    <article *ngFor="let stock of portfolio; trackBy: trackByTicker" class="stock-card">
-      <header class="stock-card__header">
-        <a class="stock-card__ticker" [routerLink]="['/search-details', stock.ticker]">{{ stock.ticker }}</a>
-        <span class="stock-card__name">{{ stock.name || 'Equity position' }}</span>
-      </header>
-
-      <div class="stock-card__body">
-        <div class="stock-card__row">
-          <span>Shares</span>
+  <table *ngIf="portfolio.length" class="positions-table" role="table">
+    <caption class="visually-hidden">Open positions with prices, costs and unrealized returns</caption>
+    <thead role="rowgroup">
+      <tr role="row">
+        <th scope="col" role="columnheader">Symbol</th>
+        <th scope="col" role="columnheader">Shares</th>
+        <th scope="col" role="columnheader">Avg. cost</th>
+        <th scope="col" role="columnheader">Cost basis</th>
+        <th scope="col" role="columnheader">Last price</th>
+        <th scope="col" role="columnheader">Day change</th>
+        <th scope="col" role="columnheader">Market value</th>
+        <th scope="col" role="columnheader">Unrealized P&amp;L</th>
+        <th scope="col" role="columnheader"><span class="visually-hidden">Trade actions</span></th>
+      </tr>
+    </thead>
+    <tbody role="rowgroup">
+      <tr *ngFor="let stock of portfolio; trackBy: trackByTicker" role="row">
+        <th scope="row" role="rowheader" class="holding-company">
+          <a class="holding-link" [routerLink]="['/search-details', stock.ticker]">
+            <span class="holding-ticker">{{ stock.ticker }}</span>
+            <span *ngIf="stock.name" class="holding-name">{{ stock.name }}</span>
+          </a>
+        </th>
+        <td role="cell">
+          <span class="mobile-label" aria-hidden="true">Shares</span>
           <strong>{{ stock.quantity | number }}</strong>
-        </div>
-        <div class="stock-card__row">
-          <span>Average cost</span>
+        </td>
+        <td role="cell">
+          <span class="mobile-label" aria-hidden="true">Avg. cost</span>
           <strong>{{ stock.quantity > 0 ? (stock.totalCost / stock.quantity | currency:'USD') : '—' }}</strong>
-        </div>
-        <div class="stock-card__row">
-          <span>Cost basis</span>
+        </td>
+        <td role="cell">
+          <span class="mobile-label" aria-hidden="true">Cost basis</span>
           <strong>{{ stock.totalCost | currency:'USD' }}</strong>
-        </div>
-        <div class="stock-card__row">
-          <span>Day change</span>
-          <span *ngIf="stock.change !== null; else missingChange" class="chip"
-                [class.chip--up]="stock.change > 0" [class.chip--down]="stock.change < 0">
+        </td>
+        <td role="cell">
+          <span class="mobile-label" aria-hidden="true">Last price</span>
+          <strong *ngIf="stock.price !== null; else unavailablePrice">{{ stock.price | currency:'USD' }}</strong>
+          <ng-template #unavailablePrice><span class="unavailable">{{ stock.quotePending ? 'Loading…' : 'Unavailable' }}</span></ng-template>
+        </td>
+        <td role="cell">
+          <span class="mobile-label" aria-hidden="true">Day change</span>
+          <strong *ngIf="stock.change !== null; else unavailableChange"
+                  [class.positive]="stock.change > 0" [class.negative]="stock.change < 0">
             {{ stock.change > 0 ? '+' : '' }}{{ stock.change | number:'1.2-2' }}%
-          </span>
-          <ng-template #missingChange><strong>—</strong></ng-template>
-        </div>
-        <div class="stock-card__row">
-          <span>Latest price</span>
-          <strong>{{ stock.quotePending ? 'Loading…' : (stock.price === null ? 'Unavailable' : (stock.price | currency:'USD')) }}</strong>
-        </div>
-        <div class="stock-card__row">
-          <span>Market value</span>
+          </strong>
+          <ng-template #unavailableChange><span class="unavailable" aria-label="Day change unavailable">—</span></ng-template>
+        </td>
+        <td role="cell">
+          <span class="mobile-label" aria-hidden="true">Market value</span>
           <strong>{{ stock.price === null ? '—' : (stock.quantity * stock.price | currency:'USD') }}</strong>
-        </div>
-        <div class="stock-card__row">
-          <span>Unrealized P&amp;L</span>
+        </td>
+        <td role="cell" class="holding-profit">
+          <span class="mobile-label" aria-hidden="true">Unrealized P&amp;L</span>
           <strong [class.positive]="stock.price !== null && stock.quantity * stock.price > stock.totalCost"
                   [class.negative]="stock.price !== null && stock.quantity * stock.price < stock.totalCost">
-            {{ stock.price === null ? '—' : (stock.quantity * stock.price - stock.totalCost | currency:'USD') }}
+            {{ stock.price !== null && stock.quantity * stock.price > stock.totalCost ? '+' : '' }}{{ stock.price === null ? '—' : (stock.quantity * stock.price - stock.totalCost | currency:'USD') }}
           </strong>
-        </div>
-      </div>
+        </td>
+        <td class="holding-trades" role="cell">
+          <div class="holding-actions">
+            <button type="button" class="holding-action" [attr.aria-label]="'Buy ' + stock.ticker"
+                    [disabled]="!canOpenTrade(stock, 'buy')" (click)="openTrade(stock, 'buy')">Buy</button>
+            <button type="button" class="holding-action" [attr.aria-label]="'Sell ' + stock.ticker"
+                    [disabled]="!canOpenTrade(stock, 'sell')" (click)="openTrade(stock, 'sell')">Sell</button>
+          </div>
+        </td>
+      </tr>
+    </tbody>
+  </table>
 
-      <footer class="stock-card__actions">
-        <button type="button" class="btn-icon success" [attr.aria-label]="'Buy ' + stock.ticker"
-                [disabled]="isLoading || isInitializing || !holdingsCurrent || !walletInitialized || stock.price === null || cashBalance === null || cashBalance <= 0"
-                (click)="openTrade(stock, 'buy')">Buy</button>
-        <button type="button" class="btn-icon danger" [attr.aria-label]="'Sell ' + stock.ticker"
-                [disabled]="isLoading || isInitializing || !holdingsCurrent || !walletInitialized || stock.price === null || stock.quantity <= 0"
-                (click)="openTrade(stock, 'sell')">Sell</button>
-      </footer>
-    </article>
-  </div>
+  <footer *ngIf="portfolio.length" class="panel-footer">Quotes may be delayed. Unrealized P&amp;L compares market value with the original cost of open shares.</footer>
 </section>
 
 <ng-template #tradeDialog let-dialog>
