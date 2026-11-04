@@ -1,7 +1,6 @@
 const express = require('express');
-const { createHash, randomBytes, randomUUID } = require('node:crypto');
+const { createHash, randomBytes } = require('node:crypto');
 const { loadPortfolioHistory } = require('../lib/load-portfolio-history');
-const { planPreparedPortfolio } = require('../lib/prepare-portfolio');
 
 const cookieName = 'investment_paper_v1';
 const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
@@ -12,16 +11,35 @@ const recentQuoteSeconds = 20 * 60;
 const referenceQuoteSeconds = 7 * 24 * 60 * 60;
 const quoteClockSkewSeconds = 60;
 const uuidPattern = /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
+const sessionTokenPattern = /^[A-Za-z0-9_-]{43}$/;
 
 function cookieToken(req) {
   const entry = req.get('cookie')?.split(';').map(part => part.trim())
     .find(part => part.startsWith(cookieName + '='));
   const token = entry?.slice(cookieName.length + 1);
-  return /^[\w-]{43}$/.test(token ?? '') ? token : null;
+  return sessionTokenPattern.test(token ?? '') ? token : null;
 }
 
 function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function setSessionCookie(res, token, expiresAt, secure) {
+  res.cookie(cookieName, token, { httpOnly: true, sameSite: 'strict', secure, path: '/api', expires: expiresAt });
+  return res.json({ expiresAt });
+}
+
+function parseShowcaseClaims(value) {
+  try {
+    const claims = JSON.parse(value ?? '[]');
+    return Array.isArray(claims) ? claims.filter(claim => claim
+      && typeof claim.host === 'string' && /^[a-z0-9.-]+$/.test(claim.host)
+      && typeof claim.token === 'string' && sessionTokenPattern.test(claim.token)
+      && typeof claim.digest === 'string' && /^[a-f0-9]{64}$/.test(claim.digest)
+      && typeof claim.expiresAt === 'string' && Number.isFinite(Date.parse(claim.expiresAt))) : [];
+  } catch {
+    return [];
+  }
 }
 
 function openSandbox(req, res) {
@@ -226,38 +244,16 @@ function decideOrder(sandbox, intent, market, confirmation) {
   return receiptResponse(order, patch);
 }
 
-function canPreparePortfolio(sandbox) {
-  return !sandbox.preparedPortfolioCreatedAt && !sandbox.positions.length && !sandbox.receipts.length
-    && (sandbox.cashCents === null || sandbox.cashCents === startingCashCents);
-}
-
-function prepareUnavailable(sandbox) {
-  if (sandbox.preparedPortfolioCreatedAt) return { body: { message: 'Your prepared portfolio is already in place.' } };
-  if (canPreparePortfolio(sandbox)) return null;
-  return { status: 409, body: { message: 'A prepared portfolio can only be added to an unused paper wallet.' } };
-}
-
-function preparedWallet(orders) {
-  const wallet = { cashCents: startingCashCents, positions: [], receipts: [] };
-  for (const { ticker, side, quantity, price, closedAt } of orders) {
-    const intent = { ticker, side, quantity, orderId: randomUUID() };
-    const value = orderValue({ c: price }, quantity);
-    if (!value) return null;
-    const fill = settleFill(wallet, intent, value, { quotedAt: closedAt, quoteKind: 'historical_close' });
-    if (fill.status !== 200) return null;
-    wallet.cashCents = fill.balanceCents;
-    wallet.positions = fill.positions;
-    wallet.receipts.push({ ...orderRecord(intent, closedAt, fill), source: 'prepared' });
-  }
-  return wallet;
-}
-
 function publicPosition({ ticker, quantity, costCents }) {
   return { ticker, quantity, totalCost: dollars(costCents) };
 }
 
-module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, getHistoricalCloses, sendMarketError, sendDatabaseError }) {
+module.exports = function createPaperRouter({
+  normalizeTicker, getTradeMarket, getHistoricalCloses, sendMarketError, sendDatabaseError,
+  showcaseClaims = process.env.PAPER_SHOWCASE_CLAIMS,
+}) {
   const router = express.Router();
+  const claims = parseShowcaseClaims(showcaseClaims);
   let ttlIndex;
 
   const run = handler => async (req, res) => {
@@ -303,11 +299,7 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, g
       _id: hashToken(token), expiresAt, revision: 0, cashCents: null,
       watchlist: [], positions: [], receipts: [],
     });
-    res.cookie(cookieName, token, {
-      httpOnly: true, sameSite: 'strict', secure: req.secure || process.env.VERCEL === '1',
-      path: '/api', expires: expiresAt,
-    });
-    return res.json({ expiresAt });
+    return setSessionCookie(res, token, expiresAt, req.secure || process.env.VERCEL === '1');
   }));
 
   router.get('/watchlist', withSandbox((_req, res, sandbox) => res.json(sandbox.watchlist.map(ticker => ({ ticker })))));
@@ -351,38 +343,35 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, g
     return { body: { message: 'Paper wallet initialized with $25,000.' }, patch: { cashCents: startingCashCents, walletInitializedAt: new Date() } };
   }, initial))));
 
-  router.post('/portfolio/prepare', withSandbox(async (req, res, initial) => {
-    const unavailable = prepareUnavailable(initial);
-    if (unavailable) return send(res, unavailable);
+  router.post('/portfolio/claim', run(async (req, res) => {
+    const unavailable = () => res.status(404).json({ message: 'This portfolio link is unavailable or expired.' });
+    const { code, nonce } = req.body ?? {};
+    if (typeof code !== 'string' || !sessionTokenPattern.test(code)
+      || typeof nonce !== 'string' || !uuidPattern.test(nonce)) return unavailable();
 
-    let plan;
-    try {
-      plan = await planPreparedPortfolio(startingCashCents, getHistoricalCloses);
-    } catch (error) {
-      return sendMarketError(res, error, 'message');
+    const host = req.hostname?.toLowerCase();
+    const digest = hashToken(code);
+    const now = new Date();
+    const claim = claims.find(entry => entry.host === host && entry.digest === digest && Date.parse(entry.expiresAt) > now.getTime());
+    if (!claim) return unavailable();
+
+    const walletId = hashToken(claim.token);
+    const activeWallet = await openSandbox(req, res);
+    if (activeWallet?._id === walletId) return res.json({ expiresAt: activeWallet.expiresAt });
+    if (activeWallet) {
+      return res.status(409).json({ message: 'Open this portfolio link in a browser profile without an active paper wallet.' });
     }
-    const wallet = plan && preparedWallet(plan.orders);
-    if (!wallet) {
-      return res.status(503).json({ message: 'There is not enough shared closing-price history to prepare the portfolio. Try again later.' });
-    }
-    return send(res, await mutate(req, res, sandbox => {
-      const unavailable = prepareUnavailable(sandbox);
-      if (unavailable) return unavailable;
-      if (sandbox.cashCents !== initial.cashCents) {
-        return { status: 409, body: { message: 'Your wallet changed during setup. Refresh the portfolio to try again.' } };
-      }
-      const existingStart = sandbox.walletInitializedAt;
-      const walletInitializedAt = existingStart instanceof Date && existingStart < plan.walletInitializedAt
-        ? existingStart : plan.walletInitializedAt;
-      return {
-        body: { message: 'Your prepared portfolio is ready.' },
-        patch: {
-          ...wallet, walletInitializedAt,
-          preparedPortfolioCreatedAt: new Date(),
-          preparedCloseSnapshot: plan.closeSnapshot,
-        },
-      };
-    }, initial));
+
+    // The same browser can retry a lost response. A different nonce cannot claim the wallet.
+    const nonceHash = hashToken(nonce.toLowerCase());
+    const wallet = await res.locals.paper.findOneAndUpdate({
+      _id: walletId,
+      expiresAt: { $gt: now },
+      preparedPortfolioCreatedAt: { $type: 'date' },
+      $or: [{ showcaseClaimNonce: { $exists: false } }, { showcaseClaimNonce: nonceHash }],
+    }, { $set: { showcaseClaimNonce: nonceHash } }, { returnDocument: 'after', projection: { expiresAt: 1 } });
+    if (!wallet) return unavailable();
+    return setSessionCookie(res, claim.token, wallet.expiresAt, true);
   }));
 
   for (const side of ['buy', 'sell']) {
@@ -420,7 +409,7 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, g
 
   router.get('/portfolio/history', withSandbox(async (_req, res, sandbox) => {
     const history = await loadPortfolioHistory(sandbox, startingCashCents, getHistoricalCloses);
-    const setup = sandbox.preparedPortfolioCreatedAt ? { prepared: true } : canPreparePortfolio(sandbox) ? { canPrepare: true } : {};
+    const setup = sandbox.preparedPortfolioCreatedAt ? { prepared: true } : {};
     return res.json({ ...history, ...setup });
   }));
 

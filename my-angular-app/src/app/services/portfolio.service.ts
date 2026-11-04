@@ -1,4 +1,5 @@
-import { Injectable } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
+import { Inject, Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, catchError, defer, firstValueFrom, from, map, shareReplay, switchMap, tap, throwError } from 'rxjs';
 
@@ -14,7 +15,6 @@ export interface PortfolioPerformance {
   message: string;
   missingSessions: number;
   missingBenchmarkSessions: number;
-  canPrepare?: boolean;
   prepared?: boolean;
 }
 
@@ -59,7 +59,14 @@ interface PaperSession {
   expiresAt: string;
 }
 
+interface ShowcaseClaim {
+  code: string;
+  nonce: string;
+}
+
 const pendingPrefix = 'investment-paper-order:';
+const showcaseClaimKey = 'investment-showcase-claim';
+const showcaseFragment = /^#showcase=([\w-]{43})$/;
 const orderPrice = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -107,9 +114,11 @@ export function paperOrderConfirmation(receipt: PaperOrderReceipt): string {
 export class PortfolioService {
   private session?: Observable<PaperSession>;
   private sessionExpiry = 0;
+  private showcaseClaim?: ShowcaseClaim;
+  showcaseClaimError = '';
   private readonly volatileOrders = new Map<string, PendingPaperOrder>();
 
-  constructor(private http: HttpClient) { }
+  constructor(private http: HttpClient, @Inject(DOCUMENT) private document: Document) { }
 
   getStocks(): Observable<Stock[]> {
     return this.paperRequest(() => this.http.get<Stock[]>('/api/stocks')).pipe(
@@ -134,9 +143,6 @@ export class PortfolioService {
     return this.paperRequest(() => this.http.post<{ message: string }>('/api/initWallet', {}), false);
   }
 
-  preparePortfolio(): Observable<{ message: string }> {
-    return this.paperRequest(() => this.http.post<{ message: string }>('/api/portfolio/prepare', {}), false);
-  }
   checkStock(ticker: string): Observable<{ quantity: number }> {
     return this.paperRequest(() => this.http.get<{ quantity: number }>(`/api/stocks/${encodeURIComponent(ticker)}`));
   }
@@ -289,12 +295,64 @@ export class PortfolioService {
     return locks ? locks.request(name, action) : action();
   }
 
+  private readShowcaseClaim(): ShowcaseClaim | undefined {
+    const browser = this.document.defaultView;
+    if (!browser) return undefined;
+    const { hash, pathname, search } = browser.location;
+    const code = showcaseFragment.exec(hash)?.[1];
+    if (!code && this.showcaseClaim) return this.showcaseClaim;
+    let stored: ShowcaseClaim | undefined;
+    try {
+      const value = JSON.parse(browser.sessionStorage.getItem(showcaseClaimKey) ?? 'null');
+      if (typeof value?.code === 'string' && /^[\w-]{43}$/.test(value.code)
+          && typeof value.nonce === 'string' && /^[0-9a-f-]{36}$/.test(value.nonce)) stored = value;
+    } catch { /* An in-memory claim also works when session storage is unavailable. */ }
+    if (!code) return stored;
+    this.showcaseClaimError = '';
+    this.showcaseClaim = stored?.code === code ? stored : { code, nonce: browser.crypto.randomUUID() };
+    try { browser.sessionStorage.setItem(showcaseClaimKey, JSON.stringify(this.showcaseClaim)); } catch { /* Storage is optional. */ }
+    browser.history.replaceState(browser.history.state, '', pathname + search);
+    return this.showcaseClaim;
+  }
+
+  private async requestSession(): Promise<PaperSession> {
+    const claim = this.readShowcaseClaim();
+    if (claim) {
+      try {
+        const session = await firstValueFrom(this.http.post<PaperSession>('/api/portfolio/claim', claim));
+        this.clearShowcaseClaim();
+        return session;
+      } catch (error: unknown) {
+        if (!(error instanceof HttpErrorResponse) || ![400, 404, 409].includes(error.status)) {
+          this.showcaseClaimError = 'The showcase could not open. Refresh this page to retry.';
+          throw error;
+        }
+        this.clearShowcaseClaim();
+        this.showcaseClaimError = error.status === 409
+          ? 'This browser already has a paper account here. Open the private link in a separate browser profile.'
+          : 'This private showcase link has expired or has already been used.';
+        if (error.status !== 409) throw error;
+      }
+    }
+    return firstValueFrom(this.http.get<PaperSession>('/api/paper/session'));
+  }
+
+  private clearShowcaseClaim(): void {
+    this.showcaseClaim = undefined;
+    this.showcaseClaimError = '';
+    try { this.document.defaultView?.sessionStorage.removeItem(showcaseClaimKey); } catch { /* Storage is optional. */ }
+  }
+
   private ensureSession(): Observable<PaperSession> {
+    if (showcaseFragment.test(this.document.defaultView?.location.hash ?? '')) {
+      this.readShowcaseClaim();
+      this.clearSession();
+    }
     if (this.sessionExpiry && this.sessionExpiry <= Date.now()) this.clearSession();
     if (this.session) return this.session;
     const request = defer(() => from(this.withBrowserLock(
       'investment-paper-session',
-      () => firstValueFrom(this.http.get<PaperSession>('/api/paper/session')),
+      () => this.requestSession(),
     ))).pipe(
       tap(session => this.sessionExpiry = Date.parse(session.expiresAt)),
       catchError(error => {

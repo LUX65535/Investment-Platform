@@ -2,11 +2,11 @@
   <header class="performance-header">
     <div>
       <h2 id="portfolio-performance-title" #performanceHeading tabindex="-1">Portfolio performance</h2>
-      <p>Daily closes · Up to 30 days</p>
+      <p>Daily marks · 30-day window</p>
     </div>
     <div class="latest-valuation" *ngIf="!loading && !failed && chart as series">
-      <strong>{{ series.lastValuation.nav | currency:'USD' }}</strong>
       <span>Last valued close · {{ series.lastValuation.time | date:'MMM d, yyyy':'+0000' }}</span>
+      <strong>{{ series.lastValuation.nav | currency:'USD' }}</strong>
     </div>
   </header>
 
@@ -52,10 +52,12 @@
                [attr.aria-label]="series.compared ? 'Portfolio and SPY price returns from the same closing date' : 'Portfolio closing value in U.S. dollars'">
             <defs>
               <linearGradient id="portfolio-area-fade" x2="0" y2="1" gradientUnits="objectBoundingBox">
-                <stop stop-color="var(--accent)" stop-opacity=".15"/>
-                <stop offset="100%" stop-color="var(--accent)" stop-opacity=".015"/>
+                <stop stop-color="var(--trace)" stop-opacity=".21"/>
+                <stop offset="100%" stop-color="var(--trace)" stop-opacity=".015"/>
               </linearGradient>
             </defs>
+            <line *ngFor="let gridX of [8, 164, 320, 476, 632]" class="grid-line grid-line--vertical"
+                  [attr.x1]="gridX" [attr.x2]="gridX" y1="12" [attr.y2]="height - 16" vector-effect="non-scaling-stroke"/>
             <line *ngFor="let tick of series.ticks" class="grid-line" [class.grid-line--zero]="series.compared && tick.value === 0"
                   x1="8" [attr.x2]="width - 8" [attr.y1]="tick.y" [attr.y2]="tick.y" vector-effect="non-scaling-stroke"/>
             <path class="valuation-area" fill="url(#portfolio-area-fade)" [attr.d]="series.nav.area"/>

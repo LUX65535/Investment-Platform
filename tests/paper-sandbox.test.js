@@ -30,6 +30,16 @@ function memoryStore() {
       assert.ok(!records.has(document._id), 'Sandbox identity must be unique');
       records.set(document._id, structuredClone(document));
     },
+    async findOneAndUpdate(query, update) {
+      const record = records.get(query._id);
+      if (!record || record.expiresAt <= query.expiresAt.$gt || !(record.preparedPortfolioCreatedAt instanceof Date)) return null;
+      const nonce = record.showcaseClaimNonce;
+      const permitted = query.$or.some(({ showcaseClaimNonce }) =>
+        showcaseClaimNonce?.$exists === false ? nonce === undefined : nonce === showcaseClaimNonce);
+      if (!permitted) return null;
+      Object.assign(record, structuredClone(update.$set));
+      return { expiresAt: structuredClone(record.expiresAt) };
+    },
     async updateOne(query, update) {
       const record = records.get(query._id);
       if (!record || (query.revision !== undefined && record.revision !== query.revision) ||
@@ -41,7 +51,7 @@ function memoryStore() {
   };
 }
 
-async function fixture(t, getHistoricalCloses) {
+async function fixture(t, { getHistoricalCloses, showcaseClaims } = {}) {
   const testPort = process.env.PAPER_TEST_MONGO_PORT;
   let collection;
   if (testPort) {
@@ -85,9 +95,11 @@ async function fixture(t, getHistoricalCloses) {
       return { quote: { c: market.price, t: market.timestamp }, currency: market.currency };
     },
     getHistoricalCloses,
+    showcaseClaims,
     sendMarketError(res) { res.status(503).json({ message: 'Market unavailable' }); },
     sendDatabaseError(_res, error) { throw error; },
   }));
+  app.use('/api', (_req, res) => res.status(404).json({ message: 'API endpoint not found' }));
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise(resolve => server.close(resolve)));
@@ -169,7 +181,6 @@ test('browser sessions isolate the watchlist, cash, holdings and receipts', asyn
 const preparedDates = ['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-27', '2026-11-30', '2026-12-01'];
 const preparedCloses = {
   AAPL: [100, 104, 108, 112, 116, 120],
-  MSFT: [198, 200, 202, 204, 206, 208],
   SPY: [500, 502, 505, 507, 510, 512],
 };
 
@@ -177,100 +188,91 @@ function historicalBars(ticker) {
   return preparedDates.map((date, index) => ({ t: Date.parse(date + 'T05:00:00Z'), c: preparedCloses[ticker][index] }));
 }
 
-test('concurrent prepared portfolio requests create one usable ledger with closing-price inputs', async t => {
+test('a private portfolio grant transfers an existing prepared wallet to one browser', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-02T17:00:00Z') });
-  const marketCalls = [];
-  const { browser, collection } = await fixture(t, async (ticker, from, through) => {
-    assert.equal(from, '2026-11-02');
-    assert.equal(through, '2026-12-01');
-    marketCalls.push(ticker);
-    return historicalBars(ticker);
+  const host = 'portfolio.example';
+  const token = 'T'.repeat(43);
+  const code = 'C'.repeat(43);
+  const expiredCode = 'X'.repeat(43);
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  const expiresAt = new Date('2026-12-15T00:00:00Z');
+  const grant = { host, token, digest: digest(code), expiresAt: '2026-12-03T00:00:00Z' };
+  const { browser, collection } = await fixture(t, {
+    showcaseClaims: JSON.stringify([
+      grant, { ...grant, digest: digest(expiredCode), expiresAt: '2026-12-02T00:00:00Z' },
+    ]),
+    getHistoricalCloses: async () => assert.fail('The existing closing snapshot should serve the prepared history'),
   });
+  const id = digest(token);
+  const close = new Date('2026-11-23T21:00:00Z');
+  await collection.insertOne({
+    _id: id, expiresAt, revision: 1, cashCents: 2490000,
+    walletInitializedAt: new Date(close.getTime() - 1),
+    preparedPortfolioCreatedAt: new Date(),
+    watchlist: ['TSLA'],
+    positions: [{ ticker: 'AAPL', quantity: 1, costCents: 10000 }],
+    receipts: [{
+      orderId: randomUUID(), ticker: 'AAPL', side: 'buy', quantity: 1, responseStatus: 200,
+      status: 'filled', source: 'prepared', submittedAt: close, quotedAt: close, quoteKind: 'historical_close',
+      unitPrice: 100, totalCents: 10000, balanceCents: 2490000,
+    }],
+    preparedCloseSnapshot: {
+      windowStartDate: '2026-11-02', throughDate: '2026-12-01',
+      series: ['SPY', 'AAPL'].map(ticker => ({ ticker, bars: historicalBars(ticker) })),
+    },
+  });
+
   const first = browser();
-  const other = browser();
-  assert.equal((await first.request('portfolio/prepare', 'POST')).status, 428);
-  await first.initialize();
-  await first.request('watchlist', 'POST', { ticker: 'TSLA' });
-  assert.equal((await first.request('portfolio/history')).body.canPrepare, true);
-  assert.equal((await first.request('portfolio/prepare', 'POST', {}, { 'sec-fetch-site': 'cross-site' })).status, 403);
-  assert.equal(marketCalls.length, 0);
-
-  const setup = await Promise.all([first.request('portfolio/prepare', 'POST'), first.request('portfolio/prepare', 'POST')]);
-  assert.deepEqual(setup.map(result => result.status), [200, 200]);
-  assert.ok(setup.every(result => result.cache === 'private, no-store'));
-  const saved = await collection.findOne({ _id: first.id });
-  assert.equal(saved.revision, 3, 'Wallet initialization, watchlist add and one prepared portfolio update.');
-  assert.equal(saved.preparedCloseSnapshot.throughDate, '2026-12-01');
-  assert.deepEqual(saved.preparedCloseSnapshot.series.map(({ ticker, bars }) => [ticker, bars]), [
-    ['SPY', historicalBars('SPY')], ['AAPL', historicalBars('AAPL')], ['MSFT', historicalBars('MSFT')],
-  ]);
-  assert.deepEqual((await first.request('watchlist')).body, [{ ticker: 'TSLA' }]);
-  assert.equal((await first.request('balance')).body.balance, 9412);
-  const receipts = (await first.request('orders')).body;
-  assert.deepEqual(receipts.map(({ side, ticker, quantity, price }) => [side, ticker, quantity, price]), [
-    ['sell', 'AAPL', 26, 112], ['buy', 'MSFT', 40, 200], ['buy', 'AAPL', 105, 100],
-  ]);
-  assert.ok(receipts.every(receipt => receipt.source === 'prepared' && receipt.quoteKind === 'historical_close'));
-  assert.equal(receipts[0].quotedAt, '2026-11-27T18:00:00.000Z', 'Uses the actual 1 p.m. Eastern early close.');
-  assert.deepEqual((await first.request('orders/' + receipts[0].orderId)).body, receipts[0]);
-  assert.equal((await first.request('stocks/AAPL')).body.totalCost, 7900);
-
-  const setupMarketCalls = marketCalls.length;
-  const history = (await first.request('portfolio/history')).body;
-  assert.equal(marketCalls.length, setupMarketCalls, 'Prepared history uses the same verified closes without another fetch.');
-  assert.equal(history.preparedCloseSnapshot, undefined);
-  assert.equal(history.prepared, true);
-  assert.equal(history.canPrepare, undefined);
-  assert.equal(history.status, 'ok');
-  assert.deepEqual(history.points.map(({ nav }) => nav), [25000, 25420, 25920, 26420, 26816, 27212]);
-  assert.deepEqual(history.points.map(({ spyClose }) => spyClose), preparedCloses.SPY);
-
-  await other.request('paper/session');
-  assert.deepEqual((await other.request('orders')).body, []);
-  const realOrder = await first.request('sell', 'POST', { orderId: randomUUID(), ticker: 'AAPL', quantity: 1 });
-  assert.equal(realOrder.status, 200);
-  assert.equal(realOrder.body.receipt.source, undefined);
-  assert.equal((await first.request('balance')).body.balance, 9512.01);
-  assert.equal((await first.request('stocks/AAPL')).body.quantity, 78);
-  assert.deepEqual((await first.request('portfolio/history')).body.points, history.points);
-
-  const calls = marketCalls.length;
-  assert.equal((await first.request('portfolio/prepare', 'POST')).status, 200);
-  assert.equal(marketCalls.length, calls, 'Reopening an existing prepared portfolio does not reload provider prices.');
-  assert.equal((await first.request('orders')).body.length, 4);
-});
-
-test('prepared setup leaves balances untouched on provider failure or existing activity', async t => {
-  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-02T17:00:00Z') });
-  let unavailable = true;
-  let incomplete = true;
-  let calls = 0;
-  const { browser } = await fixture(t, async ticker => {
-    calls++;
-    if (unavailable) throw new Error('Provider unavailable');
-    return incomplete && ticker === 'MSFT' ? [] : historicalBars(ticker);
-  });
-  const empty = browser();
-  await empty.request('paper/session');
-  assert.equal((await empty.request('portfolio/history')).body.canPrepare, true);
-  assert.equal((await empty.request('portfolio/prepare', 'POST')).status, 503);
-  unavailable = false;
-  assert.equal((await empty.request('portfolio/prepare', 'POST')).status, 503);
-  assert.deepEqual((await empty.request('balance')).body, { balance: 0, initialized: false });
-  assert.deepEqual((await empty.request('orders')).body, []);
-  incomplete = false;
-  assert.equal((await empty.request('portfolio/prepare', 'POST')).status, 200);
-  assert.equal((await empty.request('orders')).body.length, 3);
-
+  const second = browser();
   const active = browser();
   await active.initialize();
   const order = await active.request('buy', 'POST', { ticker: 'MSFT', quantity: 1, orderId: randomUUID() });
   assert.equal(order.status, 200);
-  const before = calls;
-  assert.equal((await active.request('portfolio/history')).body.canPrepare, undefined);
-  assert.equal((await active.request('portfolio/prepare', 'POST')).status, 409);
-  assert.equal(calls, before);
+  const firstNonce = randomUUID();
+  const secondNonce = randomUUID();
+  const claim = (client, nonce, headers = { host }, claimCode = code) =>
+    client.request('portfolio/claim', 'POST', { code: claimCode, nonce }, headers);
+  assert.equal((await first.request('portfolio/prepare', 'POST')).status, 404);
+  assert.equal((await claim(first, firstNonce, { host: 'other.example' })).status, 404);
+  assert.equal((await claim(first, firstNonce, { host, 'sec-fetch-site': 'cross-site' })).status, 403);
+  assert.equal((await claim(first, firstNonce, { host }, expiredCode)).status, 404);
+  assert.equal((await claim(first, firstNonce, { host }, 'W'.repeat(43))).status, 404);
+  assert.equal((await claim(first, 'malformed')).status, 404);
+  assert.equal((await claim(active, firstNonce)).status, 409);
+  assert.equal((await collection.findOne({ _id: id })).showcaseClaimNonce, undefined);
   assert.deepEqual((await active.request('orders')).body, [order.body.receipt]);
+  assert.equal((await active.request('portfolio/history')).body.canPrepare, undefined);
+
+  const claims = await Promise.all([claim(first, firstNonce), claim(second, secondNonce)]);
+  assert.deepEqual(claims.map(result => result.status).sort(), [200, 404]);
+  const wonFirst = claims[0].status === 200;
+  const [winner, losingBrowser, winningNonce, losingNonce] = wonFirst
+    ? [first, second, firstNonce, secondNonce] : [second, first, secondNonce, firstNonce];
+  const success = claims.find(result => result.status === 200);
+  assert.deepEqual(success.body, { expiresAt: expiresAt.toISOString() });
+  assert.equal(success.cache, 'private, no-store');
+  assert.match(success.setCookie, /Path=\/api;.*HttpOnly; Secure; SameSite=Strict/);
+  assert.equal(winner.id, id);
+  assert.equal((await claim(losingBrowser, losingNonce)).status, 404);
+  assert.equal((await losingBrowser.request('orders')).status, 428);
+  assert.equal((await claim(winner, randomUUID())).setCookie, null);
+  const retry = await claim(browser(), winningNonce);
+  assert.equal(retry.setCookie, success.setCookie);
+  assert.equal((await collection.findOne({ _id: id })).showcaseClaimNonce, digest(winningNonce));
+
+  const history = (await winner.request('portfolio/history')).body;
+  assert.equal(history.prepared, true);
+  assert.equal(history.preparedCloseSnapshot, undefined);
+  assert.equal(history.status, 'ok');
+  assert.deepEqual(history.points.map(({ nav }) => nav), [25000, 25004, 25008, 25012, 25016, 25020]);
+  assert.deepEqual(history.points.map(({ spyClose }) => spyClose), preparedCloses.SPY);
+  assert.deepEqual((await winner.request('watchlist')).body, [{ ticker: 'TSLA' }]);
+  assert.equal((await winner.request('orders')).body[0].source, 'prepared');
+  const sell = await winner.request('sell', 'POST', { orderId: randomUUID(), ticker: 'AAPL', quantity: 1 });
+  assert.equal(sell.status, 200);
+  assert.equal(sell.body.receipt.source, undefined);
+  assert.equal((await winner.request('balance')).body.balance, 25000.01);
+  assert.deepEqual((await winner.request('portfolio/history')).body.points, history.points);
 });
 
 test('concurrent orders settle once and receipt replay bypasses the price provider', async t => {

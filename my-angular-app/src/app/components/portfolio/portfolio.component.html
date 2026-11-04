@@ -1,11 +1,11 @@
 <header class="portfolio-heading">
   <div>
-    <p class="account-type">Paper account <span aria-hidden="true">/</span> USD</p>
-    <h1 #portfolioHeading tabindex="-1">Portfolio</h1>
+    <p class="account-type">Paper trading <span aria-hidden="true">/</span> USD</p>
+    <h1>Portfolio</h1>
   </div>
   <div class="portfolio-toolbar" aria-label="Portfolio actions">
-    <button type="button" class="state-action" [attr.aria-disabled]="isLoading || isInitializing || isPreparingPortfolio || checkingOrderId !== null"
-            (click)="!isInitializing && !isPreparingPortfolio && !checkingOrderId && loadPortfolio()">
+    <button type="button" class="state-action" [disabled]="isLoading || isInitializing || checkingOrderId !== null"
+            (click)="loadPortfolio()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M20 7v5h-5M4 17v-5h5m10.6 0a7.6 7.6 0 0 0-13-5.4L4 9m16 6-2.6 2.4a7.6 7.6 0 0 1-13-5.4"/>
@@ -16,51 +16,43 @@
   </div>
 </header>
 
-<section *ngIf="(!isLoading && walletInitialized === false) || performance?.canPrepare || isPreparingPortfolio"
-         class="wallet-setup" aria-labelledby="portfolio-setup-title">
+<section *ngIf="!isLoading && walletInitialized === false" class="wallet-setup" aria-labelledby="portfolio-setup-title">
   <div>
-    <h2 id="portfolio-setup-title">{{ performance?.canPrepare || isPreparingPortfolio ? 'Start with a trading history' : 'Open your paper account' }}</h2>
-    <p *ngIf="performance?.canPrepare || isPreparingPortfolio; else emptyWalletCopy">Start with holdings and paper orders priced at actual market closes. New paper trades continue in the same account.</p>
-    <ng-template #emptyWalletCopy><p>Start with $25,000 in paper buying power.</p></ng-template>
-    <p class="wallet-storage">Return in this browser during your 30-day paper session.</p>
+    <h2 id="portfolio-setup-title">Open your paper account</h2>
+    <p>Start with $25,000 in paper buying power, saved in this browser for 30 days.</p>
   </div>
-  <div class="wallet-actions">
-    <button *ngIf="performance?.canPrepare || isPreparingPortfolio" type="button" class="state-action research-action"
-            [attr.aria-disabled]="isInitializing || isLoading || isPreparingPortfolio" (click)="onPreparePortfolio($event)">
-      {{ isPreparingPortfolio ? 'Preparing portfolio…' : 'Set up prepared portfolio' }}
-    </button>
-    <button *ngIf="walletInitialized === false" type="button" class="state-action"
-            [attr.aria-disabled]="isInitializing || isPreparingPortfolio" (click)="!isPreparingPortfolio && onInitializeWallet()">
-      {{ isInitializing && !isPreparingPortfolio ? 'Initializing…' : 'Initialize demo wallet' }}
-    </button>
-  </div>
+  <button type="button" class="state-action research-action" [disabled]="isInitializing" (click)="onInitializeWallet()">
+    {{ isInitializing ? 'Initializing…' : 'Initialize demo wallet' }}
+  </button>
 </section>
 
-<div *ngIf="statusMessage || actionError || loadError" class="account-messages">
+<div *ngIf="statusMessage || actionError || loadError || showcaseClaimError" class="account-messages">
   <p *ngIf="statusMessage" class="state-message" role="status">{{ statusMessage }}</p>
+  <p *ngIf="showcaseClaimError" class="state-message state-message--error" role="alert">{{ showcaseClaimError }}</p>
   <p *ngIf="actionError" class="state-message state-message--error" role="alert">{{ actionError }}</p>
   <p *ngIf="loadError" class="state-message state-message--error" role="alert">{{ loadError }}</p>
 </div>
 
-<section class="portfolio-overview" aria-label="Portfolio overview" [attr.aria-busy]="isLoading">
+<div class="portfolio-analysis" [class.portfolio-analysis--with-allocation]="walletInitialized === true">
+<section *ngIf="walletInitialized !== false" class="portfolio-overview" aria-label="Portfolio overview" [attr.aria-busy]="isLoading">
   <dl class="portfolio-metrics">
     <div class="portfolio-metric primary-metric">
       <dt>Account value</dt>
-      <dd>{{ accountValue === null || walletInitialized === false ? '—' : (accountValue | currency:'USD') }}</dd>
+      <dd>{{ accountValue === null ? '—' : (accountValue | currency:'USD') }}</dd>
     </div>
     <div class="portfolio-metric">
       <dt>Available cash</dt>
-      <dd>{{ cashBalance === null || walletInitialized === false ? '—' : (cashBalance | currency:'USD') }}</dd>
+      <dd>{{ cashBalance === null ? '—' : (cashBalance | currency:'USD') }}</dd>
     </div>
     <div class="portfolio-metric">
       <dt>Holdings value</dt>
-      <dd>{{ marketValue === null || walletInitialized === false ? '—' : (marketValue | currency:'USD') }}</dd>
+      <dd>{{ marketValue === null ? '—' : (marketValue | currency:'USD') }}</dd>
     </div>
     <div class="portfolio-metric">
       <dt>Unrealized P&amp;L</dt>
       <dd [class.positive]="unrealizedProfit !== null && unrealizedProfit > 0"
           [class.negative]="unrealizedProfit !== null && unrealizedProfit < 0">
-        {{ unrealizedProfit !== null && unrealizedProfit > 0 ? '+' : '' }}{{ unrealizedProfit === null || walletInitialized === false ? '—' : (unrealizedProfit | currency:'USD') }}
+        {{ unrealizedProfit !== null && unrealizedProfit > 0 ? '+' : '' }}{{ unrealizedProfit === null ? '—' : (unrealizedProfit | currency:'USD') }}
       </dd>
     </div>
   </dl>
@@ -76,11 +68,10 @@
       </ng-container>
       <ng-template #unknownQuoteTimes>· Some quote times unavailable</ng-template>
     </p>
-    <p *ngIf="portfolioPrepared" class="prepared-account-label mb-0">Prepared starting portfolio</p>
+    <p *ngIf="portfolioPrepared" class="prepared-account-label mb-0">Includes historical fills</p>
   </div>
 </section>
 
-<div class="portfolio-analysis" [class.portfolio-analysis--with-allocation]="walletInitialized === true">
 <app-portfolio-performance [points]="performance?.points ?? []" [loading]="performanceLoading"
                            [failed]="performanceFailed" [message]="performance?.message ?? ''"
                            [missingSessions]="performance?.missingSessions ?? 0"
@@ -134,15 +125,16 @@
       </div>
     </div>
     <dl class="allocation-body relative-values">
-      <div class="d-flex justify-content-between gap-2 py-1"><dt>Portfolio</dt><dd class="mb-0">{{ snapshot.portfolio > 0 ? '+' : '' }}{{ snapshot.portfolio | percent:'1.2-2' }}</dd></div>
-      <div class="d-flex justify-content-between gap-2 py-1"><dt>SPY</dt><dd class="mb-0">{{ snapshot.spy > 0 ? '+' : '' }}{{ snapshot.spy | percent:'1.2-2' }}</dd></div>
-      <div class="d-flex justify-content-between gap-2 py-1"><dt>Difference</dt><dd class="mb-0">{{ snapshot.differencePoints > 0 ? '+' : '' }}{{ snapshot.differencePoints | number:'1.2-2' }} pp</dd></div>
+      <div class="d-flex justify-content-between gap-2"><dt>Portfolio</dt><dd class="mb-0">{{ snapshot.portfolio > 0 ? '+' : '' }}{{ snapshot.portfolio | percent:'1.2-2' }}</dd></div>
+      <div class="d-flex justify-content-between gap-2"><dt>SPY</dt><dd class="mb-0">{{ snapshot.spy > 0 ? '+' : '' }}{{ snapshot.spy | percent:'1.2-2' }}</dd></div>
+      <div class="d-flex justify-content-between gap-2"><dt>Difference</dt><dd class="mb-0">{{ snapshot.differencePoints > 0 ? '+' : '' }}{{ snapshot.differencePoints | number:'1.2-2' }} pp</dd></div>
     </dl>
   </section>
 </section>
 </ng-container>
 </div>
 
+<div class="portfolio-ledger">
 <section class="positions-panel" aria-labelledby="positions-title" [attr.aria-busy]="isLoading">
   <div class="panel-header">
     <div>
@@ -298,6 +290,7 @@
     </li>
   </ul>
 </section>
+</div>
 
 <ng-template #tradeDialog let-dialog>
   <form *ngIf="activeTrade as trade" (ngSubmit)="submitTrade()">

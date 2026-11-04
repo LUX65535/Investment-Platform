@@ -1,4 +1,4 @@
-import { Component, DestroyRef, ElementRef, OnInit, TemplateRef, ViewChild, inject } from '@angular/core';
+import { Component, DestroyRef, OnInit, TemplateRef, ViewChild, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
@@ -37,7 +37,6 @@ export class PortfolioComponent implements OnInit {
   private pendingTrade?: PendingPaperOrder;
 
   @ViewChild('tradeDialog', { static: true }) private tradeDialog!: TemplateRef<unknown>;
-  @ViewChild('portfolioHeading', { static: true }) private portfolioHeading!: ElementRef<HTMLHeadingElement>;
   readonly visibleAllocationEntries = 5;
   portfolio: Holding[] = [];
   cashBalance: number | null = null;
@@ -45,7 +44,6 @@ export class PortfolioComponent implements OnInit {
   holdingsCurrent = false;
   isLoading = false;
   isInitializing = false;
-  isPreparingPortfolio = false;
   loadError = '';
   statusMessage = '';
   actionError = '';
@@ -90,6 +88,10 @@ export class PortfolioComponent implements OnInit {
 
   get portfolioPrepared(): boolean {
     return this.performance?.prepared === true || this.receipts.some(receipt => receipt.source === 'prepared');
+  }
+
+  get showcaseClaimError(): string {
+    return this.portfolioService.showcaseClaimError;
   }
 
   get benchmarkSnapshot(): { date: string; portfolio: number; spy: number; differencePoints: number } | null {
@@ -276,34 +278,6 @@ export class PortfolioComponent implements OnInit {
         this.loadPortfolio();
       },
       error: () => this.actionError = 'We couldn’t initialize the wallet. Please try again.',
-    });
-  }
-
-  onPreparePortfolio(event: Event): void {
-    if (this.isInitializing || this.isLoading || !this.performance?.canPrepare) return;
-    const trigger = event.currentTarget;
-    this.isInitializing = true;
-    this.isPreparingPortfolio = true;
-    this.actionError = '';
-    this.statusMessage = '';
-    this.portfolioService.preparePortfolio().pipe(
-      takeUntilDestroyed(this.destroyRef),
-      finalize(() => {
-        this.isInitializing = false;
-        this.isPreparingPortfolio = false;
-      }),
-    ).subscribe({
-      next: ({ message }) => {
-        this.statusMessage = message;
-        const heading = this.portfolioHeading.nativeElement;
-        if (heading.ownerDocument.activeElement === trigger) heading.focus({ preventScroll: true });
-        this.loadPortfolio(true);
-      },
-      error: (error: unknown) => {
-        this.actionError = error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
-          ? error.error.message : 'We couldn’t set up the portfolio. Please try again.';
-        if (error instanceof HttpErrorResponse && error.status === 409) this.loadPortfolio(true);
-      },
     });
   }
 
