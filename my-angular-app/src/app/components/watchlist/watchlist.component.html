@@ -1,14 +1,17 @@
-<header class="page-heading">
-  <p class="page-eyebrow">Market workspace</p>
-  <h1>Watchlist</h1>
-  <p>Follow prices and daily moves for your saved stocks.</p>
+<header class="page-heading workspace-heading">
+  <div>
+    <p class="page-eyebrow">Market workspace</p>
+    <h1>Watchlist</h1>
+    <p>Keep your shortlist in one place and open any company to continue researching.</p>
+  </div>
+  <span *ngIf="hasLoaded" class="workspace-label">{{ watchlist.length }} saved {{ watchlist.length === 1 ? 'symbol' : 'symbols' }}</span>
 </header>
 
 <section class="watchlist-panel" aria-labelledby="saved-symbols-title" [attr.aria-busy]="loading">
   <div class="panel-header">
     <div>
       <h2 id="saved-symbols-title" tabindex="-1" #listTitle>Saved symbols</h2>
-      <p>{{ hasLoaded ? watchlist.length + (watchlist.length === 1 ? ' symbol' : ' symbols') : 'Your market shortlist' }}</p>
+      <p>Latest quotes and daily moves</p>
     </div>
     <div class="panel-actions">
       <button type="button" class="state-action" [attr.aria-disabled]="!canRefresh" (click)="loadWatchlist()">
@@ -60,7 +63,8 @@
         </th>
         <td role="cell" class="price-cell">
           <ng-container *ngIf="item.quote as quote; else unavailableQuote">
-            <span class="watchlist-price">{{ quote.c | currency:'USD' }}</span>
+            <span class="watchlist-price">{{ item.currency ? (quote.c | currency:item.currency:'code') : (quote.c | number:'1.2-2') }}</span>
+            <span *ngIf="!item.currency" class="watchlist-unavailable currency-missing">Currency unavailable</span>
           </ng-container>
           <ng-template #unavailableQuote>
             <span class="watchlist-unavailable">{{ item.quotePending ? 'Loading quote…' : 'Quote unavailable' }}</span>
@@ -71,7 +75,7 @@
             <span *ngIf="quote.dp !== null; else missingChange" class="watchlist-change"
                   [class.positive]="quote.dp > 0" [class.negative]="quote.dp < 0">
               <span *ngIf="quote.d !== null" class="absolute-change">
-                {{ quote.d > 0 ? '+' : '' }}{{ quote.d | currency:'USD' }}
+                {{ quote.d > 0 ? '+' : '' }}{{ item.currency ? (quote.d | currency:item.currency:'code') : (quote.d | number:'1.2-2') }}
               </span>
               <span class="percent-change">{{ quote.dp > 0 ? '+' : '' }}{{ quote.dp | number:'1.2-2' }}%</span>
             </span>
@@ -102,9 +106,9 @@
            stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9Z"/></svg>
     </span>
     <h3>Your watchlist is empty</h3>
-    <p>Find a company and select the star next to its name to save it here.</p>
+    <p>Open a company and choose Watchlist to save it here.</p>
     <a class="state-action" routerLink="/search-details">Explore stocks</a>
   </div>
 
-  <footer *ngIf="watchlist.length" class="panel-footer">Prices in USD. Quotes may be delayed.</footer>
+  <footer *ngIf="watchlist.length" class="panel-footer">Quotes may be delayed. Each price uses its quoted currency when available.</footer>
 </section>

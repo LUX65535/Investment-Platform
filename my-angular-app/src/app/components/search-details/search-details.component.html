@@ -1,14 +1,5 @@
-<header class="research-header" [class.research-header--landing]="showSearchHero">
-  <div *ngIf="showSearchHero; else sectionLabel">
-    <p class="research-kicker">Research workspace</p>
-    <h1 id="research-title">Market research</h1>
-    <p class="research-intro">Look up a stock to explore its price history, company news, and fundamentals.</p>
-  </div>
-  <ng-template #sectionLabel>
-    <a class="research-back" routerLink="/search-details"><span aria-hidden="true">‹</span> All symbols</a>
-  </ng-template>
-
-  <form class="search-form" role="search" (ngSubmit)="submitSearch()">
+<ng-template #symbolSearch let-landing="landing">
+  <form class="search-form" [class.search-form--landing]="landing" role="search" (ngSubmit)="submitSearch()">
     <label for="ticker-search" class="visually-hidden">Stock ticker or company</label>
     <div class="search-field" matAutocompleteOrigin #searchOrigin="matAutocompleteOrigin">
       <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -17,7 +8,7 @@
       </svg>
       <input #tickerInput matInput id="ticker-search" [formControl]="tickerFormControl" [matAutocomplete]="auto"
              [matAutocompleteConnectedTo]="searchOrigin"
-             placeholder="Search by symbol or company" autocomplete="off" spellcheck="false">
+             placeholder="Symbol or company" autocomplete="off" spellcheck="false">
       <button type="button" class="clear-search" aria-label="Clear search" *ngIf="tickerFormControl.value"
               (click)="clearSearch(); tickerInput.focus()">&times;</button>
       <button type="submit" class="submit-search">Search</button>
@@ -31,30 +22,26 @@
       </mat-option>
     </mat-autocomplete>
     <p *ngIf="suggestionsError" class="search-help" role="status">Suggestions unavailable. Enter a ticker to search directly.</p>
+    <p *ngIf="searchError" class="search-error" role="alert">{{ searchError }}</p>
   </form>
-</header>
+</ng-template>
+
+<app-research-landing *ngIf="showSearchHero; else compactSearch">
+  <ng-container *ngTemplateOutlet="symbolSearch; context: { landing: true }"></ng-container>
+</app-research-landing>
+<ng-template #compactSearch>
+  <header class="research-header">
+    <a class="research-back" routerLink="/search-details"><span aria-hidden="true">‹</span> All symbols</a>
+    <ng-container *ngTemplateOutlet="symbolSearch"></ng-container>
+  </header>
+</ng-template>
 
 <div *ngIf="DetailIsLoading" class="state-panel" role="status">
   <mat-spinner diameter="24"></mat-spinner>
   <p>Loading company data…</p>
 </div>
 
-<div *ngIf="searchError" class="error-message" role="alert">{{ searchError }}</div>
 
-<section *ngIf="showSearchHero" class="starter-panel" aria-labelledby="starter-title">
-  <div class="panel-heading">
-    <div>
-      <h2 id="starter-title">Explore a symbol</h2>
-      <p>Start with one of these companies or search above.</p>
-    </div>
-  </div>
-  <div class="starter-grid">
-    <button type="button" class="starter-symbol" *ngFor="let item of exampleTickers" (click)="submitSearch(item.ticker)">
-      <span class="starter-label"><strong>{{ item.ticker }}</strong><span>{{ item.name }}</span></span>
-      <span class="starter-arrow" aria-hidden="true">↗</span>
-    </button>
-  </div>
-</section>
 
 <div *ngIf="showConfirmation" class="confirmation-alert" [ngClass]="confirmationStyle" role="status">
   <span>{{ confirmationMessage }}</span>
@@ -88,18 +75,18 @@
 
     <div class="security-quote" *ngIf="currentStock as quote; else quoteUnavailable">
       <div class="quote-values">
-        <span class="quote-price">{{ quote.c | currency:(company.currency || 'USD') }}</span>
+        <span class="quote-price">{{ company.currency ? (quote.c | currency:company.currency) : (quote.c | number:'1.2-2') }}</span>
         <span class="quote-movement" [class.quote-up]="quote.dp > 0" [class.quote-down]="quote.dp < 0">
           {{ formatChangeValue(quote) }} ({{ formatChangePercent(quote) }})
         </span>
       </div>
-      <p>Quote from Finnhub · {{ quote.t * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC</p>
+      <p>Quote from Finnhub · {{ quote.t * 1000 | date:'MMM d, h:mm a':'+0000' }} UTC<span *ngIf="!company.currency"> · Currency unavailable</span></p>
     </div>
     <ng-template #quoteUnavailable>
       <p class="security-quote quote-note" role="status">{{ quoteLoading ? 'Loading latest quote…' : 'Latest quote unavailable. Historical prices and company details may still be available.' }}</p>
     </ng-template>
 
-    <p class="quote-note" *ngIf="!supportsPaperTrade">Paper trading is available for USD quotes.</p>
+    <p class="quote-note" *ngIf="!supportsPaperTrade">{{ company.currency ? 'Paper trading is available for USD quotes.' : 'Paper trading requires a verified USD quote.' }}</p>
     <div *ngIf="watchlistUnavailable" class="quote-note watchlist-retry">
       <span role="status">Watchlist status unavailable.</span>
       <button type="button" class="state-action" (click)="checkWatchlistStatus()">Retry watchlist</button>
@@ -129,10 +116,11 @@
       <section class="data-panel chart-panel" aria-labelledby="overview-chart-title">
         <div class="panel-heading">
           <div>
-            <h2 id="overview-chart-title">Price performance</h2>
+            <p class="chart-eyebrow">Market performance</p>
+            <h2 id="overview-chart-title">Price history</h2>
             <p>{{ overviewRange === 'Hourly' ? 'Hourly' : 'Daily' }} closes from Polygon</p>
           </div>
-          <div *ngIf="overviewReturn !== null" class="text-end" role="status">
+          <div *ngIf="overviewReturn !== null" class="performance-stat" role="status">
             <span class="quote-movement" [class.quote-up]="overviewReturn > 0" [class.quote-down]="overviewReturn < 0">
               {{ overviewReturn > 0 ? '+' : '' }}{{ overviewReturn | number:'1.2-2' }}%
             </span>
@@ -165,6 +153,7 @@
       <aside class="overview-sidebar" aria-label="Market statistics and company profile">
         <section class="data-panel facts-panel" aria-labelledby="session-title">
           <h2 id="session-title">Session statistics</h2>
+          <p class="panel-note">{{ company.currency ? 'Quote values in ' + company.currency : 'Quote currency unavailable' }}</p>
           <dl class="facts">
             <div><dt>Open</dt><dd>{{ (currentStock?.o | number:'1.2-2') ?? '—' }}</dd></div>
             <div><dt>Previous close</dt><dd>{{ (currentStock?.pc | number:'1.2-2') ?? '—' }}</dd></div>
@@ -268,7 +257,7 @@
         </dl>
         <label for="research-trade-quantity" class="form-label">Number of shares</label>
         <input id="research-trade-quantity" name="quantity" class="form-control" type="number" min="1" step="1"
-               [(ngModel)]="tradeQuantity" [readonly]="tradePending" ngbAutofocus required>
+               [(ngModel)]="tradeQuantity" [readonly]="tradePending || tradeNeedsRefresh" ngbAutofocus required>
         <dl class="trade-summary"><div><dt>Estimated total</dt><dd>{{ estimatedTradeTotal | currency:(company.currency || 'USD') }}</dd></div></dl>
         <p class="panel-note">Paper orders use the latest quote when they execute.</p>
         <p *ngIf="tradeSide === 'buy' && walletInitialized === false" class="mt-2 mb-0">Start by initializing your paper wallet in <a routerLink="/portfolio" (click)="modal.dismiss()">Portfolio</a>.</p>
@@ -277,7 +266,7 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" [disabled]="tradePending" (click)="modal.dismiss()">Cancel</button>
         <button type="submit" class="btn btn-primary" [attr.aria-disabled]="!canSubmitTrade">
-          {{ tradePending ? 'Submitting…' : (tradeSide === 'buy' ? 'Confirm buy' : 'Confirm sell') }}
+          {{ tradePending ? 'Submitting…' : tradeNeedsRefresh ? 'Retry same order' : (tradeSide === 'buy' ? 'Confirm buy' : 'Confirm sell') }}
         </button>
       </div>
     </form>

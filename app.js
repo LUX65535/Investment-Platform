@@ -5,12 +5,12 @@ const axios = require('axios');
 const { subDays, format } = require('date-fns');
 const { MongoClient, ServerApiVersion } = require('mongodb');
 const path = require('node:path');
+const createPaperRouter = require('./routes/paper-sandbox');
 
 const app = express();
 const uri = process.env.MONGO_URI;
 const configuredDatabaseName = process.env.MONGO_DB_NAME?.trim();
 const databaseName = configuredDatabaseName || 'Assignment3';
-const initialDemoBalance = 25000;
 const maxMarketResponseBytes = 4_000_000;
 const maxHourlyRangeMs = 31 * 24 * 60 * 60 * 1000;
 const finnhub = {
@@ -25,6 +25,7 @@ const polygon = {
 };
 const browserFiles = path.join(__dirname, 'my-angular-app/dist/my-angular-app/browser');
 let client;
+let database;
 
 app.set('query parser', 'simple');
 app.use(express.json());
@@ -140,6 +141,7 @@ app.get('/company_OneDay_data', (req, res) => {
 });
 
 app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store');
   const isPreview = process.env.VERCEL_ENV === 'preview';
   const requiresDatabaseName = isPreview || process.env.VERCEL === '1';
   if (!uri || (requiresDatabaseName && !configuredDatabaseName) ||
@@ -156,7 +158,7 @@ app.use('/api', (req, res, next) => {
         deprecationErrors: true,
       },
     });
-    res.locals.db = client.db(databaseName);
+    res.locals.db = database ??= client.db(databaseName);
   } catch (error) {
     console.error('Invalid MongoDB configuration', error.name);
     return res.status(503).json({ message: 'Database is unavailable' });
@@ -172,204 +174,16 @@ function sendDatabaseError(res, error) {
   return res.status(500).json({ message: 'Could not complete the request. Please try again.' });
 }
 
-app.post('/api/watchlist', async (req, res) => {
-  const ticker = normalizeTicker(req.body?.ticker);
-  if (!ticker) return res.status(400).json({ message: 'Enter a valid stock symbol.' });
-
-  try {
-    const watchlist = res.locals.db.collection('watchlist');
-    // New entries use a stable ID so two requests cannot add the same ticker.
-    const result = await watchlist.updateOne({ ticker }, { $setOnInsert: { _id: ticker } }, { upsert: true });
-    res.status(200).json({ acknowledged: result.acknowledged, insertedId: result.upsertedId });
-  } catch (error) {
-    if (error.code === 11000) return res.status(200).json({ acknowledged: true, insertedId: null });
-    sendDatabaseError(res, error);
-  }
-});
-
-app.get('/api/watchlist', async (req, res) => {
-  try {
-    const entries = await res.locals.db.collection('watchlist').find({}).toArray();
-    const seen = new Set();
-    res.status(200).json(entries.filter(({ ticker }) => {
-      if (seen.has(ticker)) return false;
-      seen.add(ticker);
-      return true;
-    }));
-  } catch (error) {
-    sendDatabaseError(res, error);
-  }
-});
-
-app.get('/api/watchlist/check/:ticker', async (req, res) => {
-  const ticker = normalizeTicker(req.params.ticker);
-  if (!ticker) return res.status(400).json({ message: 'Enter a valid stock symbol.' });
-
-  try {
-    const item = await res.locals.db.collection('watchlist').findOne({ ticker });
-    res.status(200).json(Boolean(item));
-  } catch (error) {
-    sendDatabaseError(res, error);
-  }
-});
-
-app.delete('/api/watchlist/:ticker', async (req, res) => {
-  const ticker = normalizeTicker(req.params.ticker);
-  if (!ticker) return res.status(400).json({ message: 'Enter a valid stock symbol.' });
-
-  try {
-    await res.locals.db.collection('watchlist').deleteMany({ ticker });
-    res.status(200).json({ message: 'Stock removed from watchlist' });
-  } catch (error) {
-    sendDatabaseError(res, error);
-  }
-});
-
-function toCents(amount) {
-  return Math.round((amount + Math.abs(amount) * Number.EPSILON) * 100);
+async function getTradeMarket(ticker) {
+  const params = { symbol: ticker };
+  const [quote, profile] = await Promise.all([
+    requestMarketData(finnhub, '/quote', params),
+    requestMarketData(finnhub, '/stock/profile2', params),
+  ]);
+  return { quote, currency: profile.currency };
 }
 
-function isValidMoney(amount) {
-  return typeof amount === 'number' && amount >= 0 && Number.isSafeInteger(toCents(amount));
-}
-
-function isValidPosition(stock) {
-  return Number.isFinite(stock.quantity) && stock.quantity > 0 &&
-    stock.quantity <= Number.MAX_SAFE_INTEGER && isValidMoney(stock.totalCost);
-}
-
-async function buyStock(wallets, portfolio, wallet, ticker, quantity, cost, session) {
-  const balance = toCents(wallet.balance) / 100;
-  if (balance < cost) {
-    return { status: 400, message: 'Insufficient funds' };
-  }
-
-  const stock = await portfolio.findOne({ ticker }, { session });
-  if (stock && !isValidPosition(stock)) return { status: 409, message: 'This position needs to be reconciled before trading.' };
-  const nextQuantity = (stock?.quantity ?? 0) + quantity;
-  const totalCost = toCents((stock?.totalCost ?? 0) + cost) / 100;
-  if (nextQuantity > Number.MAX_SAFE_INTEGER || !isValidMoney(totalCost)) {
-    return { status: 409, message: 'This trade would exceed the demo portfolio limits.' };
-  }
-  await wallets.updateOne({ _id: wallet._id }, { $set: { balance: toCents(balance - cost) / 100 } }, { session });
-  await portfolio.updateOne(stock ? { _id: stock._id } : { ticker }, {
-    $set: { quantity: nextQuantity, totalCost },
-  }, { session, upsert: !stock });
-  return { status: 200, message: 'Stock purchased successfully' };
-}
-
-async function sellStock(wallets, portfolio, wallet, ticker, quantity, proceeds, session) {
-  const stock = await portfolio.findOne({ ticker }, { session });
-  if (!stock) return { status: 404, message: 'Stock not found in portfolio' };
-  if (!isValidPosition(stock)) return { status: 409, message: 'This position needs to be reconciled before trading.' };
-  if (stock.quantity < quantity) {
-    return { status: 400, message: 'Insufficient stock quantity' };
-  }
-
-  const nextBalance = toCents(wallet.balance + proceeds) / 100;
-  if (!isValidMoney(nextBalance)) return { status: 409, message: 'This trade would exceed the demo wallet limit.' };
-  await wallets.updateOne({ _id: wallet._id }, { $set: { balance: nextBalance } }, { session });
-  const remainingQuantity = stock.quantity - quantity;
-  if (remainingQuantity === 0) {
-    await portfolio.deleteOne({ _id: stock._id }, { session });
-  } else {
-    // Selling at a different price changes cash, while the retained shares keep their cost basis.
-    const remainingCost = toCents(stock.totalCost * remainingQuantity / stock.quantity) / 100;
-    await portfolio.updateOne({ _id: stock._id }, {
-      $set: { quantity: remainingQuantity, totalCost: remainingCost },
-    }, { session });
-  }
-  return { status: 200, message: 'Stock sold successfully' };
-}
-
-for (const [side, execute] of Object.entries({ buy: buyStock, sell: sellStock })) {
-  app.post(`/api/${side}`, async (req, res) => {
-    const ticker = normalizeTicker(req.body?.ticker);
-    const quantity = req.body?.quantity;
-    if (!ticker || !Number.isSafeInteger(quantity) || quantity < 1) {
-      return res.status(400).json({ message: 'Enter a valid ticker and a positive whole number of shares.' });
-    }
-
-    let quote;
-    try {
-      quote = await requestMarketData(finnhub, '/quote', { symbol: ticker });
-    } catch (error) {
-      return sendMarketError(res, error, 'message');
-    }
-    const cents = toCents(quote?.c * quantity);
-    if (typeof quote?.c !== 'number' || !Number.isSafeInteger(cents) || cents < 1) {
-      return res.status(422).json({ message: 'A valid trading quote is unavailable for this ticker.' });
-    }
-
-    try {
-      const db = res.locals.db;
-      const wallets = db.collection('wallet');
-      const portfolio = db.collection('portfolio');
-      const outcome = await client.withSession(session => session.withTransaction(async () => {
-        const wallet = await wallets.findOne({}, { session });
-        if (!wallet) return { status: 409, message: 'Initialize the demo wallet before placing a trade.' };
-        if (!isValidMoney(wallet.balance)) return { status: 409, message: 'The demo wallet needs to be reconciled before trading.' };
-        return execute(wallets, portfolio, wallet, ticker, quantity, cents / 100, session);
-      }));
-      res.status(outcome.status).json({ message: outcome.message });
-    } catch (error) {
-      sendDatabaseError(res, error);
-    }
-  });
-}
-
-app.get('/api/stocks', async (req, res) => {
-  try {
-    const stocks = await res.locals.db.collection('portfolio').find({}).toArray();
-    res.status(200).json(stocks);
-  } catch (error) {
-    sendDatabaseError(res, error);
-  }
-});
-
-app.get('/api/stocks/:ticker', async (req, res) => {
-  const ticker = normalizeTicker(req.params.ticker);
-  if (!ticker) return res.status(400).json({ message: 'Enter a valid stock symbol.' });
-
-  try {
-    const stock = await res.locals.db.collection('portfolio').findOne({ ticker });
-    if (!stock) return res.status(404).json({ message: `Ticker ${ticker} not found in portfolio.` });
-    res.status(200).json({ ticker, quantity: stock.quantity, totalCost: stock.totalCost });
-  } catch (error) {
-    sendDatabaseError(res, error);
-  }
-});
-
-app.get('/api/balance', async (req, res) => {
-  try {
-    const wallet = await res.locals.db.collection('wallet').findOne({});
-    if (wallet && !isValidMoney(wallet.balance)) {
-      return res.status(409).json({ message: 'The demo wallet balance needs to be reconciled.' });
-    }
-    res.status(200).json({ balance: wallet?.balance ?? 0, initialized: Boolean(wallet) });
-  } catch (error) {
-    sendDatabaseError(res, error);
-  }
-});
-
-app.post('/api/initWallet', async (req, res) => {
-  try {
-    const wallets = res.locals.db.collection('wallet');
-    const existingWallet = await wallets.findOne({}, { projection: { _id: 1 } });
-    if (existingWallet) return res.status(200).json({ message: 'Demo wallet is already initialized' });
-
-    const result = await wallets.updateOne({ _id: 'demo-wallet' }, {
-      $setOnInsert: { balance: initialDemoBalance },
-    }, { upsert: true });
-    res.status(200).json({
-      message: result.upsertedCount ? 'Wallet initialized with $25,000' : 'Demo wallet is already initialized',
-    });
-  } catch (error) {
-    if (error.code === 11000) return res.status(200).json({ message: 'Demo wallet is already initialized' });
-    sendDatabaseError(res, error);
-  }
-});
-
+app.use('/api', createPaperRouter({ normalizeTicker, getTradeMarket, sendMarketError, sendDatabaseError }));
 app.use('/api', (req, res) => {
   res.status(404).json({ message: 'API endpoint not found' });
 });

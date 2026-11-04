@@ -1,10 +1,10 @@
-<header class="page-heading portfolio-heading">
+<header class="page-heading workspace-heading">
   <div>
     <p class="page-eyebrow">Paper trading</p>
     <h1>Portfolio</h1>
-    <p>Monitor your positions, buying power and unrealized returns.</p>
+    <p>Review simulated orders, buying power, and open positions in your browser workspace.</p>
   </div>
-  <span class="demo-badge">Simulated account · USD</span>
+  <span class="workspace-label">Simulated account · USD</span>
 </header>
 
 <section class="portfolio-overview" aria-label="Portfolio overview" [attr.aria-busy]="isLoading">
@@ -159,6 +159,54 @@
   <footer *ngIf="portfolio.length" class="panel-footer">Quotes may be delayed. Unrealized P&amp;L compares market value with the original cost of open shares.</footer>
 </section>
 
+<section class="orders-panel" aria-labelledby="orders-title" [attr.aria-busy]="receiptsLoading">
+  <div class="panel-header">
+    <div>
+      <h2 id="orders-title">Order activity</h2>
+      <p>Review fills, rejections, and orders awaiting confirmation.</p>
+    </div>
+    <button type="button" class="state-action" [attr.aria-disabled]="receiptsLoading" (click)="loadReceipts()">Refresh orders</button>
+  </div>
+  <div *ngIf="receiptsError" class="panel-messages">
+    <p class="state-message state-message--error" role="alert">{{ receiptsError }}</p>
+  </div>
+  <div *ngIf="pendingError" class="panel-messages">
+    <p class="state-message state-message--error" role="alert">{{ pendingError }}</p>
+  </div>
+  <p *ngIf="receiptsLoading" class="order-empty" role="status">Loading order activity…</p>
+  <p *ngIf="!receiptsLoading && !receiptsError && !receipts.length && !pendingOrders.length" class="order-empty">
+    Your simulated orders will appear here with a receipt.
+  </p>
+  <ul class="order-list" *ngIf="pendingOrders.length">
+    <li *ngFor="let order of pendingOrders" class="pending-order">
+      <div><strong>{{ order.side === 'buy' ? 'Buy' : 'Sell' }} {{ order.ticker }}</strong><p>{{ order.quantity }} {{ order.quantity === 1 ? 'share' : 'shares' }} · Awaiting confirmation</p></div>
+      <button type="button" class="state-action" [attr.aria-disabled]="checkingOrderId !== null"
+              (click)="retryPendingOrder(order)">{{ checkingOrderId === order.orderId ? 'Checking…' : 'Retry same order' }}</button>
+    </li>
+  </ul>
+  <ul class="order-list" *ngIf="receipts.length">
+    <li *ngFor="let receipt of receipts">
+      <details class="order-receipt">
+        <summary>
+          <span class="receipt-symbol"><strong>{{ receipt.side === 'buy' ? 'Buy' : 'Sell' }} {{ receipt.ticker }}</strong><span>{{ receipt.quantity }} {{ receipt.quantity === 1 ? 'share' : 'shares' }}</span></span>
+          <time [attr.datetime]="receipt.submittedAt">{{ receipt.submittedAt | date:'MMM d, h:mm a':'+0000' }} UTC</time>
+          <span class="receipt-status" [class.receipt-status--rejected]="receipt.status === 'rejected'">{{ receipt.status === 'filled' ? 'Filled' : 'Rejected' }}</span>
+          <span class="receipt-caret" aria-hidden="true">⌄</span>
+        </summary>
+        <div class="receipt-body">
+          <p>{{ receipt.message }}</p>
+          <dl>
+            <div *ngIf="receipt.price !== null"><dt>Execution price</dt><dd>{{ receipt.price | currency:'USD' }}</dd></div>
+            <div *ngIf="receipt.total !== null"><dt>Order value</dt><dd>{{ receipt.total | currency:'USD' }}</dd></div>
+            <div *ngIf="receipt.balance !== null"><dt>Cash after order</dt><dd>{{ receipt.balance | currency:'USD' }}</dd></div>
+            <div><dt>Receipt ID</dt><dd><code>{{ receipt.orderId }}</code></dd></div>
+          </dl>
+        </div>
+      </details>
+    </li>
+  </ul>
+</section>
+
 <ng-template #tradeDialog let-dialog>
   <form *ngIf="activeTrade as trade" (ngSubmit)="submitTrade()">
     <div class="modal-header">
@@ -178,7 +226,7 @@
       <label for="portfolio-trade-quantity" class="form-label">Shares</label>
       <input id="portfolio-trade-quantity" name="quantity" type="number" min="1" step="1"
              required ngbAutofocus class="form-control" [(ngModel)]="quantity"
-             [readonly]="submittingTrade" aria-describedby="portfolio-trade-estimate">
+             [readonly]="submittingTrade || tradeNeedsRefresh" aria-describedby="portfolio-trade-estimate">
       <p id="portfolio-trade-estimate" class="form-text">The final price uses the latest quote at execution.</p>
       <p *ngIf="!validQuantity" class="text-danger">Enter a positive whole number.</p>
       <p *ngIf="validQuantity && !submittingTrade && !tradeNeedsRefresh && !canSubmitTrade" class="text-danger">
@@ -189,7 +237,7 @@
     <div class="modal-footer">
       <button type="button" class="state-action" [disabled]="submittingTrade" (click)="dialog.dismiss()">Cancel</button>
       <button type="submit" class="btn btn-primary" [attr.aria-disabled]="!canSubmitTrade">
-        {{ submittingTrade ? 'Submitting…' : (trade.side === 'buy' ? 'Place buy order' : 'Place sell order') }}
+        {{ submittingTrade ? 'Submitting…' : tradeNeedsRefresh ? 'Retry same order' : (trade.side === 'buy' ? 'Place buy order' : 'Place sell order') }}
       </button>
     </div>
   </form>

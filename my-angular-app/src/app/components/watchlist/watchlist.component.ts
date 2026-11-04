@@ -2,6 +2,7 @@ import { Component, DestroyRef, ElementRef, OnInit, ViewChild, inject } from '@a
 import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { catchError, finalize, forkJoin, from, map, mergeMap, of, switchMap, tap } from 'rxjs';
+import { PortfolioService } from '../../services/portfolio.service';
 
 interface Quote {
   c: number;
@@ -12,6 +13,7 @@ interface Quote {
 interface WatchlistItem {
   ticker: string;
   name?: string;
+  currency?: string;
   quote?: Quote;
   quotePending?: boolean;
 }
@@ -33,7 +35,7 @@ export class WatchlistComponent implements OnInit {
   actionError = '';
   actionStatus = '';
 
-  constructor(private http: HttpClient) {}
+  constructor(private http: HttpClient, private portfolioService: PortfolioService) {}
 
   ngOnInit(): void {
     this.loadWatchlist();
@@ -47,7 +49,7 @@ export class WatchlistComponent implements OnInit {
     if (!this.canRefresh) return;
     this.loading = true;
     this.loadError = '';
-    this.http.get<WatchlistItem[]>('/api/watchlist').pipe(
+    this.portfolioService.getWatchlist().pipe(
       tap(items => {
         this.watchlist = items.map(({ ticker }) => ({ ticker, quotePending: true }));
         this.hasLoaded = true;
@@ -57,7 +59,7 @@ export class WatchlistComponent implements OnInit {
       switchMap(items => from(items).pipe(mergeMap(({ ticker }) => {
         const params = { symbol: ticker };
         return forkJoin({
-          profile: this.http.get<{ name?: string }>('/company_profile', { params }).pipe(
+          profile: this.http.get<{ name?: string; currency?: string }>('/company_profile', { params }).pipe(
             catchError(() => of(null)),
           ),
           quote: this.http.get<Quote>('/company_quote', { params }).pipe(
@@ -66,6 +68,7 @@ export class WatchlistComponent implements OnInit {
         }).pipe(map(({ profile, quote }): WatchlistItem => ({
           ticker,
           name: profile?.name,
+          currency: typeof profile?.currency === 'string' && /^[A-Z]{3}$/.test(profile.currency) ? profile.currency : undefined,
           quote: quote && Number.isFinite(quote.c) && quote.c > 0 ? {
             c: quote.c,
             d: Number.isFinite(quote.d) ? quote.d : null,
@@ -89,7 +92,7 @@ export class WatchlistComponent implements OnInit {
     this.actionError = '';
     this.actionStatus = '';
     this.removing.add(ticker);
-    this.http.delete(`/api/watchlist/${encodeURIComponent(ticker)}`).pipe(
+    this.portfolioService.removeWatchlist(ticker).pipe(
       takeUntilDestroyed(this.destroyRef),
       finalize(() => this.removing.delete(ticker)),
     ).subscribe({

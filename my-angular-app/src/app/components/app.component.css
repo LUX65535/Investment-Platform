@@ -64,8 +64,8 @@
   flex: 0 0 auto;
   place-items: center;
   border-radius: 10px;
-  background: var(--accent);
-  color: #fff;
+  background: var(--brand);
+  color: #d5e4ff;
 }
 
 .brand-mark svg {
@@ -104,7 +104,7 @@
 
 .app-nav a.active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-hover);
 }
 
 .mode-badge {
@@ -115,8 +115,8 @@
   padding: .28rem .62rem;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: var(--surface-subtle);
-  color: var(--muted);
+  background: #f5f8ff;
+  color: var(--brand);
   font-size: .72rem;
   font-weight: 700;
   white-space: nowrap;

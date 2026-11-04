@@ -1,20 +1,21 @@
 :root {
   color-scheme: light;
-  --canvas: #f6f7f4;
+  --canvas: #f2f5fb;
   --surface: #fff;
-  --surface-subtle: #f0f7f3;
-  --ink: #162822;
-  --muted: #50635b;
-  --line: #dce4df;
-  --accent: #116b50;
-  --accent-hover: #0a513b;
-  --accent-soft: #e8f4ed;
-  --positive: #116b50;
-  --positive-soft: #e8f4ed;
-  --negative: #a43c47;
-  --negative-soft: #faeef0;
+  --surface-subtle: #f4f7fd;
+  --ink: #152641;
+  --muted: #50627e;
+  --line: #d8e2f1;
+  --accent: #2254dc;
+  --brand: #172f56;
+  --accent-hover: #163eaf;
+  --accent-soft: #e9efff;
+  --positive: #2254dc;
+  --positive-soft: #e9efff;
+  --negative: #a1324b;
+  --negative-soft: #fbeef1;
   --radius: 10px;
-  --shadow: 0 6px 24px rgba(22, 40, 34, .06);
+  --shadow: 0 6px 24px rgba(21, 44, 84, .075);
   --font: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
@@ -76,6 +77,42 @@ button:disabled {
   max-width: 57ch;
   margin: 0;
   color: var(--muted);
+}
+
+.workspace-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: .8rem 1.25rem;
+  padding: clamp(1rem, 3vw, 1.65rem);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(115deg, #fff 45%, #eaf1ff 100%);
+}
+
+.workspace-heading h1 { margin-bottom: .32rem; }
+.workspace-heading .page-eyebrow { margin-bottom: .4rem; }
+
+.workspace-label {
+  display: inline-flex;
+  align-items: center;
+  gap: .42rem;
+  padding: .38rem .65rem;
+  border: 1px solid #c9d8f3;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent-hover);
+  font-size: .76rem;
+  font-weight: 650;
+}
+
+.workspace-label::before {
+  width: .4rem;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--accent);
+  content: '';
 }
 
 .empty-state {
@@ -176,7 +213,7 @@ button:disabled {
 }
 
 .confirmation-alert.alert-success {
-  border-color: #c2e7d5;
+  border-color: #bfcef2;
   background: var(--positive-soft);
   color: var(--positive);
 }
@@ -265,7 +302,7 @@ button:disabled {
   place-items: center;
   overflow-y: auto;
   padding: 1rem;
-  background: rgba(15, 32, 26, .48);
+  background: rgba(16, 31, 57, .52);
 }
 
 .modal[role="dialog"] .modal-dialog {
@@ -279,7 +316,7 @@ button:disabled {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 22px 72px rgba(15, 32, 26, .22);
+  box-shadow: 0 22px 72px rgba(16, 31, 57, .22);
 }
 
 .modal[role="dialog"] :is(.modal-header, .modal-body, .modal-footer) {

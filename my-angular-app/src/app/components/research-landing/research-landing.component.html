@@ -1,0 +1,81 @@
+<section class="market-hero" aria-labelledby="research-title">
+  <div class="hero-copy">
+    <p class="hero-kicker"><span></span> Market research</p>
+    <h1 id="research-title">Research stocks<br class="hero-break"> with clarity.</h1>
+    <p class="hero-summary">Look up a company, put its price moves in context, and build a watchlist for your next idea.</p>
+    <ng-content></ng-content>
+    <div class="quick-symbols" aria-label="Example stocks">
+      <span>Try a symbol</span>
+      <a *ngFor="let item of examples" [routerLink]="['/search-details', item.ticker]"
+         [attr.aria-label]="'Research ' + item.name + ' (' + item.ticker + ')'">{{ item.ticker }}</a>
+    </div>
+  </div>
+
+  <section class="featured" aria-labelledby="featured-title">
+    <div class="featured-header">
+      <div>
+        <p class="featured-kicker">Featured research</p>
+        <h2 id="featured-title">Apple <span>AAPL</span></h2>
+      </div>
+      <span class="featured-source">Daily closes</span>
+    </div>
+    <ng-container *ngIf="featured as chart; else emptyFeature">
+      <div class="featured-values">
+        <div><strong>{{ chart.close | currency:'USD' }}</strong><span>Last close</span></div>
+        <div class="featured-change" [class.featured-change--down]="chart.change < 0">
+          <strong>{{ chart.change > 0 ? '+' : '' }}{{ chart.change | number:'1.2-2' }}%</strong><span>3-month change</span>
+        </div>
+      </div>
+      <svg class="featured-chart" viewBox="0 0 360 128" preserveAspectRatio="none" role="img"
+           aria-label="Apple daily closing prices over the displayed three months">
+        <defs>
+          <linearGradient id="featured-area" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="#72a7ff" stop-opacity=".30"/>
+            <stop offset="100%" stop-color="#72a7ff" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="M8 26H352 M8 61H352 M8 96H352" stroke="#294266" fill="none"/>
+        <path [attr.d]="chart.area" fill="url(#featured-area)"/>
+        <path [attr.d]="chart.line" fill="none" stroke="#84b1ff" stroke-width="2.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        <circle cx="352" [attr.cy]="chart.lastY" r="4" fill="#b9d3ff"/>
+      </svg>
+      <div class="featured-dates">
+        <span>{{ chart.start | date:'MMM d':'+0000' }}</span>
+        <span>{{ chart.end | date:'MMM d, yyyy':'+0000' }}</span>
+      </div>
+    </ng-container>
+    <ng-template #emptyFeature>
+      <div class="featured-state">
+        <p role="status">{{ loading ? 'Loading Apple price history…' : 'Apple price history is temporarily unavailable.' }}</p>
+        <button *ngIf="!loading" type="button" (click)="loadFeatured()">Retry price history</button>
+      </div>
+    </ng-template>
+    <div class="featured-footer">
+      <span>Source: Polygon</span>
+      <a [routerLink]="['/search-details','AAPL']" [queryParams]="{range:'3m'}">Open AAPL <span aria-hidden="true">↗</span></a>
+    </div>
+  </section>
+</section>
+
+<section class="next-actions" aria-labelledby="actions-title">
+  <div class="actions-heading">
+    <h2 id="actions-title">Your workspace</h2>
+    <p>Open your saved list or simulated account.</p>
+  </div>
+  <div class="action-grid">
+    <a class="workspace-action" routerLink="/watchlist">
+      <span class="action-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8L12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+      </span>
+      <span><strong>Watchlist</strong><span>Check saved companies and daily moves.</span></span>
+      <span class="action-arrow" aria-hidden="true">→</span>
+    </a>
+    <a class="workspace-action" routerLink="/portfolio">
+      <span class="action-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="8" width="15" height="11" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M9 8V6.5c0-.8.7-1.5 1.5-1.5h3c.8 0 1.5.7 1.5 1.5V8m-10 5h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </span>
+      <span><strong>Paper portfolio</strong><span>Review simulated orders, cash, and positions.</span></span>
+      <span class="action-arrow" aria-hidden="true">→</span>
+    </a>
+  </div>
+</section>

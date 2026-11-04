@@ -3,7 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import {Observable, of, Subscription, interval, forkJoin} from 'rxjs';
-import { catchError, debounceTime, distinctUntilChanged, filter, finalize, map, shareReplay, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
+import { catchError, debounceTime, distinctUntilChanged, filter, finalize, map, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
 import { ActivatedRoute, NavigationEnd, Router } from '@angular/router';
 import {FormControl} from "@angular/forms";
 import * as Highcharts from 'highcharts/highstock';
@@ -13,7 +13,8 @@ import volumeByPrice from 'highcharts/indicators/volume-by-price';
 import indicators from 'highcharts/indicators/indicators';
 indicators(Highcharts);
 volumeByPrice(Highcharts);
-import { PortfolioService  } from '../../services/portfolio.service';
+import { paperOrderConfirmation, PendingOrderError, PendingPaperOrder, PortfolioService } from '../../services/portfolio.service';
+import { MarketBar as AggregateBarResponse, MarketHistoryService, utcDayMonthsBefore, validClosingBars } from '../../services/market-history.service';
 
 export interface QuoteResponse {
   c: number;
@@ -31,16 +32,6 @@ export interface StockResult {
   description: string;
   symbol: string;
   type: string;
-}
-export interface AggregateBarResponse {
-  c: number;
-  h: number;
-  l: number;
-  n: number;
-  o: number;
-  t: number;
-  v: number;
-  vw: number;
 }
 export interface CompanyProfile {
   country: string;
@@ -112,13 +103,6 @@ type HistoryRange = typeof historyRanges[number];
 const overviewRanges = ['Hourly', '1M', '3M', '1Y'] as const;
 type OverviewRange = typeof overviewRanges[number];
 
-function utcDayMonthsBefore(end: number, months: number): number {
-  const date = new Date(end);
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth() - months;
-  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  return Date.UTC(year, month, Math.min(date.getUTCDate(), daysInMonth));
-}
 
 @Component({
   selector: 'app-search-details',
@@ -147,17 +131,10 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   private overviewDailyBars: AggregateBarResponse[] | null = null;
   private overviewDailyLoading = false;
   private overviewDailyFailed = false;
-  private dailyRequest?: Observable<{ results: AggregateBarResponse[] }>;
   private requestedTicker: string | null = null;
   readonly loadingTabs = new Set<DetailTab>();
   readonly failedTabs = new Set<DetailTab>();
   private readonly loadedTabs = new Set<DetailTab>();
-  readonly exampleTickers = [
-    { ticker: 'AAPL', name: 'Apple' },
-    { ticker: 'MSFT', name: 'Microsoft' },
-    { ticker: 'NVDA', name: 'NVIDIA' },
-    { ticker: 'AMZN', name: 'Amazon' },
-  ];
   readonly detailTabs: ReadonlyArray<{ id: DetailTab; label: string }> = [
     { id: 'summary', label: 'Overview' },
     { id: 'news', label: 'Top News' },
@@ -224,6 +201,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   userWalletBalance = 0;
   ownedStockQuantity = 0;
   private tradeModal?: NgbModalRef;
+  private pendingTrade?: PendingPaperOrder;
   private newsModal?: NgbModalRef;
 
   get showSearchHero(): boolean {
@@ -248,6 +226,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     private route: ActivatedRoute,
     private router: Router,
     private portfolioService: PortfolioService,
+    private marketHistory: MarketHistoryService,
     private modal: NgbModal
   ) {}
 
@@ -281,18 +260,21 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   get supportsPaperTrade(): boolean {
-    return !this.searchResults?.currency || this.searchResults.currency.toUpperCase() === 'USD';
+    return this.searchResults?.currency === 'USD';
   }
 
   openTrade(template: TemplateRef<unknown>, side: 'buy' | 'sell'): void {
     if (!this.currentStock || !this.supportsPaperTrade || this.tradeModal || this.tradePending) return;
+    const ticker = this.lastSuccessfulSearch;
+    const pending = ticker ? this.portfolioService.getPendingOrder(side, ticker) : undefined;
+    this.pendingTrade = pending;
     this.tradeSide = side;
-    this.tradeQuantity = 1;
-    this.tradeError = '';
-    this.tradeNeedsRefresh = false;
+    this.tradeQuantity = pending?.quantity ?? 1;
+    this.tradeError = pending ? 'This order is awaiting confirmation. Retry with the original order ID.' : '';
+    this.tradeNeedsRefresh = Boolean(pending);
     this.userWalletBalance = 0;
     this.walletInitialized = undefined;
-    this.walletLoading = side === 'buy';
+    this.walletLoading = side === 'buy' && !pending;
     const tradeModal = this.modal.open(template, {
       ariaLabelledBy: 'trade-dialog-title',
       centered: true,
@@ -329,44 +311,44 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   get canSubmitTrade(): boolean {
     const quantity = this.tradeQuantity ?? 0;
     const price = this.currentStock?.c ?? 0;
-    return this.supportsPaperTrade && !this.tradePending && !this.tradeNeedsRefresh && !this.walletLoading && price > 0
-      && Number.isSafeInteger(quantity) && quantity > 0
-      && (this.tradeSide === 'buy'
+    if (this.tradePending || !Number.isSafeInteger(quantity) || quantity < 1) return false;
+    if (this.tradeNeedsRefresh) return true;
+    return this.supportsPaperTrade && !this.walletLoading && price > 0 && (this.tradeSide === 'buy'
         ? this.walletInitialized !== false && this.estimatedTradeTotal <= this.userWalletBalance
         : quantity <= this.ownedStockQuantity);
   }
 
   submitTrade(): void {
     const ticker = this.lastSuccessfulSearch;
-    const price = this.currentStock?.c;
     const quantity = this.tradeQuantity;
-    if (!this.canSubmitTrade || !ticker || !price || !quantity) return;
+    if (!this.canSubmitTrade || !ticker || !quantity) return;
 
     const side = this.tradeSide;
     const context = this.searchSubscription;
     this.tradePending = true;
     this.tradeError = '';
-    const trade = side === 'buy'
-      ? this.portfolioService.buyStock(ticker, quantity, price)
-      : this.portfolioService.sellStock(ticker, quantity, price);
+    const trade = this.pendingTrade
+      ? this.portfolioService.retryOrder(this.pendingTrade)
+      : this.portfolioService.placeOrder(side, ticker, quantity);
     trade.pipe(
       takeUntilDestroyed(this.destroyRef),
       finalize(() => this.tradePending = false)
     ).subscribe({
-      next: () => {
+      next: receipt => {
         if (this.lastSuccessfulSearch === ticker) this.refreshHolding(ticker);
         if (this.searchSubscription !== context) return;
         this.tradeModal?.close();
-        this.showConfirmationMessage(`${side === 'buy' ? 'Bought' : 'Sold'} ${quantity} ${ticker} ${quantity === 1 ? 'share' : 'shares'}.`);
+        this.showConfirmationMessage(paperOrderConfirmation(receipt));
       },
-      error: (error: HttpErrorResponse) => {
+      error: (error: HttpErrorResponse | PendingOrderError) => {
         if (this.searchSubscription !== context) return;
-        if (error.status === 0 || error.status >= 500) {
-          this.tradeNeedsRefresh = true;
+        this.pendingTrade = error instanceof PendingOrderError ? error.order : undefined;
+        this.tradeNeedsRefresh = Boolean(this.pendingTrade);
+        if (this.tradeNeedsRefresh) {
           this.refreshHolding(ticker);
-          this.tradeError = 'We couldn’t confirm this order. Close this dialog and check your holdings before trying again.';
+          this.tradeError = 'This order is awaiting confirmation. Retry the same order here or from Portfolio.';
         } else {
-          this.tradeError = typeof error.error?.message === 'string'
+          this.tradeError = error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
             ? error.error.message
             : 'The order did not go through. Please try again.';
         }
@@ -381,7 +363,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const shared: Highcharts.Options = {
       chart: { backgroundColor: 'transparent', animation: false, style: { fontFamily: 'inherit' } },
       title: { text: '' },
-      legend: { enabled: true, itemStyle: { fontSize: '11px', color: '#50635b' } },
+      legend: { enabled: true, itemStyle: { fontSize: '11px', color: '#50627e' } },
       plotOptions: { series: { animation: false } },
       tooltip: { shared: true },
       exporting: { enabled: false },
@@ -402,24 +384,24 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       accessibility: { landmarkVerbosity: 'one', description: `Quarterly reported and estimated earnings per share for ${ticker}.` },
       lang: { accessibility: { chartContainerLabel: 'Quarterly earnings chart' } },
       xAxis: { categories: earnings.map(earning => quarterLabel(earning.period)), labels: { autoRotation: [] } },
-      yAxis: { title: { text: '' }, gridLineColor: '#e7ede9' },
+      yAxis: { title: { text: '' }, gridLineColor: '#e3eaf7' },
       tooltip: { shared: true, valueDecimals: 2 },
       series: [
         {
-          type: 'line', name: 'Actual EPS', color: '#116b50',
+          type: 'line', name: 'Actual EPS', color: '#245adb',
           data: earnings.map(earning => ({
             y: earning.actual,
             custom: { surprise: earning.surprise?.toFixed(2) ?? '—' },
           })),
           tooltip: { pointFormat: '{series.name}: <b>{point.y}</b> · Surprise: {point.custom.surprise}<br/>' },
         },
-        { type: 'line', name: 'Estimated EPS', color: '#687d78', dashStyle: 'ShortDash', data: earnings.map(earning => earning.estimate) },
+        { type: 'line', name: 'Estimated EPS', color: '#62769b', dashStyle: 'ShortDash', data: earnings.map(earning => earning.estimate) },
       ],
     };
 
     const ratings = [
-      { name: 'Strong buy', color: '#116b50', values: trends.map(trend => trend.strongBuy) },
-      { name: 'Buy', color: '#4f947b', values: trends.map(trend => trend.buy) },
+      { name: 'Strong buy', color: '#245adb', values: trends.map(trend => trend.strongBuy) },
+      { name: 'Buy', color: '#7198e9', values: trends.map(trend => trend.buy) },
       { name: 'Hold', color: '#be8a40', values: trends.map(trend => trend.hold) },
       { name: 'Sell', color: '#ba6368', values: trends.map(trend => trend.sell) },
       { name: 'Strong sell', color: '#893d4b', values: trends.map(trend => trend.strongSell) },
@@ -429,7 +411,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       accessibility: { landmarkVerbosity: 'one', description: `Monthly distribution of analyst ratings for ${ticker}.` },
       lang: { accessibility: { chartContainerLabel: 'Analyst recommendations chart' } },
       xAxis: { categories: trends.map(trend => monthLabel(trend.period)), labels: { autoRotation: [] } },
-      yAxis: { min: 0, allowDecimals: false, title: { text: '' }, gridLineColor: '#e7ede9' },
+      yAxis: { min: 0, allowDecimals: false, title: { text: '' }, gridLineColor: '#e3eaf7' },
       plotOptions: { ...shared.plotOptions, column: { stacking: 'normal', borderWidth: 0 } },
       series: ratings.map(rating => ({ type: 'column', name: rating.name, color: rating.color, data: rating.values })),
     };
@@ -582,10 +564,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     return this.http.get<Trend[]>(url);
   }
   getBigChartData(ticker: string): Observable<{ results: AggregateBarResponse[] }> {
-    return this.dailyRequest ??= this.http.get<{ results?: AggregateBarResponse[] }>('/company_data', { params: { symbol: ticker } }).pipe(
-      map(response => ({ results: this.validCloses(response?.results) })),
-      shareReplay({ bufferSize: 1, refCount: true }),
-    );
+    return this.marketHistory.daily(ticker);
   }
   createBigChart(data: { results: AggregateBarResponse[] }, ticker: string): Highcharts.Options {
     const bars = data.results.filter(bar => bar && [bar.t, bar.o, bar.h, bar.l, bar.c, bar.v].every(Number.isFinite))
@@ -669,16 +648,16 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         name: `${ticker}`,
         id: 'aapl',
         zIndex: 2,
-        color: '#a43c47',
-        upColor: '#116b50',
-        lineColor: '#a43c47',
-        upLineColor: '#116b50',
+        color: '#a1324b',
+        upColor: '#245adb',
+        lineColor: '#a1324b',
+        upLineColor: '#245adb',
         data: ohlc
       }, {
         type: 'column',
         name: 'Volume',
         id: 'volume',
-        color: '#87b6a3',
+        color: '#8bacef',
         data: volume,
         yAxis: 1
       }, {
@@ -696,15 +675,15 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         },
         volumeDivision: {
           styles: {
-            positiveColor: 'rgba(17, 107, 80, .24)',
-            negativeColor: 'rgba(164, 60, 71, .20)',
+            positiveColor: 'rgba(36, 90, 219, .24)',
+            negativeColor: 'rgba(161, 50, 75, .20)',
           },
         }
       }, {
         type: 'sma',
         linkedTo: 'aapl',
         zIndex: 1,
-        color: '#677a72',
+        color: '#677ca0',
         marker: {
           enabled: false
         }
@@ -712,14 +691,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       navigator: {
         enabled: true,
         series: {
-          color: '#116b50',
+          color: '#245adb',
           fillColor: {
             linearGradient: {
               x1: 0, y1: 0, x2: 0, y2: 1
             },
             stops: [
-              [0, 'rgba(17, 107, 80, .32)'],
-              [1, 'rgba(17, 107, 80, .06)']
+              [0, 'rgba(36, 90, 219, .32)'],
+              [1, 'rgba(36, 90, 219, .06)']
             ]
           },
         },
@@ -761,13 +740,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const to = new Date(latest).toISOString().slice(0, 10);
     return this.http.get<{ results?: AggregateBarResponse[] }>('/company_OneDay_data', {
       params: { symbol: ticker, from, to }
-    }).pipe(map(response => this.validCloses(response?.results)));
-  }
-
-  private validCloses(data: unknown): AggregateBarResponse[] {
-    if (!Array.isArray(data)) return [];
-    return data.filter(bar => Number.isFinite(bar?.t) && Number.isFinite(bar.c) && bar.c > 0)
-      .sort((a, b) => a.t - b.t);
+    }).pipe(map(response => validClosingBars(response?.results)));
   }
 
   private renderOverview(): void {
@@ -813,7 +786,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         title: {
           text: null
         },
-        gridLineColor: '#e7ede9',
+        gridLineColor: '#e3eaf7',
         opposite: true,
         labels: { x: 6 },
       },
@@ -830,10 +803,10 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         name: ticker,
         data: seriesData,
         type: 'area',
-        color: '#116b50',
+        color: '#245adb',
         fillColor: {
           linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
-          stops: [[0, 'rgba(17, 107, 80, .20)'], [1, 'rgba(17, 107, 80, .01)']],
+          stops: [[0, 'rgba(36, 90, 219, .20)'], [1, 'rgba(36, 90, 219, .01)']],
         },
         threshold: null,
         tooltip: {
@@ -939,7 +912,6 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.overviewStart = null;
     this.overviewEnd = null;
     this.overviewReturn = null;
-    this.dailyRequest = undefined;
     this.topNews = [];
     this.visibleNewsCount = 12;
     this.earnings = [];
@@ -981,7 +953,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         }
 
         this.lastSuccessfulSearch = ticker;
-        this.searchResults = profile;
+        const currency = typeof profile.currency === 'string' ? profile.currency.toUpperCase() : '';
+        this.searchResults = { ...profile, currency: /^[A-Z]{3}$/.test(currency) ? currency : '' };
         this.loadSummary(ticker);
         this.loadActiveView();
         this.checkWatchlistStatus();
@@ -1174,7 +1147,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     if (!ticker || this.watchlistLoading || this.watchlistPending) return;
     this.watchlistUnavailable = false;
     this.watchlistLoading = true;
-    this.searchSubscription.add(this.http.get<boolean>(`/api/watchlist/check/${encodeURIComponent(ticker)}`).pipe(
+    this.searchSubscription.add(this.portfolioService.checkWatchlist(ticker).pipe(
       finalize(() => this.watchlistLoading = false),
     ).subscribe({
       next: favorited => this.isFavorited = favorited,
@@ -1203,8 +1176,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const context = this.searchSubscription;
     this.watchlistPending = true;
     const request = adding
-      ? this.http.post('/api/watchlist', { ticker })
-      : this.http.delete(`/api/watchlist/${encodeURIComponent(ticker)}`);
+      ? this.portfolioService.addWatchlist(ticker)
+      : this.portfolioService.removeWatchlist(ticker);
     request.pipe(
       takeUntilDestroyed(this.destroyRef),
       finalize(() => {
@@ -1235,7 +1208,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   }
 
   getChangeColor(stock: QuoteResponse): string {
-    return stock.dp > 0 ? '#08734b' : stock.dp < 0 ? '#b4233c' : '#293950';
+    return stock.dp > 0 ? '#2254dc' : stock.dp < 0 ? '#b4233c' : '#293950';
   }
 
   formatChangeValue(quote: QuoteResponse | null): string {

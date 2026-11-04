@@ -17,6 +17,7 @@ import { AppRoutingModule } from './app-routing.module';
 import { SearchDetailsComponent } from './components/search-details/search-details.component';
 import { WatchlistComponent } from './components/watchlist/watchlist.component';
 import { PortfolioComponent } from './components/portfolio/portfolio.component';
+import { ResearchLandingComponent } from './components/research-landing/research-landing.component';
 import { HighchartsChartModule } from 'highcharts-angular';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 
@@ -41,6 +42,7 @@ import { provideAnimationsAsync } from '@angular/platform-browser/animations/asy
     MatProgressSpinnerModule,
     NgbModule,
     CommonModule,
+    ResearchLandingComponent,
     HighchartsChartModule,
     MatDialogModule
 

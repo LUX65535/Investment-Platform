@@ -3,7 +3,9 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 import { catchError, finalize, forkJoin, from, map, mergeMap, of, Subscription, switchMap, tap } from 'rxjs';
-import { PortfolioService, Stock } from '../../services/portfolio.service';
+import {
+  PaperOrderReceipt, PendingOrderError, PendingPaperOrder, PortfolioService, Stock, paperOrderConfirmation,
+} from '../../services/portfolio.service';
 
 interface Holding extends Omit<Stock, 'price' | 'change'> {
   price: number | null;
@@ -20,6 +22,8 @@ export class PortfolioComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   private tradeRef?: NgbModalRef;
   private portfolioRequest?: Subscription;
+  private receiptRequest?: Subscription;
+  private pendingTrade?: PendingPaperOrder;
 
   @ViewChild('tradeDialog', { static: true }) private tradeDialog!: TemplateRef<unknown>;
   portfolio: Holding[] = [];
@@ -36,6 +40,12 @@ export class PortfolioComponent implements OnInit {
   tradeNeedsRefresh = false;
   submittingTrade = false;
   quantity: number | null = 1;
+  receipts: PaperOrderReceipt[] = [];
+  pendingOrders: PendingPaperOrder[] = [];
+  receiptsLoading = false;
+  receiptsError = '';
+  pendingError = '';
+  checkingOrderId: string | null = null;
 
   constructor(
     private portfolioService: PortfolioService,
@@ -83,7 +93,8 @@ export class PortfolioComponent implements OnInit {
 
   get canSubmitTrade(): boolean {
     const trade = this.activeTrade;
-    if (!trade || !this.validQuantity || this.submittingTrade || this.tradeNeedsRefresh || this.quantity === null) return false;
+    if (!trade || !this.validQuantity || this.submittingTrade || this.checkingOrderId || this.quantity === null) return false;
+    if (this.tradeNeedsRefresh) return true;
     return trade.side === 'sell'
       ? this.quantity <= trade.holding.quantity
       : this.cashBalance !== null && this.estimatedTotal <= this.cashBalance;
@@ -91,6 +102,7 @@ export class PortfolioComponent implements OnInit {
 
   loadPortfolio(): void {
     if (this.isLoading) return;
+    this.loadReceipts();
     this.portfolioRequest?.unsubscribe();
     this.isLoading = true;
     this.holdingsCurrent = false;
@@ -152,7 +164,7 @@ export class PortfolioComponent implements OnInit {
   }
 
   canOpenTrade(holding: Holding, side: 'buy' | 'sell'): boolean {
-    if (this.isLoading || this.isInitializing || !this.holdingsCurrent || !this.walletInitialized || holding.price === null) return false;
+    if (this.checkingOrderId || this.isLoading || this.isInitializing || !this.holdingsCurrent || !this.walletInitialized || holding.price === null) return false;
     return side === 'buy' ? this.cashBalance !== null && this.cashBalance > 0 : holding.quantity > 0;
   }
 
@@ -160,9 +172,11 @@ export class PortfolioComponent implements OnInit {
     if (this.tradeRef || holding.price === null || !this.canOpenTrade(holding, side)) return;
     this.actionError = '';
     this.statusMessage = '';
-    this.tradeError = '';
-    this.tradeNeedsRefresh = false;
-    this.quantity = 1;
+    const pending = this.portfolioService.getPendingOrder(side, holding.ticker);
+    this.pendingTrade = pending;
+    this.tradeError = pending ? 'This order is awaiting confirmation. Retry with the original order ID.' : '';
+    this.tradeNeedsRefresh = Boolean(pending);
+    this.quantity = pending?.quantity ?? 1;
     this.activeTrade = { holding, side, price: holding.price };
     this.tradeRef = this.modal.open(this.tradeDialog, {
       centered: true,
@@ -185,27 +199,68 @@ export class PortfolioComponent implements OnInit {
     this.submittingTrade = true;
     this.tradeError = '';
     const ticker = trade.holding.ticker;
-    const request = trade.side === 'buy'
-      ? this.portfolioService.buyStock(ticker, quantity, trade.price)
-      : this.portfolioService.sellStock(ticker, quantity, trade.price);
+    const request = this.pendingTrade
+      ? this.portfolioService.retryOrder(this.pendingTrade)
+      : this.portfolioService.placeOrder(trade.side, ticker, quantity);
 
     request.pipe(
       takeUntilDestroyed(this.destroyRef),
       finalize(() => this.submittingTrade = false),
     ).subscribe({
-      next: () => {
-        this.statusMessage = `${trade.side === 'buy' ? 'Bought' : 'Sold'} ${quantity} ${quantity === 1 ? 'share' : 'shares'} of ${ticker}.`;
+      next: receipt => {
+        this.statusMessage = paperOrderConfirmation(receipt);
         this.tradeRef?.close();
         this.loadPortfolio();
       },
-      error: (error: HttpErrorResponse) => {
-        if (error.status === 0 || error.status >= 500) {
-          this.tradeNeedsRefresh = true;
-          this.tradeError = 'We couldn’t confirm this trade. Close this dialog and check your refreshed holdings before trying again.';
-          this.loadPortfolio();
+      error: (error: HttpErrorResponse | PendingOrderError) => {
+        this.pendingTrade = error instanceof PendingOrderError ? error.order : undefined;
+        this.tradeNeedsRefresh = Boolean(this.pendingTrade);
+        if (this.tradeNeedsRefresh) {
+          this.tradeError = 'This order is awaiting confirmation. Retry the same order here or from Orders.';
         } else {
-          this.tradeError = typeof error.error?.message === 'string' ? error.error.message : 'The trade was rejected. Please try again.';
+          this.tradeError = error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
+            ? error.error.message : 'The order could not be sent. Please try again.';
         }
+        this.loadReceipts();
+      },
+    });
+  }
+
+  loadReceipts(): void {
+    this.receiptRequest?.unsubscribe();
+    this.receiptsLoading = true;
+    this.receiptsError = '';
+    this.pendingOrders = this.portfolioService.getPendingOrders();
+    this.receiptRequest = this.portfolioService.getReceipts().pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.receiptsLoading = false),
+    ).subscribe({
+      next: receipts => {
+        this.receipts = receipts;
+        this.pendingOrders = this.portfolioService.getPendingOrders();
+      },
+      error: () => this.receiptsError = 'Order receipts could not load. Please try again.',
+    });
+  }
+
+  retryPendingOrder(order: PendingPaperOrder): void {
+    if (this.submittingTrade || this.checkingOrderId) return;
+    this.checkingOrderId = order.orderId;
+    this.pendingError = '';
+    this.portfolioService.retryOrder(order).pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.checkingOrderId = null),
+    ).subscribe({
+      next: receipt => {
+        this.statusMessage = paperOrderConfirmation(receipt);
+        this.loadPortfolio();
+      },
+      error: (error: HttpErrorResponse | PendingOrderError) => {
+        this.pendingError = error instanceof PendingOrderError
+          ? 'Order confirmation is still unavailable. You can retry again with the same ID.'
+          : error instanceof HttpErrorResponse && typeof error.error?.message === 'string'
+            ? error.error.message : 'The order could not be sent. Please try again.';
+        this.loadReceipts();
       },
     });
   }

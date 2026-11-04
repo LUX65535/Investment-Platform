@@ -1,5 +1,7 @@
 :host { display: block; }
 
+.currency-missing { display: block; }
+
 .watchlist-panel {
   min-width: 0;
   border: 1px solid var(--line);
