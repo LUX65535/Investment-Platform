@@ -984,12 +984,21 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.searchRequests.next({
       term,
       submitted: true,
-      openOptions: input && trigger ? () => {
-        if (!input.isConnected) return;
-        input.focus();
-        if (!trigger.panelOpen) trigger.openPanel();
-      } : undefined,
+      openOptions: input && trigger ? () => this.focusSearchOptions(input, trigger) : undefined,
     });
+  }
+
+  private focusSearchOptions(input: HTMLInputElement, trigger: MatAutocompleteTrigger): void {
+    if (!input.isConnected) return;
+    // CDK disables pointer events on a detached pane. Its fading node must not share
+    // the listbox ID with the fresh panel when a user submits immediately after Escape.
+    const oldPanel = input.ownerDocument.getElementById(trigger.autocomplete.id);
+    if (!trigger.panelOpen && oldPanel?.parentElement?.style.pointerEvents === 'none') {
+      oldPanel.hidden = true;
+      oldPanel.removeAttribute('id');
+    }
+    input.focus();
+    if (!trigger.panelOpen) trigger.openPanel();
   }
 
   private resolveSubmittedSearch(request: SuggestionRequest, options: StockResult[]): void {
