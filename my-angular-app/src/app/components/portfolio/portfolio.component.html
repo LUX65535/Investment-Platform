@@ -42,6 +42,12 @@
   </p>
 </section>
 
+<app-portfolio-performance [points]="performance?.points ?? []" [loading]="performanceLoading"
+                           [failed]="performanceFailed" [message]="performance?.message ?? ''"
+                           [missingSessions]="performance?.missingSessions ?? 0"
+                           [missingBenchmarkSessions]="performance?.missingBenchmarkSessions ?? 0"
+                           (retry)="loadPerformance()"></app-portfolio-performance>
+
 <section class="allocation-panel" aria-labelledby="allocation-title" *ngIf="allocation as composition">
   <div class="panel-header">
     <div>

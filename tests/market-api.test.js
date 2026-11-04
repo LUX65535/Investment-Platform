@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
+const { marketDate } = require('../lib/portfolio-equity-history');
 const { test } = require('node:test');
 const axios = require('axios');
 const { MongoClient } = require('mongodb');
@@ -39,6 +40,7 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   let applePrice = 100;
   let upstreamRetryAfter = '5';
   let chartCalls = 0;
+  let historicalCloses = [];
   let currency;
   let news = { error: 'Unexpected provider response' };
   t.mock.method(axios, 'get', async (url, { params }) => {
@@ -47,7 +49,7 @@ test('market reads expire, back off on provider limits, and leave paper orders r
     if (url.endsWith('/stock/profile2')) return { data: { currency } };
     if (url.includes('/aggs/ticker/')) {
       chartCalls++;
-      return { data: { results: [] } };
+      return { data: { results: params.adjusted === false ? historicalCloses : [] } };
     }
     assert.ok(url.endsWith('/quote'));
     quoteCalls++;
@@ -163,6 +165,28 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   const timed = await request('/company_quote?symbol=GOOG');
   assert.equal(timed.status, 503);
   assert.ok(Number(timed.retryAfter) >= 8 && Number(timed.retryAfter) <= 10);
+
+  const dates = [];
+  const marketDay = Date.parse(marketDate(new Date()) + 'T00:00:00Z');
+  for (let offset = 1; dates.length < 2; offset++) {
+    const date = new Date(marketDay - offset * 86_400_000);
+    if (![0, 6].includes(date.getUTCDay())) dates.unshift(date.toISOString().slice(0, 10));
+  }
+  historicalCloses = dates.map((date, i) => ({ t: Date.parse(date + 'T05:00:00Z'), c: 500 + i * 10 }));
+  [...records.values()][0].walletInitializedAt = new Date(dates[0] + 'T14:00:00Z');
+
+  const accountHistory = await request('/api/portfolio/history');
+  assert.equal(accountHistory.status, 200);
+  assert.equal(accountHistory.cache, 'private, no-store');
+  assert.equal(accountHistory.body.status, 'ok');
+  assert.deepEqual(accountHistory.body.points, dates.map((date, i) => ({ date, nav: 25000, spyClose: 500 + i * 10 })));
+  const historyCalls = chartCalls;
+  assert.deepEqual((await request('/api/portfolio/history')).body, accountHistory.body);
+  assert.equal(chartCalls, historyCalls, 'Completed bars can be reused without caching private account history.');
+
+  cookie = 'investment_paper_v1=' + 'b'.repeat(43);
+  assert.equal((await request('/api/portfolio/history')).status, 428);
+  assert.equal(chartCalls, historyCalls, 'Another browser cannot trigger the first account history reads.');
 });
 
 test('production market endpoints fail closed without provider credentials', async t => {

@@ -4,7 +4,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 import { catchError, finalize, forkJoin, from, map, mergeMap, of, Subscription, switchMap, tap } from 'rxjs';
 import {
-  PaperOrderReceipt, PendingOrderError, PendingPaperOrder, PortfolioService, ReferenceQuoteRequired, Stock, estimateOrderCents, paperOrderConfirmation,
+  PaperOrderReceipt, PendingOrderError, PendingPaperOrder, PortfolioPerformance, PortfolioService, ReferenceQuoteRequired, Stock, estimateOrderCents, paperOrderConfirmation,
 } from '../../services/portfolio.service';
 
 const allocationQuoteLifetimeMs = 7 * 24 * 60 * 60_000;
@@ -33,6 +33,7 @@ export class PortfolioComponent implements OnInit {
   private tradeRef?: NgbModalRef;
   private portfolioRequest?: Subscription;
   private receiptRequest?: Subscription;
+  private performanceRequest?: Subscription;
   private pendingTrade?: PendingPaperOrder;
 
   @ViewChild('tradeDialog', { static: true }) private tradeDialog!: TemplateRef<unknown>;
@@ -53,6 +54,9 @@ export class PortfolioComponent implements OnInit {
   submittingTrade = false;
   quantity: number | null = 1;
   receipts: PaperOrderReceipt[] = [];
+  performance: PortfolioPerformance | null = null;
+  performanceLoading = false;
+  performanceFailed = false;
   pendingOrders: PendingPaperOrder[] = [];
   receiptsLoading = false;
   receiptsError = '';
@@ -194,6 +198,7 @@ export class PortfolioComponent implements OnInit {
   loadPortfolio(force = false): void {
     if (this.isLoading && !force) return;
     this.loadReceipts();
+    this.loadPerformance();
     this.portfolioRequest?.unsubscribe();
     this.isLoading = true;
     this.holdingsCurrent = false;
@@ -323,6 +328,25 @@ export class PortfolioComponent implements OnInit {
             ? error.error.message : 'The order could not be sent. Please try again.';
         }
         if (!this.tradeReference) this.loadPortfolio();
+      },
+    });
+  }
+
+  loadPerformance(): void {
+    this.performanceRequest?.unsubscribe();
+    this.performanceLoading = true;
+    this.performanceFailed = false;
+    this.performanceRequest = this.portfolioService.getPerformance().pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.performanceLoading = false),
+    ).subscribe({
+      next: history => {
+        this.performance = history;
+        this.performanceFailed = history.status === 'temporarily_unavailable';
+      },
+      error: () => {
+        this.performance = null;
+        this.performanceFailed = true;
       },
     });
   }

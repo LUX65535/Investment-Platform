@@ -2,6 +2,20 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, catchError, defer, firstValueFrom, from, map, shareReplay, switchMap, tap, throwError } from 'rxjs';
 
+export interface PortfolioPerformancePoint {
+  date: string;
+  nav: number | null;
+  spyClose: number | null;
+}
+
+export interface PortfolioPerformance {
+  points: PortfolioPerformancePoint[];
+  status: 'ok' | 'partial' | 'insufficient' | 'not_initialized' | 'ledger_unavailable' | 'temporarily_unavailable';
+  message: string;
+  missingSessions: number;
+  missingBenchmarkSessions: number;
+}
+
 export interface Stock {
   ticker: string;
   name: string;
@@ -131,6 +145,10 @@ export class PortfolioService {
   removeWatchlist(ticker: string): Observable<unknown> {
     return this.paperRequest(() => this.http.delete(`/api/watchlist/${encodeURIComponent(ticker)}`), false);
   }
+  getPerformance(): Observable<PortfolioPerformance> {
+    return this.paperRequest(() => this.http.get<PortfolioPerformance>('/api/portfolio/history'));
+  }
+
   getReceipts(): Observable<PaperOrderReceipt[]> {
     return this.paperRequest(() => this.http.get<PaperOrderReceipt[]>('/api/orders')).pipe(
       tap(receipts => receipts.forEach(receipt => this.clearPending(receipt))),

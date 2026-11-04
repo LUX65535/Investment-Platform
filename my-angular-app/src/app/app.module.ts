@@ -12,6 +12,7 @@ import { AppComponent } from './components/app.component';
 import { AppRoutingModule } from './app-routing.module';
 import { WatchlistComponent } from './components/watchlist/watchlist.component';
 import { PortfolioComponent } from './components/portfolio/portfolio.component';
+import { PortfolioPerformanceComponent } from './components/portfolio/portfolio-performance.component';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 
 @NgModule({
@@ -30,6 +31,7 @@ import { provideAnimationsAsync } from '@angular/platform-browser/animations/asy
     MatProgressSpinnerModule,
     NgbModule,
     CommonModule,
+    PortfolioPerformanceComponent,
   ],
   providers: [DecimalPipe, provideAnimationsAsync('noop'), provideAnimationsAsync()],
   bootstrap: [AppComponent]

@@ -129,7 +129,7 @@ function getCachedMarketRead(key) {
   removeMarketRead(key);
 }
 
-async function readMarketData(provider, endpoint, params) {
+async function readMarketData(provider, endpoint, params, ttl = endpoint === '/quote' ? 10_000 : 30_000) {
   const key = marketRequestKey(provider, endpoint, params);
   const cached = getCachedMarketRead(key);
   if (cached) return cached;
@@ -140,7 +140,6 @@ async function readMarketData(provider, endpoint, params) {
   if (completed) return completed;
 
   const body = Buffer.from(JSON.stringify(data));
-  const ttl = endpoint === '/quote' ? 10_000 : 30_000;
   const entry = { body, expiresAt: Date.now() + ttl };
   if (body.length <= maxMarketCacheBytes) {
     while (marketReadCache.size >= maxMarketCacheEntries || marketCacheBytes + body.length > maxMarketCacheBytes) {
@@ -273,7 +272,17 @@ async function getTradeMarket(ticker) {
   return { quote, currency };
 }
 
-app.use('/api', createPaperRouter({ normalizeTicker, getTradeMarket, sendMarketError, sendDatabaseError }));
+async function getHistoricalCloses(symbol, from, to) {
+  const ticker = encodeURIComponent(symbol);
+  const endpoint = `/aggs/ticker/${ticker}/range/1/day/${from}/${to}`;
+  const { body } = await readMarketData(polygon, endpoint, { adjusted: false, sort: 'asc' }, 5 * 60_000);
+  const data = JSON.parse(body);
+  return Array.isArray(data.results) ? data.results : [];
+}
+
+app.use('/api', createPaperRouter({
+  normalizeTicker, getTradeMarket, getHistoricalCloses, sendMarketError, sendDatabaseError,
+}));
 app.use('/api', (req, res) => {
   res.status(404).json({ message: 'API endpoint not found' });
 });

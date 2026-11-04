@@ -1,5 +1,6 @@
 const express = require('express');
 const { createHash, randomBytes } = require('node:crypto');
+const { loadPortfolioHistory } = require('../lib/load-portfolio-history');
 
 const cookieName = 'investment_paper_v1';
 const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
@@ -221,7 +222,7 @@ function publicPosition({ ticker, quantity, costCents }) {
   return { ticker, quantity, totalCost: dollars(costCents) };
 }
 
-module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, sendMarketError, sendDatabaseError }) {
+module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, getHistoricalCloses, sendMarketError, sendDatabaseError }) {
   const router = express.Router();
   let ttlIndex;
 
@@ -313,7 +314,7 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, s
   })));
   router.post('/initWallet', withSandbox(async (req, res, initial) => send(res, await mutate(req, res, sandbox => {
     if (sandbox.cashCents !== null) return { body: { message: 'Paper wallet is already initialized.' } };
-    return { body: { message: 'Paper wallet initialized with $25,000.' }, patch: { cashCents: startingCashCents } };
+    return { body: { message: 'Paper wallet initialized with $25,000.' }, patch: { cashCents: startingCashCents, walletInitializedAt: new Date() } };
   }, initial))));
 
   for (const side of ['buy', 'sell']) {
@@ -348,6 +349,11 @@ module.exports = function createPaperRouter({ normalizeTicker, getTradeMarket, s
       return send(res, await mutate(req, res, sandbox => decideOrder(sandbox, intent, market, referenceQuote), initial));
     }));
   }
+
+  router.get('/portfolio/history', withSandbox(async (_req, res, sandbox) => {
+    const history = await loadPortfolioHistory(sandbox, startingCashCents, getHistoricalCloses);
+    return res.json(history);
+  }));
 
   router.get('/orders', withSandbox((_req, res, sandbox) => res.json(sandbox.receipts.slice().reverse().map(receiptBody))));
   router.get('/orders/:orderId', withSandbox((req, res, sandbox) => {
