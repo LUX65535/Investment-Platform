@@ -10,7 +10,7 @@ import { BenchmarkClose, describeClose, distinctDailyCloses, millisecondsPerDay,
 import { EquityBenchmarksComponent } from './equity-benchmarks.component';
 import { BenchmarkCandlesComponent } from './benchmark-candles.component';
 import { MarketSectorMovesComponent, SectorMove } from './market-sector-moves.component';
-import { dailyRefreshes } from '../../services/market-refresh';
+import { dailyRefreshes, retryPublicReadOnce } from '../../services/market-refresh';
 
 interface OverviewQuote {
   symbol: string;
@@ -63,6 +63,8 @@ export class InvestmentHomeComponent implements OnInit {
   breadthError = false;
   loading = false;
   failed = false;
+  benchmarkWait = 0;
+  breadthWait = 0;
 
   ngOnInit(): void {
     this.loadBenchmark();
@@ -77,7 +79,9 @@ export class InvestmentHomeComponent implements OnInit {
     if (this.loading) return;
     this.loading = true;
     this.failed = false;
+    this.benchmarkWait = 0;
     this.history.daily('SPY').pipe(
+      retryPublicReadOnce(seconds => this.benchmarkWait = seconds),
       takeUntilDestroyed(this.destroyRef),
       finalize(() => this.loading = false),
     ).subscribe({
@@ -94,7 +98,9 @@ export class InvestmentHomeComponent implements OnInit {
     if (this.breadthLoading) return;
     this.breadthLoading = true;
     this.breadthError = false;
+    this.breadthWait = 0;
     this.http.get<MarketOverview>('/api/market-overview').pipe(
+      retryPublicReadOnce(seconds => this.breadthWait = seconds),
       takeUntilDestroyed(this.destroyRef),
       finalize(() => this.breadthLoading = false),
     ).subscribe({

@@ -68,7 +68,7 @@
 </section>
 <ng-template #marketState>
   <div class="market-state market-state--initial" aria-live="polite">
-    <p *ngIf="breadthLoading">Loading the latest market session…</p>
+    <p *ngIf="breadthLoading">{{ breadthWait ? 'The data provider is busy. Retrying after ' + breadthWait + ' seconds.' : 'Loading the latest market session…' }}</p>
     <ng-container *ngIf="!breadthLoading">
       <p>Market breadth and volume leaders are temporarily unavailable.</p>
       <button *ngIf="breadthError" type="button" class="state-action" (click)="loadBreadth()">Retry market data</button>
@@ -118,7 +118,7 @@
     <ng-template #missingReturn><dd aria-label="Insufficient closing history">—</dd></ng-template>
     <ng-template #benchmarkState>
       <div class="market-state">
-        <p role="status" *ngIf="loading">Loading SPY daily prices…</p>
+        <p role="status" *ngIf="loading">{{ benchmarkWait ? 'The data provider is busy. Retrying after ' + benchmarkWait + ' seconds.' : 'Loading SPY daily prices…' }}</p>
         <ng-container *ngIf="!loading">
           <p role="status">{{ failed ? 'SPY daily prices are temporarily unavailable.' : 'No SPY daily prices are available.' }}</p>
           <button *ngIf="failed" type="button" class="state-action" (click)="loadBenchmark()">Retry SPY prices</button>

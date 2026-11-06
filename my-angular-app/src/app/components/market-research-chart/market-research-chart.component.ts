@@ -7,7 +7,7 @@ import { HighchartsChartModule } from 'highcharts-angular';
 import type * as Highcharts from 'highcharts/highstock';
 import { Subscription, timer } from 'rxjs';
 import { MarketBar, MarketHistoryService, ResearchHistory } from '../../services/market-history.service';
-import { activeRefreshes, retryAfterTime } from '../../services/market-refresh';
+import { activeRefreshes, publicReadRetryTime } from '../../services/market-refresh';
 import { ResearchInterval, ResearchRange, bollinger, defaultInterval, ema, intervalReason, intraday, macd, points, researchIntervals, researchRanges, rsi, sessionVwap, sma } from './market-studies';
 
 export interface ChartSelection { range: ResearchRange; interval: ResearchInterval; }
@@ -69,7 +69,7 @@ export class MarketResearchChartComponent implements OnChanges, AfterViewInit {
   constructor() {
     this.loadRuntime();
     activeRefreshes(this.document, 60_000).pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
-      if (this.visible && intraday(this.selection.interval) && !this.loading && !this.retrySeconds && !this.entitlementError) this.load(true);
+      if (this.visible && intraday(this.selection.interval) && this.readyToRefresh) this.load(true);
     });
     this.destroyRef.onDestroy(() => { this.destroyed = true; this.generation++; this.request?.unsubscribe(); this.comparisonRequest?.unsubscribe(); this.retryClock?.unsubscribe(); this.comparisonRetryClock?.unsubscribe(); });
   }
@@ -82,7 +82,7 @@ export class MarketResearchChartComponent implements OnChanges, AfterViewInit {
       const wasVisible = this.visible;
       this.visible = Boolean(entries[0]?.isIntersecting);
       if (observed && !wasVisible && this.visible && intraday(this.selection.interval)
-        && !this.loading && !this.retrySeconds && !this.entitlementError
+        && this.readyToRefresh
         && !this.document.hidden && this.document.defaultView?.navigator.onLine !== false) this.load(true);
       observed = true;
     });
@@ -181,8 +181,7 @@ export class MarketResearchChartComponent implements OnChanges, AfterViewInit {
         if (generation !== this.generation) return;
         this.loading = false;
         this.entitlementError = error.status === 403;
-        const explicit = retryAfterTime(error.headers?.get('Retry-After') ?? null, Date.now());
-        this.retryAt = explicit ?? (error.status === 429 ? Date.now() + 30_000 : 0);
+        this.retryAt = publicReadRetryTime(error, Date.now()) ?? 0;
         this.retrySeconds = Math.max(0, Math.ceil((this.retryAt - Date.now()) / 1000));
         this.retryClock?.unsubscribe();
         if (this.retrySeconds) this.retryClock = timer(1000, 1000).subscribe(() => {
@@ -255,6 +254,10 @@ export class MarketResearchChartComponent implements OnChanges, AfterViewInit {
     return this.visible && !this.document.hidden && this.document.defaultView?.navigator.onLine !== false;
   }
 
+  private get readyToRefresh(): boolean {
+    return !this.loading && !this.comparisonLoading && !this.comparisonWaitSeconds && !this.entitlementError;
+  }
+
   loadComparison(refresh = false, allowAutomaticRetry = true): void {
     if (!this.result || !/^[A-Z0-9][A-Z0-9.:-]{0,24}$/.test(this.comparisonSymbol)
       || this.comparisonSymbol === this.symbol.toUpperCase()
@@ -274,8 +277,7 @@ export class MarketResearchChartComponent implements OnChanges, AfterViewInit {
         if (generation !== this.generation) return;
         this.comparisonLoading = false;
         this.comparisonEntitlementError = error.status === 403;
-        const explicit = retryAfterTime(error.headers?.get('Retry-After') ?? null, Date.now());
-        const retryAt = explicit ?? (error.status === 429 ? Date.now() + 30_000 : 0);
+        const retryAt = publicReadRetryTime(error, Date.now()) ?? 0;
         this.comparisonRetrySeconds = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
         if (this.comparisonRetrySeconds) this.comparisonRetryClock = timer(1000, 1000).subscribe(() => {
           this.comparisonRetrySeconds = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));

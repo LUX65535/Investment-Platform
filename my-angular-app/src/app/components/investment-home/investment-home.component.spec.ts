@@ -85,13 +85,15 @@ describe('InvestmentHomeComponent', () => {
     expect(note()).toBe('U.S. equities and ETFs at the close.');
   });
 
-  it('lets the user retry after the provider cooldown and renders a distinct empty result', fakeAsync(() => {
+  it('waits for a public provider cooldown, retries once, and preserves the manual retry after a second failure', fakeAsync(() => {
     http.expectOne(path).flush(null, { status: 429, statusText: 'Too Many Requests' });
     fixture.detectChanges();
+    expect(view.textContent).toContain('Retrying after 60 seconds');
+    tick(59_999); http.expectNone(path);
+    tick(1);
+    http.expectOne(path).flush(null, { status: 503, statusText: 'Unavailable' });
+    fixture.detectChanges();
     expect(view.textContent).toContain('temporarily unavailable');
-    view.querySelector<HTMLButtonElement>('.state-action')?.click();
-    http.expectNone(path);
-    tick(30_001);
     view.querySelector<HTMLButtonElement>('.state-action')?.click();
     prices();
     expect(view.textContent).toContain('No SPY daily prices');

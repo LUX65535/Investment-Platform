@@ -124,7 +124,7 @@ describe('Unified market research chart', () => {
     expect(component.comparisonInputError).toBe('');
   });
 
-  it('removes the old comparison immediately when its replacement fails and retries only the replacement', () => {
+  it('removes the old comparison immediately when its replacement fails and retries only the replacement', fakeAsync(() => {
     open(); request().flush(payload);
     component.settingsOpen = true;
     component.comparisonInput = 'SPY'; component.compare();
@@ -135,10 +135,12 @@ describe('Unified market research chart', () => {
     request('QQQ').flush(null, { status: 503, statusText: 'Unavailable' });
     expect(component.options.series!.some(series => series.name === 'SPY return')).toBeFalse();
     expect(component.comparisonError).toContain('QQQ');
+    expect(button('Retry comparison').disabled).toBeTrue();
+    tick(3000);
     button('Retry comparison').click(); request('QQQ').flush(payload);
     expect(component.comparisonError).toBe('');
     expect(component.options.series!.some(series => series.name === 'QQQ return')).toBeTrue();
-  });
+  }));
 
   it('removes stale comparison lines while a URL-selected replacement is loading', () => {
     open(); request().flush(payload);

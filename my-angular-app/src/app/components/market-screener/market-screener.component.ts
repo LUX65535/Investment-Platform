@@ -3,6 +3,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
+import { retryPublicReadOnce } from '../../services/market-refresh';
 
 interface ScreenerRow {
   symbol: string;
@@ -52,6 +53,7 @@ export class MarketScreenerComponent {
 
   readonly snapshot = signal<ScreenerSnapshot | null>(null);
   readonly loading = signal(false);
+  readonly retryWait = signal(0);
   readonly error = signal('');
   readonly filters = signal(initialFilters);
   readonly order = signal<{ field: SortField; direction: 'ascending' | 'descending' }>({
@@ -127,8 +129,12 @@ export class MarketScreenerComponent {
   load(): void {
     if (this.loading()) return;
     this.loading.set(true);
+    this.retryWait.set(0);
     this.error.set('');
-    this.http.get<ScreenerSnapshot>('/api/market-screener').pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.http.get<ScreenerSnapshot>('/api/market-screener').pipe(
+      retryPublicReadOnce(seconds => this.retryWait.set(seconds)),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe({
       next: snapshot => {
         this.snapshot.set(snapshot);
         this.page.set(Math.min(this.page(), Math.max(0, this.pageCount() - 1)));

@@ -138,7 +138,7 @@
   <div class="load-state" aria-live="polite">
     @if (loading()) {
       <h2>Loading the latest market session</h2>
-      <p>Checking reported closes and volumes.</p>
+      <p>{{ retryWait() ? 'The data provider is busy. Retrying after ' + retryWait() + ' seconds.' : 'Checking reported closes and volumes.' }}</p>
     } @else {
       <h2>Market data unavailable</h2>
       <p>{{ error() }}</p>
