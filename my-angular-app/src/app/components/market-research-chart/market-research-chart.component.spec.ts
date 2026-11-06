@@ -41,6 +41,21 @@ describe('Unified market research chart', () => {
     request('MSFT', '1D', '5m').flush({ ...payload, interval: '5m', range: '1D' });
     expect(component.options.series![0].name).toBe('MSFT');
   });
+  it('labels the actual return period when a successful provider response covers only part of the range', () => {
+    open();
+    request().flush(payload);
+    component.selectRange('5Y');
+    const message = 'Available bars for the requested 5Y range run from 2024-11-03 to 2026-11-01.';
+    request('SOXL', '5Y', '1d').flush({
+      ...payload, range: '5Y',
+      coverage: { complete: false, warmupLimited: true, message },
+    });
+    fixture.detectChanges();
+    const heading = fixture.nativeElement.querySelector('.period-result');
+    expect(heading.textContent).toContain('available period');
+    expect(heading.textContent).not.toContain('5Y');
+    expect(fixture.nativeElement.querySelector('[role="status"]').textContent).toContain(message);
+  });
   it('preserves a valid chart during retry failures and respects Retry-After', fakeAsync(() => {
     open(); request().flush(payload); const chart = component.options;
     component.load(true); request().flush(null, { status: 503, statusText: 'Unavailable', headers: { 'Retry-After': '2' } });

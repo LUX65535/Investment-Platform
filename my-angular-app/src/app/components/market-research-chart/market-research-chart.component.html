@@ -1,7 +1,10 @@
 <div class="research-chart">
   <header class="chart-heading">
     <div><h2>Price research</h2><p>{{ symbol }} · {{ intervalLabels[selection.interval] }} bars · {{ currency || 'Price' }}</p></div>
-    <div class="period-result" *ngIf="periodReturn !== null"><strong [class.negative]="periodReturn! < 0">{{ periodReturn! > 0 ? '+' : '' }}{{ periodReturn | number:'1.2-2' }}%</strong><span>close-to-close · {{ selection.range }}</span></div>
+    <div class="period-result" *ngIf="periodReturn !== null">
+      <strong [class.negative]="periodReturn! < 0">{{ periodReturn! > 0 ? '+' : '' }}{{ periodReturn | number:'1.2-2' }}%</strong>
+      <span>close-to-close · {{ result?.coverage?.complete === false ? 'available period' : selection.range }}</span>
+    </div>
   </header>
   <div class="chart-controls">
     <div class="ranges" role="group" aria-label="Price history range"><button *ngFor="let range of ranges" type="button" [attr.aria-pressed]="selection.range === range" (click)="selectRange(range)">{{ range }}</button></div>
@@ -22,11 +25,12 @@
   <p *ngIf="loading" class="load-note" role="status">{{ visibleBars.length ? 'Refreshing prices…' : 'Loading price history…' }}</p>
   <div *ngIf="!loading && !error && !entitlementError && !visibleBars.length" class="empty-chart" role="status"><strong>No prices in this selection</strong><p>{{ rangeSummary }}</p><button type="button" (click)="load(true)" [disabled]="!!retrySeconds">Retry prices</button></div>
   <ng-container *ngIf="visibleBars.length">
+    <p *ngIf="result?.coverage?.complete === false" class="method-note" role="status">{{ result?.coverage?.message || 'Only part of the requested period is available.' }}</p>
     <highcharts-chart *ngIf="runtime" [Highcharts]="runtime" [constructorType]="'stockChart'" [options]="options" [oneToOne]="true" class="market-chart"></highcharts-chart>
     <p *ngIf="!runtime" class="empty-chart">{{ runtimeFailed ? 'The chart renderer could not load.' : 'Preparing chart…' }} <button *ngIf="runtimeFailed" type="button" (click)="loadRuntime()">Retry chart</button></p>
     <div class="chart-footer"><span>{{ formatTime(visibleBars[0].t) }} — {{ formatTime(visibleBars[visibleBars.length - 1].t) }} · {{ visibleBars.length }} bars</span><span>Split-adjusted · {{ isIntraday ? 'New York sessions' : 'Trading periods' }}</span></div>
     <p *ngFor="let note of studyNotes" class="method-note" role="status">{{ note }}</p>
-    <p *ngIf="result?.coverage?.complete === false || result?.coverage?.warmupLimited" class="method-note">{{ result?.coverage?.message || 'Coverage is limited to the available data.' }} Indicators remain blank until enough prior bars are available.</p>
+    <p *ngIf="result?.coverage?.warmupLimited" class="method-note"><ng-container *ngIf="result?.coverage?.complete">{{ result?.coverage?.message }} </ng-container>Indicators remain blank until enough prior bars are available.</p>
     <p *ngIf="comparison" class="method-note">Comparison uses matching timestamps, rebased to 0% at the first shared close. Price return excludes dividends.</p>
   </ng-container>
   <p class="source-note">Massive market data · availability depends on the connected data plan. Drag the navigator to inspect a period.</p>

@@ -131,6 +131,39 @@ test('a shorter permitted warmup preserves earlier weekly bars rather than disca
   assert.equal(result.visibleFrom, Date.parse('2026-10-04T04:00:00Z'));
 });
 
+test('successful but truncated history reports actual dates, including for weekly and monthly requests', async () => {
+  const weeklyRows = [bar('2024-11-03T04:00:00Z'), bar('2026-11-01T04:00:00Z')];
+  const history = createResearchHistory(async () => page(weeklyRows));
+  const partial = await history('SOXL', '5Y', '1wk', now);
+  assert.equal(partial.availability.status, 'available');
+  assert.equal(partial.coverage.complete, false);
+  assert.match(partial.coverage.message, /5Y.*2024-11-03 to 2026-11-01/);
+  assert.equal(partial.results.length, 2);
+
+  const monthly = createResearchHistory(async () => page([
+    bar('2021-11-01T04:00:00Z'), bar('2026-11-01T04:00:00Z'),
+  ]));
+  const full = await monthly('AAPL', '5Y', '1mo', Date.parse('2026-11-28T22:00:00Z'));
+  assert.equal(full.coverage.complete, true, 'Monthly timestamps mark the first day of the candle.');
+  assert.equal(full.coverage.warmupLimited, true, 'Limited indicator history is distinct from range truncation.');
+});
+
+test('observed coverage separates shortened session counts and stale end dates from normal market closures', async () => {
+  const lastTwoSessions = createResearchHistory(async () => page([
+    bar('2026-11-03T14:30:00Z'), bar('2026-11-04T14:30:00Z'),
+  ]));
+  assert.equal((await lastTwoSessions('SOXL', '5D', '1h', now)).coverage.complete, false);
+  assert.equal((await lastTwoSessions('SOXL', '1D', '1h', now)).coverage.complete, true);
+  const stale = createResearchHistory(async () => page([
+    bar('2026-10-05T04:00:00Z'), bar('2026-10-23T04:00:00Z'),
+  ]));
+  assert.equal((await stale('SOXL', '1M', '1d', now)).coverage.complete, false);
+  const closedSession = createResearchHistory(async () => page([
+    bar('2026-10-06T04:00:00Z'), bar('2026-11-04T05:00:00Z'),
+  ]));
+  assert.equal((await closedSession('SOXL', '1M', '1d', now)).coverage.complete, true);
+});
+
 test('pagination cannot change host, instrument or interval, repeat pages or silently truncate oversized history', async () => {
   const prefix = '/aggs/ticker/SOXL/range/1/day/';
   for (const url of [
