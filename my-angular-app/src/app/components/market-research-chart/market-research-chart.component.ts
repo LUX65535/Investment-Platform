@@ -147,7 +147,7 @@ export class MarketResearchChartComponent implements OnChanges, AfterViewInit {
     this.load();
   }
 
-  load(refresh = false): void {
+  load(refresh = false, allowAutomaticRetry = true): void {
     if (!this.symbol || this.retrySeconds && refresh) return;
     const key = `${this.symbol}:${this.selection.range}:${this.selection.interval}`;
     const changed = key !== this.requestedKey;
@@ -187,13 +187,18 @@ export class MarketResearchChartComponent implements OnChanges, AfterViewInit {
         this.retryClock?.unsubscribe();
         if (this.retrySeconds) this.retryClock = timer(1000, 1000).subscribe(() => {
           this.retrySeconds = Math.max(0, Math.ceil((this.retryAt - Date.now()) / 1000));
-          if (!this.retrySeconds) this.retryClock?.unsubscribe();
+          if (!this.retrySeconds) {
+            this.retryClock?.unsubscribe();
+            if (allowAutomaticRetry && !this.result && generation === this.generation && this.error && this.canRetryOnScreen) this.load(true, false);
+          }
         });
         this.error = error.status === 403
           ? `The connected data plan does not provide this history. Choose a shorter range${this.isIntraday ? ' or a daily interval' : ''}.`
           : error.status === 400 ? 'This range and interval are not supported. Choose another interval.'
           : error.status === 404 ? `No price history is available for ${this.symbol}.`
-          : `Prices are temporarily unavailable.${this.result ? ' Showing the last available data for this selection.' : ' Try again when the data service is available.'}`;
+          : this.retrySeconds && !this.result && allowAutomaticRetry
+            ? 'The data provider is busy. This chart will retry once when the countdown ends if it is visible.'
+            : `Prices are temporarily unavailable.${this.result ? ' Showing the last available data for this selection.' : ' Try again when the data service is available.'}`;
       },
     });
   }
@@ -246,7 +251,11 @@ export class MarketResearchChartComponent implements OnChanges, AfterViewInit {
     this.render();
   }
 
-  loadComparison(refresh = false): void {
+  private get canRetryOnScreen(): boolean {
+    return this.visible && !this.document.hidden && this.document.defaultView?.navigator.onLine !== false;
+  }
+
+  loadComparison(refresh = false, allowAutomaticRetry = true): void {
     if (!this.result || !/^[A-Z0-9][A-Z0-9.:-]{0,24}$/.test(this.comparisonSymbol)
       || this.comparisonSymbol === this.symbol.toUpperCase()
       || refresh && (this.comparisonWaitSeconds > 0 || this.comparisonEntitlementError)) return;
@@ -270,11 +279,16 @@ export class MarketResearchChartComponent implements OnChanges, AfterViewInit {
         this.comparisonRetrySeconds = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
         if (this.comparisonRetrySeconds) this.comparisonRetryClock = timer(1000, 1000).subscribe(() => {
           this.comparisonRetrySeconds = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
-          if (!this.comparisonRetrySeconds) this.comparisonRetryClock?.unsubscribe();
+          if (!this.comparisonRetrySeconds) {
+            this.comparisonRetryClock?.unsubscribe();
+            if (allowAutomaticRetry && !this.comparison && generation === this.generation && this.comparisonError && this.canRetryOnScreen) this.loadComparison(true, false);
+          }
         });
         this.comparisonError = this.comparisonEntitlementError
           ? `The connected data plan does not provide this comparison history for ${this.comparisonSymbol}. Choose a shorter range${this.isIntraday ? ' or a daily interval' : ''}, or another symbol.`
-          : `Comparison prices for ${this.comparisonSymbol} are unavailable.${this.comparison ? ' Showing the last available comparison.' : ''} Try another symbol or retry${this.comparisonRetrySeconds ? ' after the countdown' : ''}.`;
+          : this.comparisonRetrySeconds && !this.comparison && allowAutomaticRetry
+            ? `The data provider is busy. The ${this.comparisonSymbol} comparison will retry once when the countdown ends if it is visible.`
+            : `Comparison prices for ${this.comparisonSymbol} are unavailable.${this.comparison ? ' Showing the last available comparison.' : ''} Try another symbol or retry${this.comparisonRetrySeconds ? ' after the countdown' : ''}.`;
       },
     });
   }

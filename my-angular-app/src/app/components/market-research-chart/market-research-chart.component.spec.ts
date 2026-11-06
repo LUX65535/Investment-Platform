@@ -80,6 +80,28 @@ describe('Unified market research chart', () => {
     request('SOXL', '3M').flush({ ...payload, range: '3M' });
     expect(component.entitlementError).toBeFalse();
   });
+  it('automatically retries an empty visible chart once after a provider cooldown', fakeAsync(() => {
+    let notify!: IntersectionObserverCallback;
+    const observer = { observe: () => undefined, disconnect: () => undefined };
+    spyOn(window, 'IntersectionObserver').and.callFake(function (callback: IntersectionObserverCallback) {
+      notify = callback;
+      return observer as unknown as IntersectionObserver;
+    });
+    spyOnProperty(document, 'hidden').and.returnValue(false);
+    open();
+    notify([{ isIntersecting: true } as IntersectionObserverEntry], observer as unknown as IntersectionObserver);
+    const busy = { status: 503, statusText: 'Unavailable', headers: { 'Retry-After': '2' } };
+    request().flush(null, busy);
+    tick(1999); http.expectNone(value => value.url === '/market_history');
+    tick(1); request().flush(null, busy);
+    tick(2000); http.expectNone(value => value.url === '/market_history');
+    component.load(true); request().flush(payload);
+    expect(component.visibleBars.length).toBe(10);
+    component.comparisonInput = 'SPY'; component.compare();
+    request('SPY').flush(null, busy);
+    tick(2000); request('SPY').flush(payload);
+    expect(component.comparisonError).toBe('');
+  }));
   it('shares cached history between chart mounts and forces fresh data on Retry', () => {
     open(); request().flush(payload); fixture.destroy();
     fixture = TestBed.createComponent(MarketResearchChartComponent); component = fixture.componentInstance; open();

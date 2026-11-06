@@ -4,7 +4,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgbModal, NgbModalRef, NgbModule } from '@ng-bootstrap/ng-bootstrap';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { EMPTY, Observable, Subject, of, Subscription, exhaustMap, forkJoin, merge, timer } from 'rxjs';
-import { catchError, filter, finalize, map, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
+import { catchError, filter, finalize, map, retry, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
 import { ActivatedRoute, NavigationEnd, Router, RouterModule } from '@angular/router';
 import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { MatAutocompleteModule, MatAutocompleteTrigger } from '@angular/material/autocomplete';
@@ -38,8 +38,8 @@ export interface CompanyProfile {
   name: string;
   ticker: string;
   ipo: string;
-  marketCapitalization: number;
-  shareOutstanding: number;
+  marketCapitalization?: number;
+  shareOutstanding?: number;
   logo: string;
   phone: string;
   weburl: string;
@@ -1249,11 +1249,13 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const active = () => context === this.searchSubscription;
     const acceptProfile = (profile: CompanyProfile) => {
       if (!active()) return;
+      const alreadyOpen = this.searchResults?.ticker === ticker;
       this.searchError = '';
       this.lastSuccessfulSearch = ticker;
       this.recents.remember(ticker);
       const currency = typeof profile.currency === 'string' ? profile.currency.toUpperCase() : '';
       this.searchResults = { ...profile, currency: /^[A-Z]{3}$/.test(currency) ? currency : '', logo: this.httpsUrl(profile.logo) };
+      if (alreadyOpen) return;
       this.loadSummary(ticker);
       this.loadActiveView();
       this.checkWatchlistStatus();
@@ -1263,18 +1265,25 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       if (!this.currentStock || !profileFailed || this.searchResults || !active()) return false;
       // A valid quote can support research even when optional reference data is unavailable.
       // Currency remains unknown so trading stays disabled until verified by a profile.
-      acceptProfile({ ticker, name: ticker, country: '', currency: '', exchange: '', ipo: '', marketCapitalization: 0,
-        shareOutstanding: 0, logo: '', phone: '', weburl: '', finnhubIndustry: '' });
+      acceptProfile({ ticker, name: ticker, country: '', currency: '', exchange: '', ipo: '',
+        logo: '', phone: '', weburl: '', finnhubIndustry: '' });
       return true;
     };
     const profileFailure = (message: string) => {
       if (!active()) return;
       profileFailed = true;
-      if (acceptQuoteOnly()) return;
+      if (this.searchResults || acceptQuoteOnly()) return;
       const input = this.tickerFormControl.value;
       if (typeof input === 'string' && input.trim().toUpperCase() === ticker) this.searchError = message;
     };
     context.add(this.getStockDetails(ticker).pipe(
+      retry({ count: 1, delay: (error: HttpErrorResponse) => {
+        const until = retryAfterTime(error.headers?.get('Retry-After') ?? null, Date.now());
+        if (![429, 503].includes(error.status) || !until) throw error;
+        this.DetailIsLoading = false;
+        profileFailure('The security directory is busy. The lookup will retry after the provider cooldown.');
+        return timer(Math.max(0, until - Date.now()));
+      } }),
       finalize(() => { if (active()) this.DetailIsLoading = false; }),
     ).subscribe({
       next: profile => {

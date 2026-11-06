@@ -72,7 +72,7 @@ function providerRetryAt(header) {
   const seconds = /^\d+$/.test(value)
     ? Number(value)
     : /^[A-Za-z]/.test(value) ? (Date.parse(value) - now) / 1000 : NaN;
-  const delay = Number.isFinite(seconds) ? Math.max(1, Math.min(seconds, 300)) : 30;
+  const delay = Number.isFinite(seconds) ? Math.max(1, Math.min(seconds, 300)) : 60;
   return now + delay * 1000;
 }
 
@@ -209,7 +209,8 @@ app.get('/company_profile', async (req, res) => {
   if (!symbol) return res.set('Cache-Control', 'no-store').status(400).json({ error: 'Enter a valid stock symbol.' });
   try {
     const profile = await resolveInstrument(symbol);
-    return res.set('Cache-Control', 'public, max-age=0, s-maxage=300').json(profile);
+    const freshSeconds = profile.instrumentType === 'ETF' ? 3600 : 300;
+    return res.set('Cache-Control', `public, max-age=0, s-maxage=${freshSeconds}`).json(profile);
   } catch (error) {
     res.set('Cache-Control', 'no-store');
     if (error.code === 'INSTRUMENT_NOT_FOUND') return res.status(404).json({ error: error.message, code: error.code });
@@ -273,11 +274,6 @@ app.get('/company_OneDay_data', (req, res) => {
   return sendChartData(res, symbol, 'hour', from, to);
 });
 
-const readResearchHistory = createResearchHistory(async (endpoint, params, ttl, validate) => {
-  const { body } = await readMarketData(polygon, endpoint, params, ttl, 'research', validate);
-  return JSON.parse(body);
-});
-
 app.get('/market_history', async (req, res) => {
   const symbol = normalizeTicker(req.query.symbol);
   const { range, interval } = req.query;
@@ -288,8 +284,19 @@ app.get('/market_history', async (req, res) => {
       availableIntervals: availableIntervals(range) });
   }
   try {
-    const history = await readResearchHistory(symbol, range, interval);
-    // Provider pages are cached server-side. Do not restart their TTL at a CDN.
+    let expiresAt = Infinity;
+    const readHistory = createResearchHistory(async (endpoint, params, ttl, validate) => {
+      const page = await readMarketData(polygon, endpoint, params, ttl, 'research', validate);
+      expiresAt = Math.min(expiresAt, page.expiresAt);
+      return JSON.parse(page.body);
+    });
+    const history = await readHistory(symbol, range, interval);
+    if (history.results.length) {
+      // Other serverless instances may reuse verified public bars. Respect the
+      // age of the oldest input page instead of restarting its freshness clock.
+      const fresh = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+      res.set('Cache-Control', `public, max-age=0, s-maxage=${fresh}, stale-while-revalidate=60`);
+    }
     return res.json(history);
   } catch (error) {
     if (isPlanLimit(error)) {

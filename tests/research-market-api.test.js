@@ -127,6 +127,27 @@ test('research plan limits and shared reference/aggregate rate limits remain exp
   assert.equal((await request('/market_history?symbol=SOXL&range=1M&interval=1d')).status, 200);
 });
 
+test('public charts reuse checked bars across ranges and share only the remaining freshness with the CDN', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-05T22:00:00Z') });
+  let calls = 0;
+  const request = await fixture(t, async () => {
+    calls++;
+    return { data: { status: 'OK', ticker: 'SOXL', adjusted: true, results: [candle], resultsCount: 1 } };
+  });
+  const query = (range, interval) => request(`/market_history?symbol=SOXL&range=${range}&interval=${interval}`);
+  const initial = await query('1M', '1d');
+  assert.match(initial.headers['cache-control'], /s-maxage=300, stale-while-revalidate=60/);
+  t.mock.timers.tick(90_000);
+  const longer = await query('6M', '1d');
+  assert.equal(calls, 1);
+  assert.equal(longer.body.range, '6M');
+  assert.notEqual(initial.body.visibleFrom, longer.body.visibleFrom);
+  assert.match(longer.headers['cache-control'], /s-maxage=210, stale-while-revalidate=60/);
+  await query('1D', '15m');
+  await query('5D', '15m');
+  assert.equal(calls, 2, 'One upstream page also serves both short intraday views.');
+});
+
 test('research metadata and pagination failures never poison a same-range retry cache', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-05T22:00:00Z') });
   let calls = 0;

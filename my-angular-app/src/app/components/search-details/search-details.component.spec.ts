@@ -167,6 +167,27 @@ describe('SearchDetailsComponent recovery', () => {
     close();
   }));
 
+  it('recovers an ETF identity after a directory cooldown without reloading its verified quote or chart', fakeAsync(() => {
+    RouterTestingHarness.create('/search-details/SOXL').then(created => harness = created);
+    tick();
+    component = harness.routeDebugElement!.componentInstance as SearchDetailsComponent;
+    http.expectOne('/company_profile?symbol=SOXL').flush(null, { status: 503, statusText: 'Busy', headers: { 'Retry-After': '2' } });
+    http.expectOne('/company_quote?symbol=SOXL').flush({ c: 104, t: Math.floor(now / 1000) });
+    http.expectOne('/company_peers?symbol=SOXL').flush([]);
+    harness.detectChanges();
+    daily('SOXL').flush({ results: bars });
+    expect(component.searchResults?.name).toBe('SOXL');
+    expect(component.searchResults?.marketCapitalization).toBeUndefined();
+    expect(component.supportsPaperTrade).toBeFalse();
+    tick(2000);
+    http.expectOne('/company_profile?symbol=SOXL').flush({ ticker: 'SOXL', name: 'Semiconductor ETF', currency: 'USD', instrumentType: 'ETF' });
+    expect(component.searchResults?.name).toBe('Semiconductor ETF');
+    expect(component.supportsPaperTrade).toBeTrue();
+    expect(component.currentStock?.c).toBe(104);
+    http.expectNone(req => ['/company_quote', '/company_peers', '/market_history'].includes(req.url));
+    close();
+  }));
+
   it('keeps range and interval consistent between Overview and the full-width chart', fakeAsync(() => {
     open(); daily().flush({ results: bars });
     component.setResearchSelection({ range: '5D', interval: '15m' });
