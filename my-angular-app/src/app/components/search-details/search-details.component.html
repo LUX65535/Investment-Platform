@@ -27,9 +27,9 @@
         </mat-option>
       </mat-optgroup>
     </mat-autocomplete>
-    <p *ngIf="suggestionsError" class="search-help" role="status">Suggestions unavailable. Enter an uppercase ticker to search directly.</p>
+    <p *ngIf="suggestionsError" class="search-help" role="status">Suggestions unavailable. Enter a ticker to search directly.</p>
     <p *ngIf="searchFeedback" class="visually-hidden" role="status">Choose a listed symbol with the arrow keys or pointer.</p>
-    <p *ngIf="searchError" class="search-error" role="alert">{{ searchError }}</p>
+    <p *ngIf="searchError" class="search-error" role="alert"><span>{{ searchError }}</span> <button type="button" class="state-action" aria-label="Dismiss search notice" (click)="searchError = ''">Dismiss</button></p>
   </form>
 </ng-template>
 
@@ -96,9 +96,10 @@
         </span>
       </div>
       <p>Finnhub · <time [attr.datetime]="quote.t * 1000 | date:'yyyy-MM-ddTHH:mm:ssZZZZZ':'+0000'">{{ quote.t * 1000 | date:'MMM d, HH:mm':'+0000' }} UTC</time><span *ngIf="!company.currency"> · Currency unavailable</span></p>
+      <button *ngIf="quoteRefreshFailed" type="button" class="state-action" [disabled]="quoteLoading" (click)="retryLatestQuote()">{{ quoteLoading ? 'Refreshing quote…' : 'Retry quote' }}</button>
     </div>
     <ng-template #quoteUnavailable>
-      <p class="security-quote quote-note" role="status">{{ quoteLoading ? 'Loading latest quote…' : 'Latest quote unavailable. Historical prices and company details may still be available.' }}</p>
+      <div class="security-quote quote-note" role="status"><p>{{ quoteLoading ? 'Loading latest quote…' : 'Latest quote unavailable. Historical prices and company details may still be available.' }}</p><button *ngIf="!quoteLoading" type="button" class="state-action" (click)="retryLatestQuote()">Retry quote</button></div>
     </ng-template>
 
     <div class="security-actions">
@@ -139,110 +140,15 @@
     </div>
     <div *ngIf="failedTabs.has(activeTab)" class="state-panel">
       <p role="alert">This section is temporarily unavailable.</p>
-      <button type="button" class="state-action" (click)="setActiveTab(activeTab)">Try again</button>
+      <button type="button" class="state-action" [disabled]="activeTabRetrySeconds > 0" (click)="setActiveTab(activeTab)">
+        Try again<span *ngIf="activeTabRetrySeconds"> in {{ activeTabRetrySeconds }}s</span>
+      </button>
     </div>
 
     <div class="overview-grid" *ngIf="activeTab === 'summary'">
-      <section class="data-panel chart-panel overview-chart-panel" aria-labelledby="overview-chart-title">
-        <div class="panel-heading">
-          <div>
-            <h2 id="overview-chart-title">{{ benchmarkResult ? company.ticker + ' vs ' + comparisonTicker : 'Price history' }}</h2>
-            <p *ngIf="!benchmarkResult">{{ overviewRange === 'Hourly' ? 'Hourly closes' : 'Daily closes' }}<ng-container *ngIf="company.currency"> · {{ company.currency }}</ng-container> · Massive (Polygon)</p>
-            <p *ngIf="benchmarkResult">Price return from a shared start, excluding dividends.</p>
-          </div>
-          <div *ngIf="overviewReturn !== null && !benchmarkResult" class="performance-stat" role="status">
-            <span class="quote-movement" [class.quote-up]="overviewReturn > 0" [class.quote-down]="overviewReturn < 0">
-              {{ overviewReturn > 0 ? '+' : '' }}{{ overviewReturn | number:'1.2-2' }}%
-            </span>
-            <p>{{ overviewRange === 'Hourly' ? 'Hourly period' : overviewRange }} price return</p>
-          </div>
-        </div>
-        <div class="overview-toolbar">
-          <div class="range-switch" role="group" aria-label="Price performance period">
-            <button *ngFor="let range of overviewRanges" type="button"
-                    [attr.aria-pressed]="overviewRange === range"
-                    (click)="selectOverviewRange(range)">{{ range }}</button>
-          </div>
-          <div class="comparison-actions" [hidden]="!canCompare">
-            <button *ngIf="company.ticker !== 'SPY'" type="button" class="benchmark-toggle"
-                    aria-label="Compare with SPY" [attr.aria-pressed]="comparisonTicker === 'SPY'" (click)="toggleBenchmark()">
-              <span class="benchmark-wide-label">Compare with SPY</span><span class="benchmark-small-label" aria-hidden="true">vs SPY</span>
-            </button>
-            <button #comparisonPickerTrigger type="button" class="benchmark-toggle comparison-picker-toggle"
-                    aria-label="Compare symbol" aria-controls="comparison-picker" [attr.aria-expanded]="comparisonPickerOpen"
-                    (click)="toggleComparisonPicker(comparisonField)">
-              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-                <path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-              </svg>
-              <span class="benchmark-wide-label">Compare symbol</span>
-            </button>
-          </div>
-        </div>
-        <form id="comparison-picker" class="comparison-picker" [hidden]="!comparisonPickerOpen"
-              (ngSubmit)="submitComparison(comparisonField, comparisonPickerTrigger)"
-              (keydown.escape)="closeComparisonPicker(comparisonPickerTrigger)">
-          <label for="comparison-symbol">Compare a USD stock or ETF</label>
-          <div class="comparison-picker-fields">
-            <input #comparisonField id="comparison-symbol" name="comparisonSymbol" type="text" placeholder="e.g. MSFT"
-                   maxlength="25" autocomplete="off" autocapitalize="characters" spellcheck="false"
-                   [attr.aria-invalid]="comparisonInputError ? 'true' : null"
-                   [attr.aria-describedby]="comparisonInputError ? 'comparison-input-error' : null"
-                   (input)="comparisonInputError = ''">
-            <button type="submit" class="benchmark-toggle">Compare</button>
-            <button *ngIf="comparisonTicker" type="button" class="benchmark-toggle"
-                    (click)="selectComparison(null); closeComparisonPicker(comparisonPickerTrigger)">Clear</button>
-          </div>
-          <p *ngIf="comparisonInputError" id="comparison-input-error" class="panel-note mb-0" role="alert">{{ comparisonInputError }}</p>
-        </form>
-        <div *ngIf="benchmarkResult as benchmark" class="benchmark-context">
-          <div class="benchmark-summary" role="status">
-            <span class="benchmark-key"><i aria-hidden="true"></i><strong>{{ company.ticker }}</strong> {{ benchmark.stock > 0 ? '+' : '' }}{{ benchmark.stock | number:'1.2-2' }}%</span>
-            <span class="benchmark-key benchmark-key--reference"><i aria-hidden="true"></i><strong>{{ comparisonTicker }}</strong> {{ benchmark.comparison > 0 ? '+' : '' }}{{ benchmark.comparison | number:'1.2-2' }}%</span>
-            <span><strong>Gap</strong> {{ benchmark.stock > benchmark.comparison ? '+' : '' }}{{ benchmark.stock - benchmark.comparison | number:'1.2-2' }} pp</span>
-          </div>
-          <p class="panel-note">
-            Matching trading days · <time [attr.datetime]="benchmark.start | date:'yyyy-MM-dd':'+0000'">{{ benchmark.start | date:'MMM d, yyyy':'+0000' }}</time>
-            to <time [attr.datetime]="benchmark.end | date:'yyyy-MM-dd':'+0000'">{{ benchmark.end | date:'MMM d, yyyy':'+0000' }}</time> · Massive (Polygon)
-          </p>
-        </div>
-        <p *ngIf="comparisonTicker && benchmarkLoading" class="panel-note mb-2" role="status">Loading {{ comparisonTicker }} prices…</p>
-        <p *ngIf="comparisonTicker && benchmarkFailed" class="panel-note mb-2" role="status">
-          {{ comparisonTicker }} is temporarily unavailable.
-          <button type="button" class="state-action" (click)="loadBenchmark(true)">Retry {{ comparisonTicker }}</button>
-        </p>
-        <p *ngIf="comparisonTicker && benchmarkUnavailable" class="panel-note mb-2" role="status">{{ benchmarkUnavailable }}</p>
-        <p *ngIf="comparisonTicker && !benchmarkUnavailable && !benchmarkFailed && !benchmarkLoading && !benchmarkResult && !overviewLoading && !overviewFailed"
-           class="panel-note mb-2" role="status">There are too few matching trading days to compare this period.</p>
-        <p *ngIf="!benchmarkResult && overviewStart !== null && overviewEnd !== null" class="panel-note mb-2">
-          <ng-container *ngIf="overviewRange === 'Hourly'">Bar timestamps · </ng-container>
-          {{ overviewStart | date:(overviewRange === 'Hourly' ? 'MMM d, HH:mm' : 'MMM d, yyyy'):'+0000' }} to
-          {{ overviewEnd | date:(overviewRange === 'Hourly' ? 'MMM d, HH:mm' : 'MMM d, yyyy'):'+0000' }} UTC
-        </p>
-        <p *ngIf="hourlyLagsQuote" class="panel-note mb-2">The hourly series ends before the latest quote.</p>
-        <div id="company-chart">
-          <p *ngIf="overviewFailed && chartOptions.series?.length" class="panel-note" role="status">
-            Updated prices could not load. Showing the last available period.
-            <button type="button" class="state-action" (click)="loadOverview(true)">Retry prices</button>
-          </p>
-          <div *ngIf="overviewLoading" class="state-panel chart-state" role="status"><p>Loading prices…</p></div>
-          <div *ngIf="!overviewLoading && !chartOptions.series?.length" class="state-panel chart-state">
-            <p>{{ overviewFailed ? 'Prices could not load for this period.' : 'There are not enough prices to chart this period.' }}</p>
-            <button *ngIf="overviewFailed" type="button" class="state-action" (click)="loadOverview()">Retry prices</button>
-          </div>
-          <!-- Recreate the chart when its units change. Highcharts merges options on update. -->
-          @if (benchmarkResult) {
-            <ng-container *ngTemplateOutlet="overviewChart"></ng-container>
-          } @else {
-            <ng-container *ngTemplateOutlet="overviewChart"></ng-container>
-          }
-          <ng-template #overviewChart>
-            <ng-container *ngIf="chartOptions.series?.length">
-              <highcharts-chart *ngIf="chartRuntime as charts; else chartRuntimeState" [Highcharts]="charts"
-                                [options]="chartOptions" [oneToOne]="true" class="chart chart--intraday"></highcharts-chart>
-            </ng-container>
-          </ng-template>
-        </div>
-        <button type="button" class="state-action" (click)="openHistory()">Open advanced chart</button>
+      <section class="data-panel chart-panel overview-chart-panel" aria-label="Price research">
+        <app-market-research-chart [symbol]="company.ticker" [currency]="company.currency" [selection]="researchSelection" [studies]="researchStudies" [comparisonTicker]="comparisonTicker" (comparisonChange)="setResearchComparison($event)" (selectionChange)="setResearchSelection($event)"></app-market-research-chart>
+        <button type="button" class="state-action" (click)="openHistory()">Open full-width chart <span aria-hidden="true">↗</span></button>
       </section>
 
       <aside class="overview-sidebar data-panel" aria-label="Market statistics and company profile">
@@ -258,8 +164,9 @@
         </section>
 
         <section class="facts-panel" aria-labelledby="company-title">
-          <h2 id="company-title">Company profile</h2>
+          <h2 id="company-title">{{ company.instrumentType === 'ETF' ? 'Fund profile' : 'Security profile' }}</h2>
           <dl class="facts">
+            <div *ngIf="company.instrumentType"><dt>Instrument</dt><dd>{{ company.instrumentType }}</dd></div>
             <div><dt>Industry</dt><dd>{{ company.finnhubIndustry || '—' }}</dd></div>
             <div><dt>IPO date</dt><dd>{{ company.ipo || '—' }}</dd></div>
           </dl>
@@ -359,28 +266,16 @@
       </ng-template>
     </section>
 
-  <section class="data-panel chart-panel chart-panel--history" *ngIf="activeTab === 'charts' && !loadingTabs.has('charts') && !failedTabs.has('charts')" aria-labelledby="history-title">
-      <div class="panel-heading">
-        <div><h2 id="history-title">Price history</h2><p>Daily prices and volume<ng-container *ngIf="historyEnd as point"> · through {{ point | date:'MMM d, yyyy':'+0000' }}</ng-container></p></div>
-        <button *ngIf="bigChartOptions.series?.length && chartRuntime" type="button" class="state-action history-indicator" [disabled]="!smaAvailable"
-                [attr.aria-pressed]="showSma && smaAvailable" title="20-session simple moving average"
-                (click)="toggleSma()">SMA 20</button>
-      </div>
-      <div *ngIf="!bigChartOptions.series?.length" class="state-panel chart-state"><p>Historical prices are unavailable for this symbol.</p></div>
-      <ng-container *ngIf="bigChartOptions.series?.length">
-        <ng-container *ngIf="chartRuntime as charts; else chartRuntimeState">
-          <div class="history-ranges" role="group" aria-label="Historical chart date range">
-            <button *ngFor="let range of historyRanges" type="button" class="state-action"
-                    [attr.aria-pressed]="historyRange === range" (click)="selectHistoryRange(range)">{{ range }}</button>
-          </div>
-          <highcharts-chart [Highcharts]="charts" [constructorType]="'stockChart'"
-                            [options]="bigChartOptions" [oneToOne]="true" class="chart chart--history"></highcharts-chart>
-          <p class="panel-note">Candles show daily prices. Horizontal bars show volume by price. The lower panel shows daily volume.<ng-container *ngIf="showSma && smaAvailable"> SMA 20 averages 20 trading closes.</ng-container></p>
-        </ng-container>
-      </ng-container>
-    </section>
+  <section class="data-panel chart-panel chart-panel--history" *ngIf="activeTab === 'charts'" aria-label="Full-width price research">
+    <app-market-research-chart [symbol]="company.ticker" [currency]="company.currency" [selection]="researchSelection" [studies]="researchStudies" [comparisonTicker]="comparisonTicker" (comparisonChange)="setResearchComparison($event)" (selectionChange)="setResearchSelection($event)"></app-market-research-chart>
+  </section>
 
-    <div class="insights-grid" *ngIf="activeTab === 'insights' && !loadingTabs.has('insights') && !failedTabs.has('insights')">
+    <p *ngIf="activeTab === 'insights' && failedInsights.size && !failedTabs.has('insights')"
+       class="panel-note" role="status">
+      {{ loadingTabs.has('insights') ? 'Retrying missing insights…' : 'Some insights could not load. Available data is shown below.' }}
+      <button type="button" class="state-action" [disabled]="loadingTabs.has('insights')" (click)="retryMissingInsights()">Retry missing insights</button>
+    </p>
+    <div class="insights-grid" *ngIf="activeTab === 'insights' && (insightsAvailable || !loadingTabs.has('insights')) && !failedTabs.has('insights')">
       <section class="data-panel facts-panel sentiment-panel" aria-labelledby="sentiment-title">
         <div class="panel-heading"><div><h2 id="sentiment-title">Insider sentiment</h2><p>Reported activity · Finnhub</p></div></div>
         <p *ngIf="!sentiments?.data?.length" class="panel-note">Insider data is unavailable for this symbol.</p>

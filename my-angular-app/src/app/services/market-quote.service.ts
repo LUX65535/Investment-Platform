@@ -39,14 +39,14 @@ export class MarketQuoteService {
 
   constructor(private http: HttpClient) {}
 
-  read(symbol: string): Observable<QuoteSnapshot> {
+  read(symbol: string, refresh = false): Observable<QuoteSnapshot> {
     const ticker = symbol.trim().toUpperCase();
     return defer(() => {
       const cached = this.latest.get(ticker);
       const now = Date.now();
-      if (cached && cached.expiresAt > now) return of(cached);
       const inFlight = this.pending.get(ticker);
       if (inFlight) return inFlight;
+      if (!refresh && cached && cached.expiresAt > now) return of(cached);
       if (this.providerRetryAt > now) return of({ quote: cached?.quote ?? null, previous: Boolean(cached?.quote) });
 
       const request = this.http.get<MarketQuote>('/company_quote', { params: { symbol: ticker } }).pipe(

@@ -7,6 +7,9 @@ const { MongoClient, ServerApiVersion } = require('mongodb');
 const path = require('node:path');
 const createPaperRouter = require('./routes/paper-sandbox');
 const { createMarketScreener, describeMarketOverview } = require('./lib/market-screener');
+const { validateAggregates } = require('./lib/market-aggregates');
+const { createInstrumentResolver, instrumentFromReference } = require('./lib/market-instrument');
+const { createResearchHistory, availableIntervals, isPlanLimit } = require('./lib/research-history');
 
 const app = express();
 const uri = process.env.MONGO_URI;
@@ -31,6 +34,12 @@ const polygon = {
   key: process.env.API_POLY_KEY,
   keyParameter: 'apiKey',
   retryAt: 0,
+};
+// Both API versions share the same account quota and cooldown.
+const polygonReference = {
+  ...polygon, origin: 'https://api.polygon.io/v3',
+  get retryAt() { return polygon.retryAt; },
+  set retryAt(value) { polygon.retryAt = value; },
 };
 const browserFiles = path.join(__dirname, 'my-angular-app/dist/my-angular-app/browser');
 let databaseClient;
@@ -88,9 +97,19 @@ async function requestMarketData(provider, endpoint, params) {
     responseType: 'json',
     transitional: { silentJSONParsing: false },
   }).then(({ data }) => {
+    if (endpoint.startsWith('/aggs/ticker/') && ['NOT_AUTHORIZED', 'FORBIDDEN'].includes(data?.status)) {
+      throw Object.assign(new Error('History is outside the data plan'), { code: 'DATA_PLAN_LIMIT', status: 403 });
+    }
     if (data === null || typeof data !== 'object' || Object.hasOwn(data, 'error')
       || (endpoint === '/company-news' && !Array.isArray(data))) {
       throw new Error('Market provider returned an unexpected response');
+    }
+    if (endpoint.startsWith('/aggs/ticker/')) {
+      validateAggregates(data);
+    }
+    if (endpoint === '/quote' && (!Number.isFinite(data.c) || data.c <= 0
+      || !Number.isFinite(data.t) || data.t <= 0)) {
+      throw Object.assign(new Error('No valid quote is available'), { status: 503 });
     }
     return data;
   }).catch(error => {
@@ -111,7 +130,7 @@ async function requestMarketData(provider, endpoint, params) {
 function sendMarketError(res, error, key = 'error') {
   const upstreamStatus = error.response?.status;
   let status = 502;
-  if (error.status === 503 || upstreamStatus === 429) status = 503;
+  if (error.status === 503 || upstreamStatus === 429 || upstreamStatus === 503) status = 503;
   else if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') status = 504;
   // An upstream 4xx has no terminal paper receipt and must leave the order retryable.
   else if (key === 'error' && (upstreamStatus === 400 || upstreamStatus === 404)) status = upstreamStatus;
@@ -130,12 +149,13 @@ function getCachedMarketRead(key) {
   removeMarketRead(key);
 }
 
-async function readMarketData(provider, endpoint, params, ttl = endpoint === '/quote' ? 10_000 : 30_000, cacheScope = '') {
+async function readMarketData(provider, endpoint, params, ttl = endpoint === '/quote' ? 10_000 : 30_000, cacheScope = '', validate) {
   const key = marketRequestKey(provider, endpoint, params) + cacheScope;
   const cached = getCachedMarketRead(key);
   if (cached) return cached;
 
   const data = await requestMarketData(provider, endpoint, params);
+  if (validate) validate(data);
   // Another public reader of this in-flight request may have already cached it.
   const completed = getCachedMarketRead(key);
   if (completed) return completed;
@@ -166,13 +186,36 @@ async function sendMarketData(res, provider, endpoint, params, ttl) {
 
 const finnhubRoutes = {
   '/company_quote': '/quote',
-  '/company_profile': '/stock/profile2',
   '/company_recommendation': '/stock/recommendation',
   '/company_news': '/company-news',
   '/company_sentiment': '/stock/insider-sentiment',
   '/company_peers': '/stock/peers',
   '/company_Earning': '/stock/earnings',
 };
+
+async function readInstrumentReference(symbol) {
+  const { body } = await readMarketData(polygonReference, `/reference/tickers/${encodeURIComponent(symbol)}`, {}, 300_000,
+    'instrument', data => instrumentFromReference(data, symbol));
+  return JSON.parse(body);
+}
+
+const resolveInstrument = createInstrumentResolver(async symbol => {
+  const { body } = await readMarketData(finnhub, '/stock/profile2', { symbol }, 300_000);
+  return JSON.parse(body);
+}, readInstrumentReference);
+
+app.get('/company_profile', async (req, res) => {
+  const symbol = normalizeTicker(req.query.symbol);
+  if (!symbol) return res.set('Cache-Control', 'no-store').status(400).json({ error: 'Enter a valid stock symbol.' });
+  try {
+    const profile = await resolveInstrument(symbol);
+    return res.set('Cache-Control', 'public, max-age=0, s-maxage=300').json(profile);
+  } catch (error) {
+    res.set('Cache-Control', 'no-store');
+    if (error.code === 'INSTRUMENT_NOT_FOUND') return res.status(404).json({ error: error.message, code: error.code });
+    return sendMarketError(res, error);
+  }
+});
 
 for (const [route, endpoint] of Object.entries(finnhubRoutes)) {
   app.get(route, (req, res) => {
@@ -205,6 +248,9 @@ function sendChartData(res, symbol, timespan, from, to) {
   return sendMarketData(res, polygon, `/aggs/ticker/${ticker}/range/1/${timespan}/${from}/${to}`, {
     adjusted: true,
     sort: 'asc',
+    // The provider counts base minutes, not resulting hourly candles. Its
+    // default 5,000 base bars truncates valid multi-week hourly requests.
+    limit: 50_000,
   }, ttl);
 }
 
@@ -225,6 +271,34 @@ app.get('/company_OneDay_data', (req, res) => {
     return res.status(400).json({ error: 'Enter a valid stock symbol and a date range of at most 31 days.' });
   }
   return sendChartData(res, symbol, 'hour', from, to);
+});
+
+const readResearchHistory = createResearchHistory(async (endpoint, params, ttl, validate) => {
+  const { body } = await readMarketData(polygon, endpoint, params, ttl, 'research', validate);
+  return JSON.parse(body);
+});
+
+app.get('/market_history', async (req, res) => {
+  const symbol = normalizeTicker(req.query.symbol);
+  const { range, interval } = req.query;
+  res.set('Cache-Control', 'no-store');
+  if (!symbol || Object.keys(req.query).some(key => !['symbol', 'range', 'interval'].includes(key))
+    || !availableIntervals(range).includes(interval)) {
+    return res.status(400).json({ code: 'INVALID_HISTORY_REQUEST', error: 'Choose a valid symbol, range and candle interval.',
+      availableIntervals: availableIntervals(range) });
+  }
+  try {
+    const history = await readResearchHistory(symbol, range, interval);
+    // Provider pages are cached server-side. Do not restart their TTL at a CDN.
+    return res.json(history);
+  } catch (error) {
+    if (isPlanLimit(error)) {
+      return res.status(403).json({ code: 'DATA_PLAN_LIMIT',
+        error: 'This range or candle interval is not included in the current data plan. Choose a shorter range or another interval.' });
+    }
+    if (error.code === 'HISTORY_TOO_LARGE') return res.status(400).json({ code: error.code, error: error.message });
+    return sendMarketError(res, error);
+  }
 });
 
 const marketScreener = createMarketScreener(async (date, marketDay) => {
@@ -306,7 +380,15 @@ async function getTradeMarket(ticker) {
     requestMarketData(finnhub, '/quote', params),
     requestMarketData(finnhub, '/stock/profile2', params),
   ]);
-  const currency = typeof profile.currency === 'string' ? profile.currency.trim().toUpperCase() : '';
+  let currency = typeof profile.currency === 'string' ? profile.currency.trim().toUpperCase() : '';
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    try {
+      const reference = instrumentFromReference(await readInstrumentReference(ticker), ticker);
+      currency = reference.currency;
+    } catch (error) {
+      if (error.response?.status !== 404) throw error;
+    }
+  }
   if (!/^[A-Z]{3}$/.test(currency)) {
     throw Object.assign(new Error('Trading currency is unavailable'), { status: 503 });
   }
@@ -316,7 +398,7 @@ async function getTradeMarket(ticker) {
 async function getHistoricalCloses(symbol, from, to) {
   const ticker = encodeURIComponent(symbol);
   const endpoint = `/aggs/ticker/${ticker}/range/1/day/${from}/${to}`;
-  const { body } = await readMarketData(polygon, endpoint, { adjusted: false, sort: 'asc' }, 5 * 60_000);
+  const { body } = await readMarketData(polygon, endpoint, { adjusted: false, sort: 'asc', limit: 50_000 }, 5 * 60_000);
   const data = JSON.parse(body);
   return Array.isArray(data.results) ? data.results : [];
 }

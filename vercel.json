@@ -6,7 +6,7 @@
   "routes": [
     { "handle": "filesystem" },
     {
-      "src": "^/(api(?:/.*)?|company_[A-Za-z_]+/?|Autocomplete_Search/?)$",
+      "src": "^/(api(?:/.*)?|company_[A-Za-z_]+/?|Autocomplete_Search/?|market_history/?)$",
       "dest": "/api/handler",
       "check": true,
       "transforms": [{ "type": "request.path", "op": "set", "args": "/$1" }]

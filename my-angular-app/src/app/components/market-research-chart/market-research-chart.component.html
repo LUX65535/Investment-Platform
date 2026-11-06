@@ -1,0 +1,33 @@
+<div class="research-chart">
+  <header class="chart-heading">
+    <div><h2>Price research</h2><p>{{ symbol }} · {{ intervalLabels[selection.interval] }} bars · {{ currency || 'Price' }}</p></div>
+    <div class="period-result" *ngIf="periodReturn !== null"><strong [class.negative]="periodReturn! < 0">{{ periodReturn! > 0 ? '+' : '' }}{{ periodReturn | number:'1.2-2' }}%</strong><span>close-to-close · {{ selection.range }}</span></div>
+  </header>
+  <div class="chart-controls">
+    <div class="ranges" role="group" aria-label="Price history range"><button *ngFor="let range of ranges" type="button" [attr.aria-pressed]="selection.range === range" (click)="selectRange(range)">{{ range }}</button></div>
+    <div class="chart-selects"><label>Interval <select [ngModel]="selection.interval" (ngModelChange)="selectInterval($event)"><option *ngFor="let interval of intervals" [ngValue]="interval" [disabled]="!!reason(interval)" [title]="reason(interval)">{{ intervalLabels[interval] }}{{ reason(interval) ? ' — longer/shorter range needed' : '' }}</option></select></label>
+      <label>Display <select [(ngModel)]="display" (ngModelChange)="render()"><option value="candlestick">Candles</option><option value="line">Line</option></select></label>
+      <button type="button" class="studies-button" [attr.aria-expanded]="settingsOpen" (click)="settingsOpen = !settingsOpen">Studies <span aria-hidden="true">{{ settingsOpen ? '−' : '+' }}</span></button>
+    </div>
+  </div>
+  <div class="study-controls" *ngIf="settingsOpen">
+    <fieldset><legend>Price overlays</legend><label><input type="checkbox" [(ngModel)]="studies.sma" (change)="updateStudies()"> SMA</label><label><input type="checkbox" [(ngModel)]="studies.ema" (change)="updateStudies()"> EMA</label><label class="period-input">Period <input type="number" min="2" max="200" [(ngModel)]="studies.period" (change)="updateStudies()"> bars</label><label><input type="checkbox" [(ngModel)]="studies.bb" (change)="updateStudies()"> Bollinger · 20, 2σ</label><label [title]="canVwap ? 'Provider VWAP weighted by volume; resets at each New York session, including extended hours.' : 'Requires intraday bars with volume and provider VWAP.'"><input type="checkbox" [(ngModel)]="studies.vwap" [disabled]="!canVwap" (change)="updateStudies()"> Session VWAP</label></fieldset>
+    <fieldset><legend>Lower panels</legend><label [title]="hasVolume ? 'Reported volume for each price bar.' : 'Volume is unavailable from the data source for this selection.'"><input type="checkbox" [(ngModel)]="studies.volume" [disabled]="!hasVolume" (change)="updateStudies()"> Volume</label><label><input type="checkbox" [(ngModel)]="studies.rsi" (change)="updateStudies()"> RSI · 14</label><label><input type="checkbox" [(ngModel)]="studies.macd" (change)="updateStudies()"> MACD · 12, 26, 9</label></fieldset>
+    <form class="comparison-form" (ngSubmit)="compare()"><label>Compare returns <input name="comparison" [(ngModel)]="comparisonInput" (ngModelChange)="comparisonInputError = ''" placeholder="e.g. SPY" maxlength="25" aria-label="Comparison ticker" [attr.aria-invalid]="comparisonInputError ? 'true' : null"></label><button type="submit" [disabled]="comparisonLoading">{{ comparisonLoading ? 'Loading…' : 'Compare' }}</button><button *ngIf="comparisonSymbol" type="button" (click)="removeComparison()">Remove {{ comparisonSymbol }}</button></form>
+    <p *ngIf="comparisonInputError" class="notice" role="status">{{ comparisonInputError }} <button type="button" (click)="comparisonInputError = ''">Dismiss</button></p>
+    <p class="method-note">Periods count bars at the selected interval. RSI uses Wilder smoothing; Bollinger uses population deviation. VWAP resets each New York session and includes available extended-hours trades.</p>
+  </div>
+  <p *ngIf="comparisonError" class="notice" role="status">{{ comparisonError }} <button *ngIf="!comparisonEntitlementError" type="button" (click)="loadComparison(true)" [disabled]="comparisonLoading || !!comparisonWaitSeconds">Retry comparison{{ comparisonWaitSeconds ? ' · ' + comparisonWaitSeconds + 's' : '' }}</button><button type="button" (click)="removeComparison()">Dismiss</button></p>
+  <div *ngIf="error" class="notice" role="status"><span>{{ error }}</span><button *ngIf="!entitlementError" type="button" [disabled]="loading || !!retrySeconds" (click)="load(true)">Retry prices{{ retrySeconds ? ' · ' + retrySeconds + 's' : '' }}</button><button type="button" aria-label="Dismiss price notice" (click)="error = ''">×</button></div>
+  <p *ngIf="loading" class="load-note" role="status">{{ visibleBars.length ? 'Refreshing prices…' : 'Loading price history…' }}</p>
+  <div *ngIf="!loading && !error && !entitlementError && !visibleBars.length" class="empty-chart" role="status"><strong>No prices in this selection</strong><p>{{ rangeSummary }}</p><button type="button" (click)="load(true)" [disabled]="!!retrySeconds">Retry prices</button></div>
+  <ng-container *ngIf="visibleBars.length">
+    <highcharts-chart *ngIf="runtime" [Highcharts]="runtime" [constructorType]="'stockChart'" [options]="options" [oneToOne]="true" class="market-chart"></highcharts-chart>
+    <p *ngIf="!runtime" class="empty-chart">{{ runtimeFailed ? 'The chart renderer could not load.' : 'Preparing chart…' }} <button *ngIf="runtimeFailed" type="button" (click)="loadRuntime()">Retry chart</button></p>
+    <div class="chart-footer"><span>{{ formatTime(visibleBars[0].t) }} — {{ formatTime(visibleBars[visibleBars.length - 1].t) }} · {{ visibleBars.length }} bars</span><span>Split-adjusted · {{ isIntraday ? 'New York sessions' : 'Trading periods' }}</span></div>
+    <p *ngFor="let note of studyNotes" class="method-note" role="status">{{ note }}</p>
+    <p *ngIf="result?.coverage?.complete === false || result?.coverage?.warmupLimited" class="method-note">{{ result?.coverage?.message || 'Coverage is limited to the available data.' }} Indicators remain blank until enough prior bars are available.</p>
+    <p *ngIf="comparison" class="method-note">Comparison uses matching timestamps, rebased to 0% at the first shared close. Price return excludes dividends.</p>
+  </ng-container>
+  <p class="source-note">Massive market data · availability depends on the connected data plan. Drag the navigator to inspect a period.</p>
+</div>

@@ -170,4 +170,57 @@ describe('WatchlistComponent', () => {
     expect(view.querySelector('.watchlist tbody')?.textContent).toContain('AAPL');
     expect(view.querySelector('.watch-notice')?.textContent).toContain('AAPL restored');
   });
+
+  it('restores the completed quote when it arrives after removal and before Undo', () => {
+    load('AAPL');
+    profile('AAPL', 'Apple Inc.');
+    portfolio.removeWatchlist.and.returnValue(of({}));
+    portfolio.addWatchlist.and.returnValue(of({}));
+    fixture.detectChanges();
+
+    const view: HTMLElement = fixture.nativeElement;
+    expect(view.querySelector('.watchlist-unavailable')?.textContent).toContain('Loading quote');
+    view.querySelector<HTMLButtonElement>('.edit-button')!.click();
+    fixture.detectChanges();
+    view.querySelector<HTMLButtonElement>('.remove-button')!.click();
+    fixture.detectChanges();
+    expect(view.querySelector('.watchlist-empty')).not.toBeNull();
+
+    quote('AAPL', 198.75, 1.2, now - 300);
+    view.querySelector<HTMLButtonElement>('[aria-label="Restore AAPL to watchlist"]')!.click();
+    fixture.detectChanges();
+
+    expect(portfolio.addWatchlist).toHaveBeenCalledOnceWith('AAPL');
+    expect(view.querySelector('.watchlist-price')?.textContent).toContain('198.75');
+    expect(view.querySelector('.watchlist tbody')?.textContent).toContain('Apple Inc.');
+    expect(view.querySelector('.watchlist-unavailable')).toBeNull();
+    expect(fixture.componentInstance.quotesPending).toBeFalse();
+    http.expectNone('/company_quote?symbol=AAPL');
+  });
+
+  it('updates an undone removal when the original pending quote arrives afterward', () => {
+    load('AAPL');
+    profile('AAPL', 'Apple Inc.');
+    portfolio.removeWatchlist.and.returnValue(of({}));
+    portfolio.addWatchlist.and.returnValue(of({}));
+    fixture.detectChanges();
+
+    const view: HTMLElement = fixture.nativeElement;
+    view.querySelector<HTMLButtonElement>('.edit-button')!.click();
+    fixture.detectChanges();
+    view.querySelector<HTMLButtonElement>('.remove-button')!.click();
+    fixture.detectChanges();
+    view.querySelector<HTMLButtonElement>('[aria-label="Restore AAPL to watchlist"]')!.click();
+    fixture.detectChanges();
+    expect(view.querySelector('.watchlist-unavailable')?.textContent).toContain('Loading quote');
+
+    quote('AAPL', 198.75, 1.2, now - 300);
+    fixture.detectChanges();
+
+    expect(portfolio.addWatchlist).toHaveBeenCalledOnceWith('AAPL');
+    expect(view.querySelectorAll('.watchlist tbody tr').length).toBe(1);
+    expect(view.querySelector('.watchlist-price')?.textContent).toContain('198.75');
+    expect(view.querySelector('.watchlist-unavailable')).toBeNull();
+    expect(fixture.componentInstance.quotesPending).toBeFalse();
+  });
 });

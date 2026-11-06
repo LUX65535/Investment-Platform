@@ -1,196 +1,24 @@
 <section class="research-desk" aria-labelledby="research-title">
-  <header class="desk-heading">
-    <h1 id="research-title">Market research</h1>
-    <p>Find a U.S. stock or compare it with SPY.</p>
-  </header>
-
+  <header class="desk-heading"><h1 id="research-title">Market research</h1><p>Explore U.S. stocks and ETFs with price history, volume and technical studies.</p></header>
   <div class="research-workspace">
     <div class="research-selector">
       <div class="desk-search"><ng-content></ng-content></div>
-      <div class="instrument-picker">
-        <p id="instrument-label">Popular symbols</p>
-        <div class="instrument-list" role="group" aria-labelledby="instrument-label">
-          <button *ngFor="let item of examples" type="button" [attr.aria-pressed]="instrument === item"
-                  [attr.aria-label]="'Show ' + item.shortName + ' (' + item.ticker + ') price history'"
-                  aria-controls="featured-instrument" (click)="selectInstrument(item)">
-            <span>{{ item.ticker }}</span>
-            <small>{{ item.shortName }}</small>
-          </button>
-        </div>
-      </div>
-      <section class="research-recents" *ngIf="recentSymbols().length" aria-labelledby="research-recent-label">
-        <h2 id="research-recent-label">Recently viewed</h2>
-        <a *ngFor="let symbol of recentSymbols() | slice:0:4" [routerLink]="['/search-details', symbol]">
-          <span>{{ symbol }}</span>
-          <span aria-hidden="true">↗</span>
-        </a>
-      </section>
+      <div class="instrument-picker"><p id="instrument-label">Popular symbols</p><div class="instrument-list" role="group" aria-labelledby="instrument-label">
+        <button *ngFor="let item of examples" type="button" [attr.aria-pressed]="instrument === item" [attr.aria-label]="'Show ' + item.shortName + ' price history'" (click)="selectInstrument(item)"><span>{{ item.ticker }}</span><small>{{ item.shortName }}</small></button>
+      </div></div>
+      <section class="research-recents" *ngIf="recentSymbols().length" aria-labelledby="research-recent-label"><h2 id="research-recent-label">Recently viewed</h2><a *ngFor="let symbol of recentSymbols() | slice:0:4" [routerLink]="['/search-details', symbol]"><span>{{ symbol }}</span><span aria-hidden="true">↗</span></a></section>
     </div>
-
-    <section class="research-instrument" id="featured-instrument" aria-labelledby="featured-title">
-      <div class="instrument-overview">
-        <header class="featured-header">
-          <div class="featured-identity">
-            <p class="featured-kicker">{{ instrument.ticker }} <span aria-hidden="true">/</span> Daily closes</p>
-            <h2 id="featured-title">{{ instrument.name }}</h2>
-          </div>
-          <div class="featured-values" *ngIf="recentSessions[0] as last">
-            <div>
-              <span>Last close · USD</span>
-              <strong>{{ last.close | currency:'USD' }}</strong>
-            </div>
-            <div class="featured-change">
-              <span>{{ range }} price return</span>
-              <ng-container *ngIf="intervalSummary as interval">
-                <strong *ngIf="interval.priceReturnPercent !== null; else unavailableReturn"
-                        [class.change-down]="interval.priceReturnPercent < 0" [class.change-up]="interval.priceReturnPercent > 0">
-                  {{ interval.priceReturnPercent > 0 ? '+' : '' }}{{ interval.priceReturnPercent | number:'1.2-2' }}%
-                </strong>
-                <ng-template #unavailableReturn><strong>—</strong></ng-template>
-              </ng-container>
-            </div>
-          </div>
-          <a class="featured-action" [routerLink]="['/search-details', instrument.ticker]" [queryParams]="{ range: range.toLowerCase() }"
-             [attr.aria-label]="'Open research for ' + instrument.shortName">
-            Open research
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M4 12h15m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </a>
-        </header>
-
-        <div class="research-body" [class.research-body--with-session]="intervalSummary">
-          <div class="featured">
-            <div class="featured-toolbar">
-              <div class="featured-ranges" role="group" aria-label="Research chart period">
-                <button *ngFor="let period of ranges" type="button" [attr.aria-pressed]="period === range"
-                        [disabled]="!canSelectRange" (click)="selectRange(period)">{{ period }}</button>
-              </div>
-              <a class="benchmark-link" [routerLink]="['/search-details', instrument.ticker]"
-                 [queryParams]="{ range: range.toLowerCase(), compare: 'spy' }">Compare with SPY <span aria-hidden="true">↗</span></a>
-            </div>
-
-            <figure *ngIf="featured as chart; else emptyFeature" class="featured-figure">
-              <div class="featured-plot">
-                <div class="chart-surface" (pointerdown)="inspectPointer($event)" (pointermove)="inspectPointer($event)">
-                  <ng-container *ngIf="activePoint as point">
-                    <input type="range" class="visually-hidden" min="0" [max]="chart.points.length - 1" [value]="pointIndex"
-                           [attr.aria-label]="'Inspect ' + instrument.shortName + ' daily closes'" aria-describedby="featured-chart-help"
-                           [attr.aria-valuetext]="(point.time | date:'MMM d, yyyy':'+0000') + ', close ' + (point.close | currency:'USD')"
-                           (input)="inspectPoint($event)">
-                    <span id="featured-chart-help" class="visually-hidden">Use the arrow keys to read the close for each trading day.</span>
-                    <span class="chart-marker" aria-hidden="true" [style.left.%]="point.x / 3.6" [style.top.%]="point.y / 1.28"></span>
-                  </ng-container>
-                  <svg class="featured-chart" viewBox="0 0 360 128" preserveAspectRatio="none" role="img"
-                       [attr.aria-label]="instrument.shortName + ' daily closing prices for the selected ' + range + ' period'">
-                    <defs>
-                      <linearGradient id="featured-area" x1="0%" x2="0%" y1="0%" y2="100%">
-                        <stop offset="0%" stop-color="#3a658b" stop-opacity=".11"/>
-                        <stop offset="100%" stop-color="#3a658b" stop-opacity="0"/>
-                      </linearGradient>
-                    </defs>
-                    <path d="M8 13H352 M8 62H352 M8 111H352" stroke="#dce4ef" fill="none" vector-effect="non-scaling-stroke"/>
-                    <path [attr.d]="chart.area" fill="url(#featured-area)"/>
-                    <path [attr.d]="chart.line" fill="none" stroke="#2c5984" stroke-width="1.75" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
-                    <line *ngIf="inspectedPoint as point" [attr.x1]="point.x" [attr.x2]="point.x" y1="13" y2="111"
-                          stroke="#637b9a" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
-                  </svg>
-                </div>
-                <div class="featured-axis" aria-hidden="true">
-                  <span *ngFor="let tick of chart.ticks" [style.top.%]="tick.position">{{ tick.price | currency:'USD' }}</span>
-                </div>
-              </div>
-              <figcaption class="featured-dates">
-                <time [attr.datetime]="chart.start | date:'yyyy-MM-dd':'+0000'">{{ chart.start | date:'MMM d, yyyy':'+0000' }}</time>
-                <time [attr.datetime]="chart.end | date:'yyyy-MM-dd':'+0000'">{{ chart.end | date:'MMM d, yyyy':'+0000' }}</time>
-              </figcaption>
-              <div class="chart-reading">
-                <span>Daily prices · Massive (Polygon)</span>
-                <div *ngIf="inspectedPoint as point" class="featured-readout">
-                  <time [attr.datetime]="point.time | date:'yyyy-MM-dd':'+0000'">{{ point.time | date:'MMM d, yyyy':'+0000' }}</time>
-                  <strong>{{ point.close | currency:'USD' }}</strong>
-                </div>
-              </div>
-              <p *ngIf="requestFailed" role="status">
-                New prices are unavailable. Showing the last available closes.
-                <button type="button" class="state-action" (click)="loadFeatured()">Retry prices</button>
-              </p>
-            </figure>
-            <ng-template #emptyFeature>
-              <div class="featured-state">
-                <p role="status">
-                  {{ loading ? 'Loading ' + instrument.ticker + ' price history…' : requestFailed ? instrument.ticker + ' price history is temporarily unavailable.' : 'There are not enough daily closes to chart ' + instrument.ticker + '.' }}
-                </p>
-                <button *ngIf="requestFailed" type="button" class="featured-action" (click)="loadFeatured()">Retry price history</button>
-              </div>
-            </ng-template>
-          </div>
-
-          <section *ngIf="intervalSummary as interval" class="desk-session" aria-labelledby="desk-session-title">
-            <div class="desk-session-heading">
-              <h3 id="desk-session-title">{{ range }} interval</h3>
-              <p>{{ interval.sessionCount }} reported sessions</p>
-            </div>
-            <dl>
-              <div><dt>Start close</dt><dd>{{ interval.startClose | currency:'USD' }}</dd></div>
-              <div><dt>Period high</dt><dd>{{ interval.highestHigh === null ? '—' : (interval.highestHigh | currency:'USD') }}</dd></div>
-              <div><dt>Period low</dt><dd>{{ interval.lowestLow === null ? '—' : (interval.lowestLow | currency:'USD') }}</dd></div>
-              <div><dt>Avg. volume</dt><dd>{{ interval.averageVolume === null ? '—' : (interval.averageVolume | number:'1.0-0') }}</dd></div>
-            </dl>
-            <p class="interval-note" *ngIf="interval.volumeSessionCount < interval.sessionCount || interval.highSessionCount < interval.sessionCount || interval.lowSessionCount < interval.sessionCount">
-              High, low and average volume use the sessions reporting those values.
-            </p>
-          </section>
-        </div>
-      </div>
-    </section>
-
-    <section *ngIf="recentSessions.length" class="recent-sessions" aria-labelledby="recent-sessions-title">
-      <header class="sessions-header">
-        <div>
-          <h2 id="recent-sessions-title">Recent trading sessions</h2>
-          <p>{{ instrument.ticker }} · Latest {{ recentSessions.length }} available sessions</p>
-        </div>
-        <span>USD</span>
+    <section class="research-instrument" aria-labelledby="featured-title"><div class="instrument-overview">
+      <header class="featured-header"><div class="featured-identity"><p class="featured-kicker">{{ instrument.ticker }} / Research</p><h2 id="featured-title">{{ instrument.name }}</h2></div>
+        <a class="featured-action" [routerLink]="['/search-details', instrument.ticker]" [queryParams]="{ range: selection.range.toLowerCase(), interval: selection.interval }">Open research ↗</a>
       </header>
-
-      <table class="session-table" role="table" aria-labelledby="recent-sessions-title">
-        <thead role="rowgroup">
-          <tr role="row">
-            <th scope="col" role="columnheader">Date</th>
-            <th scope="col" role="columnheader">Open</th>
-            <th scope="col" role="columnheader">High</th>
-            <th scope="col" role="columnheader">Low</th>
-            <th scope="col" role="columnheader">Close</th>
-            <th scope="col" role="columnheader">Close change</th>
-            <th scope="col" role="columnheader">Volume</th>
-          </tr>
-        </thead>
-        <tbody role="rowgroup">
-          <tr *ngFor="let session of recentSessions; first as latest" [class.latest-session]="latest" role="row">
-            <th scope="row" role="rowheader">
-              <time [attr.datetime]="session.date | date:'yyyy-MM-dd':'+0000'">{{ session.date | date:'MMM d, yyyy':'+0000' }}</time>
-            </th>
-            <td role="cell"><span class="session-label" aria-hidden="true">Open</span>{{ session.open === null ? '—' : (session.open | currency:'USD') }}</td>
-            <td role="cell"><span class="session-label" aria-hidden="true">High</span>{{ session.high === null ? '—' : (session.high | currency:'USD') }}</td>
-            <td role="cell"><span class="session-label" aria-hidden="true">Low</span>{{ session.low === null ? '—' : (session.low | currency:'USD') }}</td>
-            <td role="cell" class="session-close"><span class="session-label" aria-hidden="true">Close</span>{{ session.close | currency:'USD' }}</td>
-            <td role="cell" class="session-change">
-              <span class="session-label" aria-hidden="true">Close change</span>
-              <ng-container *ngIf="session.previousCloseChangePercent !== null; else noChange">
-                <span [class.change-up]="session.previousCloseChangePercent > 0"
-                      [class.change-down]="session.previousCloseChangePercent < 0">
-                  {{ session.previousCloseChangePercent > 0 ? '+' : '' }}{{ session.previousCloseChangePercent | number:'1.2-2' }}%
-                </span>
-              </ng-container>
-              <ng-template #noChange>—</ng-template>
-            </td>
-            <td role="cell" class="session-volume"><span class="session-label" aria-hidden="true">Volume</span>{{ session.volume === null ? '—' : (session.volume | number:'1.0-0') }}</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <p class="sessions-source">Prices are split-adjusted. Change is measured from the previous available close.</p>
+      <div class="research-body"><div class="featured"><app-market-research-chart [symbol]="instrument.ticker" [selection]="selection" [studies]="studies" (selectionChange)="selectRange($event)" (historyLoaded)="acceptHistory($event)"></app-market-research-chart></div></div>
+    </div></section>
+    <section *ngIf="recentBars.length" class="recent-sessions" aria-labelledby="recent-sessions-title">
+      <header class="sessions-header"><div><h2 id="recent-sessions-title">Recent price bars</h2><p>{{ instrument.ticker }} · {{ selection.interval }} interval · New York time</p></div><span>USD</span></header>
+      <table class="session-table"><thead><tr><th scope="col">Time</th><th scope="col">Open</th><th scope="col">High</th><th scope="col">Low</th><th scope="col">Close</th><th scope="col">Volume</th></tr></thead>
+      <tbody><tr *ngFor="let bar of recentBars"><th scope="row">{{ formatTime(bar.t) }}</th><td><span class="session-label">Open</span>{{ (bar.o | number:'1.2-2') ?? '—' }}</td><td><span class="session-label">High</span>{{ (bar.h | number:'1.2-2') ?? '—' }}</td><td><span class="session-label">Low</span>{{ (bar.l | number:'1.2-2') ?? '—' }}</td><td><span class="session-label">Close</span>{{ bar.c | number:'1.2-2' }}</td><td><span class="session-label">Volume</span>{{ (bar.v | number:'1.0-0') ?? '—' }}</td></tr></tbody></table>
+      <p class="sessions-source">Split-adjusted prices. Bar volume is shown only when provided by the data source.</p>
     </section>
   </div>
 </section>

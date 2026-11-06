@@ -12,13 +12,15 @@ import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { HighchartsChartModule } from 'highcharts-angular';
 import type * as Highcharts from 'highcharts/highstock';
+import { ChartSelection, MarketResearchChartComponent, defaultStudies } from '../market-research-chart/market-research-chart.component';
+import { researchRanges, researchIntervals, intervalReason, defaultInterval } from '../market-research-chart/market-studies';
 import { ResearchLandingComponent } from '../research-landing/research-landing.component';
 import { ResearchQuickSwitchComponent } from './research-quick-switch.component';
 import { ResearchRecentsService } from '../../services/research-recents.service';
 import { estimateOrderCents, paperOrderConfirmation, PendingOrderError, PendingPaperOrder, PortfolioService, ReferenceQuoteRequired } from '../../services/portfolio.service';
 import { MarketBar as AggregateBarResponse, MarketHistoryService, alignedPriceReturns, utcDayMonthsBefore, validClosingBars } from '../../services/market-history.service';
 import { MarketQuote, MarketQuoteService, QuoteSnapshot, quoteRefreshMs } from '../../services/market-quote.service';
-import { activeRefreshes, dailyRefreshes } from '../../services/market-refresh';
+import { activeRefreshes, dailyRefreshes, retryAfterTime } from '../../services/market-refresh';
 
 type QuoteResponse = MarketQuote;
 
@@ -29,6 +31,7 @@ export interface StockResult {
   type: string;
 }
 export interface CompanyProfile {
+  instrumentType?: string;
   country: string;
   currency: string;
   exchange: string;
@@ -98,6 +101,8 @@ const historyRanges = ['1M', '3M', '6M', 'YTD', '1Y', 'All'] as const;
 type HistoryRange = typeof historyRanges[number];
 const overviewRanges = ['Hourly', '1M', '3M', '1Y'] as const;
 type OverviewRange = typeof overviewRanges[number];
+type PriceRequest = 'hourly' | 'daily' | 'benchmark';
+type InsightSection = 'earnings' | 'sentiment' | 'recommendations';
 const uncertainOrderMessage = 'The order may have filled. Check your receipts in Portfolio or retry the same order.';
 const tickerPattern = /^[A-Z0-9][A-Z0-9.:-]{0,24}$/;
 
@@ -113,12 +118,23 @@ interface SuggestionRequest {
   imports: [
     CommonModule, FormsModule, ReactiveFormsModule, RouterModule, NgbModule,
     MatAutocompleteModule, MatInputModule, MatProgressSpinnerModule, HighchartsChartModule,
-    ResearchLandingComponent, ResearchQuickSwitchComponent,
+    ResearchLandingComponent, ResearchQuickSwitchComponent, MarketResearchChartComponent,
   ],
   templateUrl: './search-details.component.html',
   styleUrls: ['./search-details.component.css', './search-details-news.css', './search-details-mobile.css', './search-details-comparison.css'],
 })
 export class SearchDetailsComponent implements OnInit, OnDestroy {
+  researchSelection: ChartSelection = { range: '1M', interval: '1d' };
+  researchStudies = defaultStudies();
+  setResearchComparison(symbol: string | null): void {
+    this.comparisonTicker = symbol;
+    void this.router.navigate([], { relativeTo: this.route, queryParams: { compare: symbol?.toLowerCase() ?? null }, queryParamsHandling: 'merge', preserveFragment: true });
+  }
+  setResearchSelection(selection: ChartSelection): void {
+    this.researchSelection = selection;
+    void this.router.navigate([], { relativeTo: this.route, queryParams: { range: selection.range.toLowerCase(), interval: selection.interval }, queryParamsHandling: 'merge', preserveFragment: true });
+  }
+
   tickerFormControl = new FormControl<string | StockResult>('', { nonNullable: true });
   searchOptions: StockResult[] = [];
   searchFeedback = '';
@@ -155,10 +171,15 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   private overviewDailyBars: AggregateBarResponse[] | null = null;
   private overviewDailyLoading = false;
   private overviewDailyFailed = false;
+  private priceRetryAt: Record<PriceRequest, number> = { hourly: 0, daily: 0, benchmark: 0 };
+  private retryNow = Date.now();
+  private retryClock?: Subscription;
   private requestedTicker: string | null = null;
   readonly loadingTabs = new Set<DetailTab>();
   readonly failedTabs = new Set<DetailTab>();
   private readonly loadedTabs = new Set<DetailTab>();
+  readonly failedInsights = new Set<InsightSection>();
+  private readonly loadedInsights = new Set<InsightSection>();
   readonly detailTabs: ReadonlyArray<{ id: DetailTab; label: string }> = [
     { id: 'summary', label: 'Overview' },
     { id: 'news', label: 'Top News' },
@@ -249,6 +270,39 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
   get overviewFailed(): boolean {
     return this.overviewRange === 'Hourly' ? this.hourlyFailed : this.overviewDailyFailed;
+  }
+
+  get overviewRetrySeconds(): number {
+    return this.priceRetrySeconds(this.overviewRange === 'Hourly' ? 'hourly' : 'daily');
+  }
+
+  get benchmarkRetrySeconds(): number {
+    return this.priceRetrySeconds('benchmark');
+  }
+
+  get activeTabRetrySeconds(): number {
+    return this.activeTab === 'charts' ? this.priceRetrySeconds('daily') : 0;
+  }
+
+  get insightsAvailable(): boolean {
+    return this.loadedInsights.size > 0;
+  }
+
+  private priceRetrySeconds(request: PriceRequest): number {
+    return Math.max(0, Math.ceil((this.priceRetryAt[request] - this.retryNow) / 1000));
+  }
+
+  private recordPriceFailure(request: PriceRequest, error: HttpErrorResponse): void {
+    this.retryNow = Date.now();
+    this.priceRetryAt[request] = retryAfterTime(error.headers?.get('Retry-After') ?? null, this.retryNow) ?? 0;
+    if (!this.priceRetrySeconds(request) || (this.retryClock && !this.retryClock.closed)) return;
+    this.retryClock = timer(1000, 1000).pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      this.retryNow = Date.now();
+      if (Object.values(this.priceRetryAt).every(until => until <= this.retryNow)) {
+        this.retryClock?.unsubscribe();
+        this.retryClock = undefined;
+      }
+    });
   }
 
   get hourlyLagsQuote(): boolean {
@@ -669,8 +723,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const url = `/company_recommendation?symbol=${ticker}`;
     return this.http.get<Trend[]>(url);
   }
-  getBigChartData(ticker: string): Observable<{ results: AggregateBarResponse[] }> {
-    return this.marketHistory.daily(ticker);
+  getBigChartData(ticker: string, refresh = false): Observable<{ results: AggregateBarResponse[] }> {
+    return this.marketHistory.daily(ticker, refresh);
   }
   createBigChart(data: { results: AggregateBarResponse[] }, ticker: string): Highcharts.Options {
     const bars = data.results.filter(bar => bar && [bar.t, bar.o, bar.h, bar.l, bar.c, bar.v].every(Number.isFinite))
@@ -972,6 +1026,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.destroyed = true;
     this.searchSubscription.unsubscribe();
+    this.retryClock?.unsubscribe();
     this.tradeModal?.close();
     this.newsModal?.close();
     clearTimeout(this.confirmationTimeout);
@@ -994,15 +1049,10 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
         this.currentStock = update.quote;
         const nextDay = !previousQuote || Math.floor(previousQuote.t / 86_400) !== Math.floor(update.quote.t / 86_400);
         if (nextDay) this.hourlyBars = null;
-        if (nextDay && this.activeTab === 'summary' && this.overviewRange === 'Hourly') {
-          this.renderOverview();
-          this.loadOverview();
-        }
+
       }
     });
-    dailyRefreshes(this.document).pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
-      if (!this.tradeModal && !this.tradePending && this.activeTab === 'summary' && this.overviewRange !== 'Hourly') this.loadOverview(true);
-    });
+
   }
 
   setupSearch(): void {
@@ -1035,7 +1085,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
             if (submitted) this.resolveSubmittedSearch(request, results);
           }),
           catchError(() => {
-            if (submitted && tickerPattern.test(term)) this.navigateToTicker(term);
+            const ticker = term.toUpperCase();
+            if (submitted && tickerPattern.test(ticker)) this.navigateToTicker(ticker);
             else this.suggestionsError = true;
             return EMPTY;
           }),
@@ -1129,6 +1180,12 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.loadedTabs.clear();
     this.loadingTabs.clear();
     this.failedTabs.clear();
+    this.failedInsights.clear();
+    this.loadedInsights.clear();
+    this.retryClock?.unsubscribe();
+    this.retryClock = undefined;
+    this.retryNow = Date.now();
+    this.priceRetryAt = { hourly: 0, daily: 0, benchmark: 0 };
     this.lastSuccessfulSearch = null;
     this.DetailIsLoading = false;
     this.quoteLoading = false;
@@ -1187,43 +1244,54 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
 
     this.DetailIsLoading = true;
     this.quoteLoading = true;
-    this.searchSubscription.add(this.getStockDetails(ticker).pipe(
-      finalize(() => this.DetailIsLoading = false),
+    const context = this.searchSubscription;
+    let profileFailed = false;
+    const active = () => context === this.searchSubscription;
+    const acceptProfile = (profile: CompanyProfile) => {
+      if (!active()) return;
+      this.searchError = '';
+      this.lastSuccessfulSearch = ticker;
+      this.recents.remember(ticker);
+      const currency = typeof profile.currency === 'string' ? profile.currency.toUpperCase() : '';
+      this.searchResults = { ...profile, currency: /^[A-Z]{3}$/.test(currency) ? currency : '', logo: this.httpsUrl(profile.logo) };
+      this.loadSummary(ticker);
+      this.loadActiveView();
+      this.checkWatchlistStatus();
+      this.refreshHolding(ticker);
+    };
+    const acceptQuoteOnly = () => {
+      if (!this.currentStock || !profileFailed || this.searchResults || !active()) return false;
+      // A valid quote can support research even when optional reference data is unavailable.
+      // Currency remains unknown so trading stays disabled until verified by a profile.
+      acceptProfile({ ticker, name: ticker, country: '', currency: '', exchange: '', ipo: '', marketCapitalization: 0,
+        shareOutstanding: 0, logo: '', phone: '', weburl: '', finnhubIndustry: '' });
+      return true;
+    };
+    const profileFailure = (message: string) => {
+      if (!active()) return;
+      profileFailed = true;
+      if (acceptQuoteOnly()) return;
+      const input = this.tickerFormControl.value;
+      if (typeof input === 'string' && input.trim().toUpperCase() === ticker) this.searchError = message;
+    };
+    context.add(this.getStockDetails(ticker).pipe(
+      finalize(() => { if (active()) this.DetailIsLoading = false; }),
     ).subscribe({
       next: profile => {
-        if (!profile?.ticker) {
-          this.searchError = `No company found for ${ticker}. Try another ticker.`;
-          return;
-        }
-
-        this.lastSuccessfulSearch = ticker;
-        this.recents.remember(ticker);
-        const currency = typeof profile.currency === 'string' ? profile.currency.toUpperCase() : '';
-        this.searchResults = {
-          ...profile,
-          currency: /^[A-Z]{3}$/.test(currency) ? currency : '',
-          logo: this.httpsUrl(profile.logo),
-        };
-        this.loadSummary(ticker);
-        this.loadActiveView();
-        this.checkWatchlistStatus();
-        this.refreshHolding(ticker);
+        if (!profile?.ticker) profileFailure(`No supported stock or ETF was found for ${ticker}. Check the symbol and try again.`);
+        else acceptProfile(profile);
       },
-      error: (error: HttpErrorResponse) => {
-        this.searchError = error.status === 404
-          ? `No company found for ${ticker}. Try another ticker.`
-          : 'Company data is temporarily unavailable. Please try again.';
-      }
+      error: (error: HttpErrorResponse) => profileFailure(error.status === 404
+        ? `No supported stock or ETF was found for ${ticker}. Check the symbol and try again.`
+        : 'Security information is temporarily unavailable. Please try again.'),
     }));
-    this.searchSubscription.add(this.getLatestQuote(ticker).pipe(
-      finalize(() => {
-        this.quoteLoading = false;
-        if (!this.searchSubscription.closed && this.lastSuccessfulSearch === ticker
-          && this.activeTab === 'summary' && this.overviewRange === 'Hourly') this.loadOverview();
-      }),
+    context.add(this.getLatestQuote(ticker, true).pipe(
+      finalize(() => { if (active()) this.quoteLoading = false; }),
     ).subscribe(({ quote, previous }) => {
+      if (!active()) return;
       this.currentStock = quote;
       this.quoteRefreshFailed = previous;
+      acceptQuoteOnly();
     }));
   }
 
@@ -1241,18 +1309,27 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }));
   }
 
-  private loadHourly(ticker: string): void {
-    if (this.quoteLoading || this.hourlyLoading || this.hourlyBars) return;
+  private loadHourly(ticker: string, refresh = false): void {
+    if (this.quoteLoading || this.hourlyLoading || this.priceRetrySeconds('hourly')
+      || (this.hourlyBars && !refresh)) return;
     this.hourlyLoading = true;
     this.hourlyFailed = false;
     this.searchSubscription.add(this.getHistoricalData(ticker, this.currentStock).pipe(
       finalize(() => this.hourlyLoading = false),
     ).subscribe({
       next: hourly => {
+        if (!hourly.length && this.hourlyBars?.length) {
+          this.hourlyFailed = true;
+          return;
+        }
+        this.priceRetryAt.hourly = 0;
         this.hourlyBars = hourly;
         if (this.overviewRange === 'Hourly') this.renderOverview();
       },
-      error: () => this.hourlyFailed = true,
+      error: (error: HttpErrorResponse) => {
+        this.hourlyFailed = true;
+        this.recordPriceFailure('hourly', error);
+      },
     }));
   }
 
@@ -1260,14 +1337,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     const ticker = this.lastSuccessfulSearch;
     if (!ticker) return;
     if (this.overviewRange === 'Hourly') {
-      this.loadHourly(ticker);
+      this.loadHourly(ticker, refresh);
       return;
     }
     this.loadBenchmark(refresh);
-    if (this.overviewDailyLoading || (this.overviewDailyBars && !refresh)) return;
+    if (this.overviewDailyLoading || this.priceRetrySeconds('daily') || (this.overviewDailyBars && !refresh)) return;
     this.overviewDailyFailed = false;
     this.overviewDailyLoading = true;
-    this.searchSubscription.add(this.getBigChartData(ticker).pipe(
+    this.searchSubscription.add(this.getBigChartData(ticker, refresh).pipe(
       finalize(() => this.overviewDailyLoading = false),
     ).subscribe({
       next: ({ results }) => {
@@ -1275,10 +1352,14 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
           this.overviewDailyFailed = true;
           return;
         }
+        this.priceRetryAt.daily = 0;
         this.overviewDailyBars = results;
         if (this.overviewRange !== 'Hourly') this.renderOverview();
       },
-      error: () => this.overviewDailyFailed = true,
+      error: (error: HttpErrorResponse) => {
+        this.overviewDailyFailed = true;
+        this.recordPriceFailure('daily', error);
+      },
     }));
   }
 
@@ -1335,12 +1416,13 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     this.benchmarkBars = null;
     this.benchmarkLoading = false;
     this.benchmarkFailed = false;
+    this.priceRetryAt.benchmark = 0;
     this.benchmarkUnavailable = '';
   }
 
   loadBenchmark(refresh = false): void {
     const symbol = this.comparisonTicker;
-    if (!symbol || this.benchmarkLoading || (this.benchmarkBars && !refresh) || this.benchmarkUnavailable
+    if (!symbol || this.benchmarkLoading || this.priceRetrySeconds('benchmark') || (this.benchmarkBars && !refresh) || this.benchmarkUnavailable
       || !this.lastSuccessfulSearch || this.overviewRange === 'Hourly') return;
     if (!this.canCompare || symbol === this.searchResults?.ticker) {
       this.benchmarkUnavailable = 'Comparison requires two different securities quoted in USD.';
@@ -1355,7 +1437,7 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     );
     this.benchmarkRequest = eligibility.pipe(
       switchMap(eligible => {
-        if (eligible) return this.getBigChartData(symbol);
+        if (eligible) return this.getBigChartData(symbol, refresh);
         this.benchmarkUnavailable = `No USD-quoted security was found for ${symbol}.`;
         return EMPTY;
       }),
@@ -1366,12 +1448,16 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
           this.benchmarkFailed = true;
           return;
         }
+        this.priceRetryAt.benchmark = 0;
         this.benchmarkBars = results;
         this.renderOverview();
       },
       error: (error: HttpErrorResponse) => {
         if (error.status === 404) this.benchmarkUnavailable = `No daily prices were found for ${symbol}.`;
-        else this.benchmarkFailed = true;
+        else {
+          this.benchmarkFailed = true;
+          this.recordPriceFailure('benchmark', error);
+        }
       },
     });
     this.searchSubscription.add(this.benchmarkRequest);
@@ -1398,6 +1484,10 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }
 
     const query = this.route.snapshot.queryParamMap;
+    const chartRange = researchRanges.find(value => value.toLowerCase() === query.get('range')) ?? '1M';
+    const requestedInterval = researchIntervals.find(value => value === query.get('interval')) ?? defaultInterval(chartRange);
+    const chartInterval = intervalReason(chartRange, requestedInterval) ? defaultInterval(chartRange) : requestedInterval;
+    if (this.researchSelection.range !== chartRange || this.researchSelection.interval !== chartInterval) this.researchSelection = { range: chartRange, interval: chartInterval };
     const tab = this.detailTabs.find(item => item.id === query.get('view'))?.id ?? 'summary';
     const range = overviewRanges.find(item => item.toLowerCase() === query.get('range')) ?? '1M';
     const history = historyRanges.find(item => item.toLowerCase() === query.get('history')) ?? '1M';
@@ -1422,7 +1512,8 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       relativeTo: this.route,
       queryParams: {
         view: this.activeTab === 'summary' ? null : this.activeTab,
-        range: this.overviewRange === '1M' ? null : this.overviewRange.toLowerCase(),
+        range: this.researchSelection.range.toLowerCase(),
+        interval: this.researchSelection.interval,
         history: history === '1m' ? null : history,
         compare: this.comparisonTicker?.toLowerCase() ?? null,
       },
@@ -1456,16 +1547,49 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     if (changed) this.updateViewQuery();
   }
 
+  retryMissingInsights(): void {
+    if (this.activeTab !== 'insights' || !this.failedInsights.size || this.loadingTabs.has('insights')) return;
+    this.loadedTabs.delete('insights');
+    this.loadActiveView();
+  }
+
+  private loadInsights(ticker: string): Observable<unknown> {
+    const read = <T>(section: InsightSection, request: () => Observable<T>): Observable<T | null> => {
+      if (this.loadedInsights.has(section)) return of(null);
+      return request().pipe(
+        tap(() => {
+          this.loadedInsights.add(section);
+          this.failedInsights.delete(section);
+        }),
+        catchError(() => {
+          this.failedInsights.add(section);
+          return of(null);
+        }),
+      );
+    };
+    return forkJoin({
+      earnings: read('earnings', () => this.getEarnings(ticker)),
+      sentiment: read('sentiment', () => this.getSentiments(ticker)),
+      recommendations: read('recommendations', () => this.getRecommendations(ticker)),
+    }).pipe(tap(({ earnings, sentiment, recommendations }) => {
+      if (!this.insightsAvailable) throw new Error('Insights unavailable');
+      if (earnings !== null) this.earnings = earnings;
+      if (recommendations !== null) this.recommendations = recommendations;
+      if (sentiment !== null) this.sentiments = sentiment;
+      this.calculateSummary();
+      if (this.earnings.length || this.recommendations.length) this.createInsightChart();
+    }));
+  }
+
   private loadActiveView(): void {
     const tabName = this.activeTab;
     if (this.lastSuccessfulSearch && tabName !== 'news') this.loadChartRuntime();
-    if (tabName === 'summary') {
-      this.loadOverview();
-      return;
-    }
+    if (tabName === 'summary' || tabName === 'charts') return;
     const ticker = this.lastSuccessfulSearch;
     if (!ticker || this.loadingTabs.has(tabName) || this.loadedTabs.has(tabName)) return;
 
+
+    const retry = this.failedTabs.has(tabName);
     this.loadingTabs.add(tabName);
     this.failedTabs.delete(tabName);
     let request: Observable<unknown>;
@@ -1473,31 +1597,18 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
       case 'news':
         request = this.getTopNews(ticker).pipe(tap(news => this.setNews(news)));
         break;
-      case 'charts':
-        request = this.getBigChartData(ticker).pipe(tap(daily => {
-          if (Array.isArray(daily?.results) && daily.results.length) this.bigChartOptions = this.createBigChart(daily, ticker);
-        }));
-        break;
       case 'insights':
-        request = forkJoin({
-          earnings: this.getEarnings(ticker).pipe(catchError(() => of(null))),
-          sentiment: this.getSentiments(ticker).pipe(catchError(() => of(null))),
-          recommendations: this.getRecommendations(ticker).pipe(catchError(() => of(null))),
-        }).pipe(tap(({ earnings, sentiment, recommendations }) => {
-          if (!earnings && !sentiment && !recommendations) throw new Error('Insights unavailable');
-          this.earnings = earnings ?? [];
-          this.recommendations = recommendations ?? [];
-          this.sentiments = sentiment;
-          this.calculateSummary();
-          if (this.earnings.length || this.recommendations.length) this.createInsightChart();
-        }));
+        request = this.loadInsights(ticker);
         break;
     }
     this.searchSubscription.add(request.pipe(
       finalize(() => this.loadingTabs.delete(tabName)),
     ).subscribe({
       next: () => this.loadedTabs.add(tabName),
-      error: () => this.failedTabs.add(tabName),
+      error: (error: HttpErrorResponse) => {
+        this.failedTabs.add(tabName);
+
+      },
     }));
   }
 
@@ -1533,8 +1644,22 @@ export class SearchDetailsComponent implements OnInit, OnDestroy {
     }));
   }
 
-  getLatestQuote(ticker: string): Observable<QuoteSnapshot> {
-    return this.marketQuotes.read(ticker);
+  getLatestQuote(ticker: string, refresh = false): Observable<QuoteSnapshot> {
+    return this.marketQuotes.read(ticker, refresh);
+  }
+
+  retryLatestQuote(): void {
+    const ticker = this.lastSuccessfulSearch;
+    if (!ticker || this.quoteLoading) return;
+    const context = this.searchSubscription;
+    this.quoteLoading = true;
+    context.add(this.getLatestQuote(ticker, true).pipe(
+      finalize(() => { if (context === this.searchSubscription) this.quoteLoading = false; }),
+    ).subscribe(({ quote, previous }) => {
+      if (context !== this.searchSubscription) return;
+      this.currentStock = quote;
+      this.quoteRefreshFailed = previous || !quote;
+    }));
   }
 
   getCompanyPeers(ticker: string): Observable<string[]> {

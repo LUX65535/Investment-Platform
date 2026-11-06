@@ -37,7 +37,7 @@ function availableSessions(bars: readonly MarketBar[]): Session[] {
     const open = positivePrice(bar.o) ? bar.o : null;
     const high = positivePrice(bar.h) && bar.h >= Math.max(open ?? bar.c, bar.c) ? bar.h : null;
     const low = positivePrice(bar.l) && bar.l <= Math.min(open ?? bar.c, bar.c) ? bar.l : null;
-    const volume = Number.isFinite(bar.v) && bar.v >= 0 ? bar.v : null;
+    const volume = typeof bar.v === 'number' && Number.isFinite(bar.v) && bar.v >= 0 ? bar.v : null;
     sessions.set(date, { date, open, high, low, close: bar.c, volume });
   }
   return Array.from(sessions.values()).sort((a, b) => a.date - b.date);

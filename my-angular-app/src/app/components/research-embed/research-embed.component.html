@@ -6,15 +6,15 @@
 
 <div class="research-tools">
   <form class="ticker-form" (ngSubmit)="selectTicker(tickerInput)" role="search" aria-label="Stock lookup">
-    <label for="research-ticker">U.S. stock symbol</label>
+    <label for="research-ticker">U.S. stock or ETF symbol</label>
     <div class="ticker-field">
-      <input id="research-ticker" name="ticker" [(ngModel)]="tickerInput"
+      <input id="research-ticker" name="ticker" [(ngModel)]="tickerInput" (ngModelChange)="inputError = ''"
              maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false"
              placeholder="e.g. AAPL" [attr.aria-invalid]="inputError ? 'true' : null"
              [attr.aria-describedby]="inputError ? 'ticker-error' : null">
       <button type="submit" class="lookup-button">Look up</button>
     </div>
-    <p *ngIf="inputError" id="ticker-error" class="ticker-error" role="alert">{{ inputError }}</p>
+    <p *ngIf="inputError" id="ticker-error" class="ticker-error" role="alert">{{ inputError }} <button type="button" class="state-action" (click)="inputError = ''">Dismiss</button></p>
   </form>
   <div class="example-tickers" role="group" aria-label="Example stock symbols">
     <span aria-hidden="true">Try</span>
@@ -52,42 +52,7 @@
     </div>
   </section>
 
-  <section class="chart-panel" aria-labelledby="history-title">
-    <div class="chart-heading">
-      <div>
-        <h2 id="history-title">Daily closing prices</h2>
-        <p *ngIf="historyReturn !== null" class="history-summary" aria-live="polite">
-          <strong [class.gain]="historyReturn > 0" [class.loss]="historyReturn < 0">
-            {{ historyReturn > 0 ? '+' : '' }}{{ historyReturn | number:'1.2-2' }}%
-          </strong>
-          <span> over {{ activeRange.label }} · {{ chartPoints }} trading days</span>
-        </p>
-      </div>
-      <div *ngIf="history.length > 1" class="chart-ranges" role="group" aria-label="Chart time range">
-        <button *ngFor="let range of ranges" type="button" [attr.aria-label]="range.description"
-                [attr.aria-pressed]="activeRange === range" (click)="setRange(range)">{{ range.label }}</button>
-      </div>
-    </div>
-    <p *ngIf="historyLoading" class="chart-status" [class.chart-status-inline]="history.length > 1" role="status">
-      {{ history.length > 1 ? 'Refreshing price history…' : 'Loading price history…' }}
-    </p>
-    <div *ngIf="!historyLoading && history.length < 2" class="chart-status" role="status">
-      <div>
-        <strong>{{ historyFailed ? 'Price history couldn’t load' : 'No chart available' }}</strong>
-        <p *ngIf="!historyFailed">There are too few closing prices for {{ ticker }}.</p>
-        <button *ngIf="historyFailed" type="button" class="state-action" (click)="retryHistory()">Retry price history</button>
-      </div>
-    </div>
-    <ng-container *ngIf="history.length > 1">
-      <p *ngIf="historyFailed && !historyLoading" class="chart-status" role="status">
-        Showing the last available closing prices.
-        <button type="button" class="state-action" (click)="retryHistory()">Retry price history</button>
-      </p>
-      <p *ngIf="chartPoints < 2" class="chart-status" role="status">Choose a longer range to see more closing prices.</p>
-      <highcharts-chart *ngIf="chartPoints > 1" [Highcharts]="highcharts" [options]="chartOptions" class="price-chart">
-      </highcharts-chart>
-    </ng-container>
-  </section>
+  <section class="chart-panel" aria-label="Price research"><app-market-research-chart [symbol]="ticker"></app-market-research-chart></section>
 
   <footer class="data-note">U.S. market data from Finnhub and Massive (Polygon). Quotes may be delayed.</footer>
 </div>

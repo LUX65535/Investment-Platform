@@ -320,7 +320,9 @@ export class WatchlistComponent implements OnInit {
     ).subscribe({
       next: () => {
         if (button.ownerDocument.activeElement === button) this.listTitle.nativeElement.focus({ preventScroll: true });
-        if (!this.watchlist.some(row => row.ticker === item.ticker)) this.watchlist = [...this.watchlist, item];
+        // Quote requests keep updating the cache while the row is removed.
+        const restored = this.marketCache.entries.get(item.ticker) ?? item;
+        if (!this.watchlist.some(row => row.ticker === item.ticker)) this.watchlist = [...this.watchlist, restored];
         this.lastRemoved = undefined;
         this.actionStatus = `${item.ticker} restored to your watchlist.`;
       },

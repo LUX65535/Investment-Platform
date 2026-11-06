@@ -59,9 +59,15 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   let currency;
   let news = { error: 'Unexpected provider response' };
   t.mock.method(axios, 'get', async (url, { params }) => {
-    assert.match(url, /^https:\/\/(finnhub\.io\/api\/v1|api\.polygon\.io\/v2)\//);
+    assert.match(url, /^https:\/\/(finnhub\.io\/api\/v1|api\.polygon\.io\/v[23])\//);
+    if (url.includes('/reference/tickers/')) {
+      if (url.endsWith('/SOXL')) return { data: { status: 'OK', results: {
+        ticker: 'SOXL', name: 'Direxion Daily Semiconductor Bull 3X Shares', type: 'ETF', currency_name: 'usd',
+      } } };
+      throw Object.assign(new Error('No instrument reference'), { response: { status: 404 } });
+    }
     if (url.endsWith('/company-news')) return { data: news };
-    if (url.endsWith('/stock/profile2')) return { data: { currency } };
+    if (url.endsWith('/stock/profile2')) return { data: params.symbol === 'SOXL' ? {} : { currency } };
     if (url.includes('/aggs/ticker/')) {
       chartCalls++;
       return { data: { results: params.adjusted === false ? historicalCloses : [] } };
@@ -222,6 +228,15 @@ test('market reads expire, back off on provider limits, and leave paper orders r
   t.mock.timers.tick(5 * 60_000);
   assert.equal((await request('/company_data?symbol=AAPL')).status, 200);
   assert.equal(chartCalls, historyCalls + 2, 'Expired daily bars are refreshed from the provider.');
+
+  quoteStatus = 200;
+  cookie = '';
+  assert.equal((await request('/api/paper/session')).status, 200);
+  assert.equal((await request('/api/initWallet', {})).status, 200);
+  const etfOrder = await request('/api/buy', { orderId: randomUUID(), ticker: 'SOXL', quantity: 1 });
+  assert.equal(etfOrder.status, 200, 'A valid ETF uses verified reference currency when company-only metadata is empty.');
+  assert.equal(etfOrder.body.receipt.price, 110);
+  assert.equal(etfOrder.body.receipt.ticker, 'SOXL');
 });
 
 test('production market endpoints fail closed without provider credentials', async t => {
@@ -274,4 +289,117 @@ test('a failed initial Mongo connection is retried and shared by concurrent requ
   }));
   assert.deepEqual(statuses, Array(6).fill(428));
   assert.equal(attempts, 2);
+});
+
+test('chart errors are never cached as empty prices, while delayed and genuinely empty feeds remain valid', async t => {
+  Object.assign(process.env, {
+    VERCEL: '1', VERCEL_ENV: 'production', API_POLY_KEY: 'test-chart-token',
+    MONGO_URI: '', MONGO_DB_NAME: '',
+  });
+  const bar = { t: Date.parse('2026-11-03T05:00:00Z'), c: 125, o: 124, h: 126, l: 123, v: 1200.25 };
+  let payload;
+  let calls = 0;
+  t.mock.method(axios, 'get', async () => { calls++; return { data: payload }; });
+  delete require.cache[require.resolve('../app')];
+  const server = require('../app').listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const invalid = [
+    { status: 'NOT_AUTHORIZED', message: 'Unavailable for test-chart-token' },
+    { status: 'ERROR', message: 'Provider failed' },
+    { status: 'OK' },
+    { status: 'OK', results: {} },
+    { status: 'OK', resultsCount: 2, results: [bar] },
+    { status: 'OK', resultsCount: 0, count: 1 },
+    { status: 'OK', results: [{ ...bar, c: '125' }] },
+    { status: 'OK', results: [{ ...bar, t: null }] },
+    { status: 'OK', results: [{ ...bar, c: 0 }] },
+    [],
+  ];
+  for (let index = 0; index < invalid.length; index++) {
+    const route = `/company_data?symbol=BAD${index}`;
+    payload = invalid[index];
+    const before = calls;
+    const failed = await localhost(server, route);
+    assert.equal(failed.status, 502, JSON.stringify(payload));
+    assert.equal(failed.headers['cache-control'], 'no-store');
+    assert.doesNotMatch(failed.body, /test-chart-token|NOT_AUTHORIZED/);
+    payload = { status: 'DELAYED', adjusted: true, queryCount: 1, resultsCount: 1, count: 1, results: [bar] };
+    const recovered = await localhost(server, route);
+    assert.equal(recovered.status, 200);
+    assert.deepEqual(JSON.parse(recovered.body), payload);
+    assert.equal(calls, before + 2, 'Retry must reach the provider after a malformed feed.');
+    await localhost(server, route);
+    assert.equal(calls, before + 2, 'Only the successful retry should be cached.');
+  }
+  payload = { status: 'OK', resultsCount: 0 };
+  const empty = await localhost(server, '/company_data?symbol=EMPTY');
+  assert.equal(empty.status, 200);
+  assert.deepEqual(JSON.parse(empty.body), payload, 'A non-trading interval is not a provider outage.');
+});
+
+test('chart rate limits retain Retry-After, resume after cooldown, and request complete hourly ranges', async t => {
+  Object.assign(process.env, {
+    VERCEL: '1', VERCEL_ENV: 'production', API_KEY: 'test-token', API_POLY_KEY: 'test-chart-token',
+    MONGO_URI: '', MONGO_DB_NAME: '',
+  });
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-05T03:00:00Z') });
+  let mode = 'limited';
+  const requests = [];
+  const rows = [{ t: Date.parse('2026-11-03T15:00:00Z'), c: 100 }];
+  t.mock.method(axios, 'get', async (url, { params }) => {
+    requests.push({ url, params });
+    if (url.endsWith('/quote')) return { data: { c: 100, t: Date.now() / 1000 } };
+    if (mode === 'limited') throw Object.assign(new Error('limit test-chart-token'), {
+      response: { status: 429, headers: { 'retry-after': '4' } },
+    });
+    if (mode === 'timeout') throw Object.assign(new Error('timeout test-chart-token'), { code: 'ECONNABORTED' });
+    return { data: { status: 'OK', resultsCount: rows.length, results: rows } };
+  });
+  delete require.cache[require.resolve('../app')];
+  const server = require('../app').listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const hourly = '/company_OneDay_data?symbol=AAPL&from=2026-10-04&to=2026-11-04';
+  const limited = await localhost(server, hourly);
+  assert.equal(limited.status, 503);
+  assert.equal(limited.headers['retry-after'], '4');
+  assert.equal(limited.headers['cache-control'], 'no-store');
+  assert.equal((await localhost(server, '/company_data?symbol=SPY')).status, 503);
+  assert.equal(requests.length, 1, 'The same provider shares a cooldown across hourly and daily prices.');
+  assert.equal((await localhost(server, '/company_quote?symbol=AAPL')).status, 200, 'Independent quote provider stays available.');
+  t.mock.timers.tick(2_000);
+  assert.equal((await localhost(server, hourly)).headers['retry-after'], '2');
+  assert.equal(requests.length, 2, 'Retrying before the deadline must not hammer the upstream service.');
+
+  t.mock.timers.tick(2_000);
+  mode = 'ok';
+  assert.equal((await localhost(server, hourly)).status, 200);
+  const aggregate = requests.at(-1);
+  assert.match(aggregate.url, /\/aggs\/ticker\/AAPL\/range\/1\/hour\/2026-10-04\/2026-11-04$/);
+  assert.equal(aggregate.params.limit, 50_000, '31 calendar days require more than the provider default 5,000 base minutes.');
+  assert.equal(aggregate.params.adjusted, true);
+  assert.equal(aggregate.params.sort, 'asc');
+  assert.equal(requests.length, 3);
+
+  mode = 'timeout';
+  const timedOut = await localhost(server, '/company_data?symbol=MSFT');
+  assert.equal(timedOut.status, 504);
+  assert.equal(timedOut.headers['cache-control'], 'no-store');
+  assert.doesNotMatch(timedOut.body, /test-chart-token/);
+  mode = 'ok';
+  assert.equal((await localhost(server, '/company_data?symbol=MSFT')).status, 200, 'Timeouts stay retryable.');
+
+  const beforeInvalid = requests.length;
+  for (const query of [
+    'symbol=AAPL&from=2026-02-30&to=2026-03-01',
+    'symbol=AAPL&from=2026-10-01&to=2026-11-04',
+    'symbol=AAPL&from=2026-11-04&to=2026-11-03',
+    'symbol=AAPL&symbol=MSFT&from=2026-11-03&to=2026-11-04',
+  ]) {
+    assert.equal((await localhost(server, '/company_OneDay_data?' + query)).status, 400);
+  }
+  assert.equal(requests.length, beforeInvalid, 'Invalid ranges never consume provider quota.');
 });

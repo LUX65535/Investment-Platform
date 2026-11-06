@@ -60,6 +60,35 @@ describe('MarketQuoteService', () => {
     http.expectOne('/company_quote?symbol=AAPL').flush({ c: 170, t: quote.t - 1 });
     expect(observed).toEqual(jasmine.objectContaining({ quote: jasmine.objectContaining(quote), previous: true }));
   }));
+
+  it('lets explicit searches and retries bypass a cached failure while still sharing in-flight requests', () => {
+    let observed: QuoteSnapshot | undefined;
+    service.read('SOXL').subscribe(value => observed = value);
+    http.expectOne('/company_quote?symbol=SOXL').flush({}, { status: 404, statusText: 'Not found' });
+    expect(observed?.quote).toBeNull();
+    service.read('SOXL').subscribe();
+    http.expectNone('/company_quote?symbol=SOXL');
+
+    service.read('SOXL', true).subscribe(value => observed = value);
+    service.read(' soxl ', true).subscribe();
+    http.expectOne('/company_quote?symbol=SOXL').flush({ c: 42.35, t: Math.floor(Date.now() / 1000) });
+    expect(observed?.quote?.c).toBe(42.35);
+    expect(observed?.previous).toBeFalse();
+    service.read('SOXL').subscribe();
+    http.expectNone('/company_quote?symbol=SOXL');
+  });
+
+  it('honors provider Retry-After even for an explicit refresh', fakeAsync(() => {
+    let recovered: QuoteSnapshot | undefined;
+    service.read('SOXL').subscribe();
+    http.expectOne('/company_quote?symbol=SOXL').flush({}, { status: 429, statusText: 'Rate limited', headers: { 'Retry-After': '20' } });
+    service.read('SOXL', true).subscribe();
+    http.expectNone('/company_quote?symbol=SOXL');
+    tick(20_000);
+    service.read('SOXL', true).subscribe(value => recovered = value);
+    http.expectOne('/company_quote?symbol=SOXL').flush({ c: 42.35, t: Math.floor(Date.now() / 1000) });
+    expect(recovered?.quote?.c).toBe(42.35);
+  }));
 });
 
 describe('Active market refreshes', () => {
